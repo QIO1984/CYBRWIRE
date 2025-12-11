@@ -1,0 +1,24 @@
+# ThreatTape
+
+A Linux terminal app that streams cybersecurity threat feeds in real-time using Rich for the UI.
+
+## Installation
+
+1. Clone the repo and navigate to the directory.
+2. Create a virtual environment: `python3 -m venv venv`
+3. Activate it: `source venv/bin/activate`
+4. Install dependencies: `pip install -r requirements.txt`
+
+## Usage
+
+Run the app: `python3 threattape2.py`
+
+- Press 'r' to refresh feeds manually.
+- Press 'q' to quit.
+
+## Features
+
+- Aggregates feeds from CISA KEV, BleepingComputer, TheHackerNews, Krebs, VulDB, NVD, ZDI, Sophos, DShield, and Kaspersky.
+- Real-time updates every 5 minutes.
+- Color-coded severity levels.
+- Live ticker and metrics dashboard.
