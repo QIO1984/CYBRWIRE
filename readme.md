@@ -40,7 +40,7 @@ It’s designed for security analysts, red teamers, blue teamers, and anyone who
 ```bash
 # Clone the repo
 git clone https://github.com/yourusername/threattape.git
-cd threattape
+cd cybrwire
 
 # Recommended: create a virtual environment
 python3 -m venv venv
@@ -50,4 +50,4 @@ source venv/bin/activate
 pip install rich httpx feedparser
 
 # Run it!
-python threattape.py
+python cybrwire.py
