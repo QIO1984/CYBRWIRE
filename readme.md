@@ -1,4 +1,4 @@
-# ThreatTape 2.0 // Legendary Edition 🟢
+# C Y B R W I R E // Legendary Edition
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -6,7 +6,7 @@
 
 **A real-time cyber threat intelligence dashboard in your terminal.**
 
-ThreatTape pulls the latest alerts from top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Rich](https://github.com/Textualize/rich)**.
+C Y B R W I R E pulls the latest alerts from top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Rich](https://github.com/Textualize/rich)**.
 
 It’s designed for security analysts, red teamers, blue teamers, and anyone who wants to keep an eye on the threat landscape without leaving the terminal.
 

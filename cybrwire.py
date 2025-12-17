@@ -4,6 +4,7 @@ import feedparser
 import httpx
 import json
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from rich.console import Console
 from rich.table import Table
@@ -28,7 +29,7 @@ console = Console(color_system="truecolor", theme=Theme({
     "new": "bold reverse white on #00ff00",
 }))
 
-HEADERS = {"User-Agent": "ThreatTape 2.0 // Legendary Edition"}
+HEADERS = {"User-Agent": "C Y B R W I R E 2.0 // Legendary Edition"}
 # Constants for magic numbers
 MAX_TITLE_LEN = 90
 MAX_SUMMARY_LEN = 140
@@ -213,13 +214,72 @@ async def flash_border():
     await asyncio.sleep(10)
     border_color = "bright_magenta"
 
+def animate_loading(duration=25):
+    """Animate loading with vertically stacked messages - previous blink stops, new one blinks."""
+    messages = [
+        "INITIALIZING...",
+        "TAPPING WIRES...",
+        "CONNECTIONS ESTABLISHED...",
+        "PULLING LATEST...",
+        "GENERATING ALERTS...",
+        "STAND BY..."
+    ]
+    
+    # ASCII art with cool neon gradient
+    ascii_art = [
+        (r"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", "#00ffff"),
+        (r"~     ______  __  __  ______  ______  __     __  __  ______  ______         ~", "#0099ff"),
+        (r"~    /\  ___\/\ \_\ \/\  == \/\  == \/\ \  _ \ \/\ \/\  == \/\  ___\        ~", "#6666ff"),
+        ('~    \\ \\ \\___\\ \\____ \\ \\  __<\\ \\  __<\\ \\ \\/ ".\ \\ \\ \\ \\  __<\\ \\  __\\        ~', "#ff00ff"),
+        ('~     \\ \\_____\\/\\_____\\ \\_____\\ \\_\\ \\_\\ \\__/".~\\_\\ \\_\\ \\_\\ \\_\\ \\_____\\      ~', "#0099ff"),
+        (r"~      \/_____/\/_____/\/_____/\/_/ /_/\/_/   \/_/\/_/\/_/ /_/\/_____/      ~", "#6666ff"),
+        (r"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", "#00ffff"),
+        (r"~~~~~~~~~~~~~~~~~~~~~~~~~***LEGENDARY // EDITION***~~~~~~~~~~~~~~~~~~~~~~~~~~", "#FF00ff"),
+        (r"                By: GitHub/QIO1984 // The Hacker known as MADNOTE", "#00ffff"),
+    ]
+    
+    start_time = time.time()
+    last_msg_index = -1
+    displayed_messages = []
+    
+    while time.time() - start_time < duration:
+        elapsed = time.time() - start_time
+        
+        # Determine which message to show (roughly every 5 seconds)
+        msg_index = int(elapsed / 5)
+        if msg_index >= len(messages):
+            msg_index = len(messages) - 1
+        
+        # Add new message when index changes
+        if msg_index != last_msg_index:
+            message = messages[msg_index]
+            displayed_messages.append(message)
+            last_msg_index = msg_index
+            
+            # Clear and redraw all messages with ASCII art
+            console.clear()
+            
+            # Print ASCII art
+            for line, color in ascii_art:
+                console.print(f"[bold {color}]{line}[/]")
+            console.print()
+            
+            # Print static messages
+            for prev_msg in displayed_messages[:-1]:
+                console.print(f"[bold #00ff00]{prev_msg}[/]")
+            
+            # Print current blinking message
+            console.print(f"[bold blink #00ff00]{displayed_messages[-1]}[/]")
+        
+        time.sleep(0.1)
+
 def make_ui():
     global ticker_offset, ticker_counter, recency_hours
 
     # Main table
     table = Table(box=box.DOUBLE, show_header=False, padding=(0,1), expand=True)
-    table.add_column(width=11, justify="right")
-    table.add_column(width=14)
+    table.add_column(width=9, justify="right")
+    table.add_column(width=10)
     table.add_column()
 
     now = datetime.now(timezone.utc)
@@ -336,6 +396,11 @@ def make_ui():
     metrics.append(f"Ransomware          : {ransomware_count}\n", style="#ff0066")
     metrics.append(f"APT Activity        : {apt_count}\n", style="#800080")
     metrics.append(f"Exploits/POC        : {exploit_count}\n", style="bright_red")
+    
+    # IOC Count (moved here, right after Exploits/POC)
+    ioc_count = len([a for a in alert_queue if ("IP" in a["title"] or "Hash" in a["title"] or "URL" in a["title"]) and a.get("ts", now) >= cutoff_time])
+    metrics.append(f"IOCs Detected       : {ioc_count}\n", style="bright_red")
+    
     metrics.append(f"New (<1h)           : {new_count}\n", style="#00ff00")
     metrics.append(f"Rate (last hour)    : {rate}/hr\n", style="bold white")
     metrics.append("Heat Level (High-Threat %):\n", style=heat_style)
@@ -351,20 +416,6 @@ def make_ui():
     metrics.append("\nTop Sources:\n", style="bold cyan")
     for src, count in top_sources:
         metrics.append(f"  {src}: {count}\n", style="dim")
-
-    # Threat Trend
-    recent_rates = [count for _, count in list(alert_history)[-TREND_LOOKBACK:]]
-    if len(recent_rates) > 1:
-        metrics.append("\nTrend (last 5):\n", style="bold white")
-        max_rate = max(recent_rates) if recent_rates else 1
-        for i, rate_val in enumerate(recent_rates):
-            bar = "█" * int(rate_val / max_rate * 20) if max_rate > 0 else ""
-            trend_style = "green" if i > 0 and rate_val > recent_rates[i-1] else "dim"
-            metrics.append(f"{bar} {rate_val}\n", style=trend_style)
-
-    # IOC Count
-    ioc_count = len([a for a in alert_queue if ("IP" in a["title"] or "Hash" in a["title"] or "URL" in a["title"]) and a.get("ts", now) >= cutoff_time])
-    metrics.append(f"\nIOCs Detected: {ioc_count}\n", style="bright_red")
 
     # Flair Quote
     quotes = [
@@ -392,7 +443,7 @@ def make_ui():
         Layout(name="bottom", ratio=1)
     )
     layout["bottom"].split_row(
-        Layout(Panel(table, title="[bold reverse #00ff00 on black]  THREATTAPE 2.0 // LEGENDARY EDITION  [/]", subtitle=status, border_style=border_color, padding=(1,2)), ratio=3),
+        Layout(Panel(table, title="[bold reverse #00ff00 on black]  C Y B R W I R E 1.0 // LEGENDARY EDITION  [/]", subtitle=status, border_style=border_color, padding=(1,2)), ratio=3),
         Layout(Panel(metrics, title="WAR ROOM DASHBOARD", border_style="bright_blue"))
     )
 
@@ -401,23 +452,44 @@ def make_ui():
 async def main():
     global recency_hours
     console.clear()
-    console.print("[bold reverse #00ff00 on black]  THREATTAPE 1.0 // LEGENDARY EDITION  [/]\n")
-    console.print("[bold cyan]Select data age window:[/]")
-    console.print("  [bold white]1[/] = Last 24 hours")
+    
+    # ASCII art with cool neon gradient
+    ascii_art = [
+        (r"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", "#00ffff"),
+        (r"~     ______  __  __  ______  ______  __     __  __  ______  ______         ~", "#0099ff"),
+        (r"~    /\  ___\/\ \_\ \/\  == \/\  == \/\ \  _ \ \/\ \/\  == \/\  ___\        ~", "#6666ff"),
+        ('~    \\ \\ \\___\\ \\____ \\ \\  __<\\ \\  __<\\ \\ \\/ ".\ \\ \\ \\ \\  __<\\ \\  __\\        ~', "#ff00ff"),
+        ('~     \\ \\_____\\/\\_____\\ \\_____\\ \\_\\ \\_\\ \\__/".~\\_\\ \\_\\ \\_\\ \\_\\ \\_____\\      ~', "#0099ff"),
+        (r"~      \/_____/\/_____/\/_____/\/_/ /_/\/_/   \/_/\/_/\/_/ /_/\/_____/      ~", "#6666ff"),
+        (r"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", "#00ffff"),
+        (r"~~~~~~~~~~~~~~~~~~~~~~~~~***LEGENDARY // EDITION***~~~~~~~~~~~~~~~~~~~~~~~~~~", "#FF00ff"),
+        (r"                By: GitHub/QIO1984 // The Hacker known as MADNOTE", "#00ffff"),
+    ]
+    
+    for line, color in ascii_art:
+        console.print(f"[bold {color}]{line}[/]")
+    
+    console.print()
+    console.print("[bold cyan]Select data age:[/]")
+    console.print("  [bold white]1[/] = Last 24 hours (default)")
     console.print("  [bold white]2[/] = Last 48 hours")
     console.print("  [bold white]3[/] = Last 7 days")
-    console.print("\n[dim]Press 1, 2, or 3 to proceed (default: 24h)...[/]")
-
+    
     # --- Add this explainer block ---
     console.print(
         "\n[bold bright_cyan]What does the time range affect?[/]\n"
         "[white]- The main table, ticker, and dashboard metrics only show alerts within the selected time window.[/]\n"
         "[white]- The feed always fetches the latest 3 items per source, but only those within your chosen window are displayed.[/]\n"
         "[white]- Malicious IPs, zero-days, ransomware, and all stats reflect your selected time range.[/]\n"
-        
     )
     # --- End explainer block ---
 
+    console.print()
+    console.print("[bold #00ff00]Enter Choice:[/] ", end="")
+    # --- End explainer block ---
+
+
+    
     selection = None
     while selection not in {"1", "2", "3"}:
         try:
@@ -442,9 +514,16 @@ async def main():
         recency_hours = 168  # 7 days
     
     console.clear()
-    console.print("[bold reverse #00ff00 on black]  THREATTAPE 2.0 // LEGENDARY EDITION  — Initializing... please wait up to 30 seconds to load feeds  [/]")
     asyncio.create_task(refresher())
-    await asyncio.sleep(25)
+    
+    # Animate loading with ASCII art and messages
+    animate_loading(duration=25)
+    
+    # Wait until feeds are actually loaded before showing main UI
+    while len(alert_queue) == 0:
+        await asyncio.sleep(0.5)
+    
+    console.print()  # New line after animation
 
     with console.screen(hide_cursor=False) as screen:
         while True:
@@ -481,4 +560,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        console.print("\n[bold reverse #ff0066]  THREATTAPE going dark // Stay Legendary...[/]")
+        console.print("\n[bold reverse #ff0066]  C Y B R W I R E Going dark // Stay Legendary...[/]")
