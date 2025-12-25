@@ -1,0 +1,26 @@
+# Community Curated Sources
+# Crowdsourced feeds contributed via GitHub
+# To contribute, submit a PR at: https://github.com/QIO1984/CYBRWIRE
+#
+# CONTRIBUTION GUIDELINES:
+# 1. Add your feed with a unique name and valid RSS/JSON/TXT feed URL
+# 2. If your feed requires an API key, include it in the URL and add comments
+# 3. Include your GitHub handle or nickname as a comment
+# 4. Add a link comment for where contributors can get the API key
+#
+# EXAMPLE WITH API KEY:
+# - name: "Example Threat Feed"
+#   url: "https://api.example.com/threats.json?key=YOUR_API_KEY_HERE"
+#   type: "json"
+#   # Contributed by: @github_username
+#   # Get API key: https://example.com/register
+#   # Note: Free tier includes 100 requests/day
+#
+community:
+  - name: "TEST: InfoSec Writeups"
+    url: "https://infosecwriteups.com/feed"
+    type: "rss"
+    # Test contributor: @QIO1984
+    # Get API key: N/A (public feed)
+    # Note: Public RSS feed, no API key needed
+  # Community contributions will be added here. Thanks everyone!

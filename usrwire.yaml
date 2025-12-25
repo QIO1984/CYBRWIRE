@@ -1,0 +1,30 @@
+# User Custom Sources
+# Add your own threat intelligence feeds here
+# Supports: rss, json, txt formats
+#
+# For feeds requiring API keys, include them in the URL:
+#   https://api.example.com/feed?key=YOUR_API_KEY
+#
+# Example configurations:
+#   RSS Feed:
+#     - name: "Security Blog"
+#       url: "https://example.com/feed.rss"
+#       type: "rss"
+#   JSON Feed:
+#     - name: "Threat API"
+#       url: "https://api.example.com/threats.json?key=YOUR_KEY"
+#       type: "json"
+#   Text/IP List:
+#     - name: "Malicious IPs"
+#       url: "https://example.com/ips.txt"
+#       type: "txt"
+#
+custom:
+  # TEST FEED - Remove or replace with your own feed(s)
+  - name: "Reddit netsec"
+    url: "https://www.reddit.com/r/netsec/.rss"
+    type: "rss"
+  # Add your feeds below (uncomment example and modify):
+  # - name: "My Security Feed"
+  #   url: "https://example.com/feed.rss"
+  #   type: "rss"
