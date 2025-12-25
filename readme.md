@@ -12,14 +12,21 @@ It’s designed for security analysts, red teamers, blue teamers, and anyone who
 
 ## Features
 
-- **Live scrolling ticker** with zero-day alerts, ransomware activity, and top malicious IPs
+- **20+ curated threat intelligence sources** including CISA, NSA, FBI, SANS, Microsoft, Cisco, Kaspersky, and more
+- **Multi-format feed support** – JSON, RSS, and plain text feeds
+- **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
-- **Real-time metrics dashboard** (threat heat level, alert rates, top sources, trend graph)
+- **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and trend graph
+- **Live scrolling ticker** displaying latest threats and alerts
 - **Audible + visual alerts** on fresh critical/zero-day events
+- **Multiple theme support** – cycle through GNOME Dark, Green/Black High Contrast, Solarized Dark, Solarized Light
 - **Customizable recency window** (24h / 48h / 7 days) – press `1`, `2`, or `3` anytime
-- **Manual refresh** with `R`
-- **Seamless scrolling ticker** and flashing border on high-impact events
-- **No external dependencies** beyond standard Python libraries + `rich`, `httpx`, and `feedparser`
+- **Advanced filtering** – view alerts only, posts only, or all items
+- **Cold War Mode** – toggle a stark, minimal aesthetic
+- **Interactive browsing** – click links to open sources in your browser
+- **Manual refresh** with `R` and feed cycling controls
+- **Seamless scrolling ticker** with flashing borders on high-impact events
+- **Minimal dependencies** – runs with just `rich`, `httpx`, `feedparser`, `pyyaml`, and `textual`
 
 ## Screenshots
 
