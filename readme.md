@@ -40,14 +40,14 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 ### Cold War Mode (Classic Green Terminal)
 ![Cold War Mode](screenshots/cold_war_mode.png)
 
-### Alert View
-![Alert View](screenshots/shot1.png)
+### API Tools and Feed Error View
+![API Tools Feed Error View](screenshots/shot1.png)
 
-### Incident Correlation
-![Incident Correlation](screenshots/shot2.png)
+### Incident Correlation and Gemini Analysis
+![Incident Correlation and Gemini Analysis](screenshots/shot2.png)
 
-### API Tools & Enrichment
-![API Tools](screenshots/shot3.png)
+### Incident Correlation and War Room Dashboard
+![Incident Correlation and War Room Dashboard](screenshots/shot3.png)
 
 ## Installation & Usage
 
@@ -101,7 +101,8 @@ enrichment:
   abuse_ch_api_key: "your-abuse-ch-api-key-here"
 ```
 
-**Note:** API keys in `cybrwire_local.yaml` are in `.gitignore` and will never be committed to GitHub.
+**Note:** API keys in `cybrwire_local.yaml` are in `.gitignore` and will never be committed to GitHub. 
+          Use file `usrwire.yaml` as template to create `cybrwire_local.yaml`, or rename it.
 
 ## API Tier Limitations ⚠️
 
@@ -196,4 +197,4 @@ By: GitHub/QIO1984 // The Hacker known as MADNOTE
 
 ---
 
-**Stay vigilant. Stay informed. CYBRWIRE**
+**Stay vigilant. Stay informed. Stay WIREed**
