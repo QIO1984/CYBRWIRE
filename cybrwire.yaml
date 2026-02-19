@@ -12,17 +12,13 @@ curated:
   - name: "NSA Cybersecurity Advisories"
     url: "https://www.nsa.gov/feeds/cisa-nsa-releases/"
     type: "rss"
-  - name: "FBI IC3 Internet Crime Report"
-    url: "https://www.ic3.gov/Media/RSS/Recent-Complaints.xml"
-    type: "rss"
+
 
   # === ACADEMIC & RESEARCH ===
   - name: "SANS ISC Diary"
     url: "https://isc.sans.edu/rssfeed.xml"
     type: "rss"
-  - name: "CVE Details"
-    url: "https://www.cvedetails.com/vulnerability-feed.php?vendor_id=0&product_id=0&cvssscoremin=0&cvssscoremax=0&page=1&cveid=&rss=1"
-    type: "rss"
+
   - name: "National Vulnerability Database"
     url: "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json"
     type: "json"
@@ -40,9 +36,7 @@ curated:
   - name: "ZDI Upcoming"
     url: "https://www.zerodayinitiative.com/rss/upcoming/"
     type: "rss"
-  - name: "HackerOne CVE Disclosure"
-    url: "https://www.hackerone.com/feeds/h1-cves"
-    type: "rss"
+
 
   # === SECURITY VENDORS ===
   - name: "Microsoft MSRC"
@@ -60,9 +54,7 @@ curated:
   - name: "Kaspersky Securelist"
     url: "https://securelist.com/feed/"
     type: "rss"
-  - name: "Fortinet FortiGuard"
-    url: "https://www.fortiguard.com/rss/threat-research"
-    type: "rss"
+
   - name: "Crowdstrike Blog"
     url: "https://www.crowdstrike.com/blog/feed/"
     type: "rss"
@@ -98,12 +90,8 @@ curated:
   - name: "Dark Reading"
     url: "https://www.darkreading.com/rss.xml"
     type: "rss"
-  - name: "SecurityWeek"
-    url: "https://www.securityweek.com/feed"
-    type: "rss"
-  - name: "Infosecurity Magazine"
-    url: "https://www.infosecurity-magazine.com/feed/rss/"
-    type: "rss"
+
+
   - name: "Help Net Security"
     url: "https://www.helpnetsecurity.com/feed/"
     type: "rss"
@@ -122,8 +110,8 @@ curated:
     url: "https://feeds.dshield.org/block.txt"
     type: "txt"
   - name: "Abuse.ch Malware"
-    url: "https://sslbl.abuse.ch/blacklist/dyrect.txt"
-    type: "txt"
+    url: "https://urlhaus-api.abuse.ch/v1/urls/recent/"
+    type: "json"
   - name: "PhishTank"
     url: "https://phishtank.com/feed.xml"
     type: "rss"
@@ -138,28 +126,20 @@ curated:
   - name: "Ransomware.live"
     url: "https://ransomware.live/api/v2/all/latest"
     type: "json"
-  - name: "Ransomware Advisory Alliance"
-    url: "https://www.ransomware-advisory-alliance.com/feed"
-    type: "rss"
-  - name: "MITRE ATT&CK"
-    url: "https://attack.mitre.org/updates/index.html"
-    type: "rss"
+
+
 
   # === SUPPLY CHAIN & SOFTWARE SECURITY ===
-  - name: "Package URL Advisory"
-    url: "https://advisories.nist.gov/rss/"
-    type: "rss"
-  - name: "Sonatype OSS Index"
-    url: "https://ossindex.sonatype.org/feed"
-    type: "rss"
+  - name: "NIST Product Advisories"
+    url: "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json"
+    type: "json"
+
 
   # === EMERGING THREATS ===
-  - name: "Emerging Threats"
-    url: "https://rules.emergingthreats.net/blockips/"
+  - name: "Emerging Threats IPs"
+    url: "https://rules.emergingthreats.net/blockips/compromised-ips.txt"
     type: "txt"
-  - name: "YARA Rules"
-    url: "https://github.com/Yara-Rules/rules/commits/main.atom"
-    type: "rss"
+
 
   # === SECURITY RESEARCH & ANALYSIS BLOGS ===
   - name: "Cloudflare Security"
@@ -172,7 +152,7 @@ curated:
     url: "https://googleprojectzero.blogspot.com/feeds/posts/default"
     type: "rss"
   - name: "Google Online Security Blog"
-    url: "https://www.googleblog.com/feeds/posts/default?alt=rss"
+    url: "https://www.blog.google/products/chrome/rss"
     type: "rss"
   - name: "The Hacker News"
     url: "https://feeds.feedburner.com/TheHackersNews"
@@ -187,11 +167,11 @@ curated:
     url: "https://www.recordedfuture.com/feed"
     type: "rss"
   - name: "Shodan"
-    url: "https://blog.shodan.io/rss.xml"
+    url: "https://blog.shodan.io/"
     type: "rss"
-  - name: "Abuse.ch SSL Blacklist"
-    url: "https://sslbl.abuse.ch/feed/"
-    type: "rss"
+  - name: "Abuse.ch URLhaus"
+    url: "https://urlhaus.abuse.ch/downloads/csv_recent/"
+    type: "txt"
 
   # === SPECIALIZED THREAT INTEL ===
   - name: "ANY.RUN Malware Analysis"
@@ -271,9 +251,7 @@ curated:
   - name: "Synopsys Software Integrity"
     url: "https://www.synopsys.com/blogs/software-security/feed/"
     type: "rss"
-  - name: "Positive Technologies Research"
-    url: "https://blog.ptsecurity.com/feeds/posts/default"
-    type: "rss"
+
   - name: "SonarSource Security"
     url: "https://www.sonarsource.com/rss.xml"
     type: "rss"
@@ -350,9 +328,7 @@ curated:
   - name: "W3C Security"
     url: "https://www.w3.org/blog/news/feed/"
     type: "rss"
-  - name: "CWE/CAPEC"
-    url: "https://cwe.mitre.org/updates/index.html"
-    type: "rss"
+
 
   # === GEOPOLITICAL & STATE-SPONSORED THREATS ===
   - name: "The Record Cybercrime"
@@ -364,7 +340,5 @@ curated:
   - name: "Citizen Lab"
     url: "https://citizenlab.ca/feed/"
     type: "rss"
-  - name: "Council on Foreign Relations"
-    url: "https://www.cfr.org/expert-briefing/rss.xml"
-    type: "rss"
+
 
