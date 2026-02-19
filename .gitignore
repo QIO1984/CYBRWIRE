@@ -1,5 +1,7 @@
-# Ignore the specific file
-threattape2.py
+# Local secrets and API keys (never commit these!)
+.env
+*.env
+cybrwire_local.yaml
 
 # Python-specific ignores
 __pycache__/

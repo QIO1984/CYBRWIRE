@@ -1,30 +1,73 @@
-# User Custom Sources
-# Add your own threat intelligence feeds here
-# Supports: rss, json, txt formats
+# Production Configuration - API Keys and Custom Feeds
+# ============================================================================
+# 
+# This file is NOT in .gitignore - keep it safe!
+# For LOCAL use and testing with PRIVATE API KEYS, create and use cybrwire_local.yaml instead
+# (cybrwire_local.yaml IS in .gitignore and will never be committed)
+# If you aren't using local overrides, add your keys here but be advised if you push to GitHub
+# they will be public. The app will look for keys here first, then in cybrwire_local.yaml
 #
-# For feeds requiring API keys, include them in the URL:
-#   https://api.example.com/feed?key=YOUR_API_KEY
+# Add your API keys and custom feeds below
+
+# ==============================================================================
+# AI ENRICHMENT API KEYS
+# ==============================================================================
+# Configure these keys to enable IOC enrichment in the API Tools panel
+# and AI-powered threat analysis in the War Room
 #
-# Example configurations:
+# Get free API keys from the providers listed below and paste them between the quotes
+# Example: gemini_api_key: "your_actual_api_key_here"
+#
+# If you don't want to use a provider, just leave it empty: gemini_api_key: ""
+
+enrichment:
+  # Google Gemini API - REQUIRED for War Room (AI-powered threat analysis)
+  # Get your free API key at: https://aistudio.google.com/apikey
+  gemini_api_key: ""
+
+  # AbuseIPDB - IP reputation and abuse history lookups
+  # Get your free API key at: https://www.abuseipdb.com/api
+  abuseipdb_api_key: ""
+
+  # VirusTotal - Hash, URL, and domain analysis
+  # Get your free API key at: https://www.virustotal.com/
+  virustotal_api_key: ""
+
+  # Pulsedive - Multi-indicator threat intelligence platform
+  # Get your free API key at: https://pulsedive.com/
+  pulsedive_api_key: ""
+
+  # Abuse.ch - Malware hash and phishing URL databases
+  # Visit: https://abuse.ch/ (some features are free, no API key needed)
+  abuse_ch_api_key: ""
+
+# ==============================================================================
+# CUSTOM THREAT FEEDS
+# ==============================================================================
+# Add your custom threat intelligence feeds below
+# These will appear under "Custom" in the sources breakdown and feed statistics
+#
+# Supports: RSS, JSON, and text list formats
+#
+# Examples:
 #   RSS Feed:
 #     - name: "Security Blog"
 #       url: "https://example.com/feed.rss"
 #       type: "rss"
+#
 #   JSON Feed:
 #     - name: "Threat API"
 #       url: "https://api.example.com/threats.json?key=YOUR_KEY"
 #       type: "json"
+#
 #   Text/IP List:
 #     - name: "Malicious IPs"
 #       url: "https://example.com/ips.txt"
 #       type: "txt"
-#
+
 custom:
-  # TEST FEED - Remove or replace with your own feed(s)
-  - name: "Reddit netsec"
-    url: "https://www.reddit.com/r/netsec/.rss"
-    type: "rss"
-  # Add your feeds below (uncomment example and modify):
-  # - name: "My Security Feed"
-  #   url: "https://example.com/feed.rss"
-  #   type: "rss"
+  # Add your custom feeds here
+  # Uncomment and modify the examples below, or add your own
+  # - name: "My Custom Feed"
+  #   url: "https://example.com/feed.json"
+  #   type: "json"
