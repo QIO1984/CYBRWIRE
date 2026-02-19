@@ -64,7 +64,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Configure API keys (optional, for enrichment features)
-cp cybrwire.yaml cybrwire_local.yaml
+cp usrwire.yaml cybrwire_local.yaml
 # Edit cybrwire_local.yaml and add your API keys
 
 # Run it!
