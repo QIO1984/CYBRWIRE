@@ -7,13 +7,15 @@
 
 **A real-time cyber threat intelligence dashboard in your terminal.**
 
-CybrWire pulls the latest alerts from 20+ top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Textual](https://github.com/Textualize/textual)** and **[Rich](https://github.com/Textualize/rich)**.
+CYBRWIRE pulls the latest alerts from hundreds of top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Textual](https://github.com/Textualize/textual)** and **[Rich](https://github.com/Textualize/rich)**.
 
-It's designed for security analysts, red teamers, blue teamers, and anyone who wants to keep an eye on the threat landscape without leaving the terminal.
+CYBRWIRE also includes tools (via api keys) to identify malicious IPs and query databases for malicous file hashes.
+
+More than just a glorified feed-reader, CYBRWIRE is designed for security analysts, red teamers, blue teamers, and anyone who wants to keep an eye on the threat landscape without leaving the terminal.
 
 ## Features
 
-- **20+ curated threat intelligence sources** including CISA, NSA, FBI, SANS, Microsoft, Cisco, Kaspersky, and more
+- **300+ curated threat intelligence sources** including CISA, NSA, FBI, SANS, Microsoft, Cisco, Kaspersky, and more
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
 - **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
 - **Real-time threat enrichment** – Integrate with VirusTotal, AbuseIPDB, Pulsedive, and Abuse.ch APIs
@@ -22,7 +24,7 @@ It's designed for security analysts, red teamers, blue teamers, and anyone who w
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Live scrolling ticker** displaying latest threats and alerts
 - **Multiple theme support** – cycle through GNOME Dark, Green/Black High Contrast, Solarized Dark, and more
-- **Cold War Mode** – authentic green-on-black terminal aesthetic
+- **Cold War Mode** – authentic green-on-black terminal aesthetic for when you're feeling like it's 1985
 - **Customizable recency window** (24h / 48h / 7 days)
 - **Advanced filtering** – view alerts only, incidents, or API enrichment tools
 - **Interactive browsing** – open threat sources in your default browser
@@ -142,7 +144,7 @@ For best results with CybrWire enrichment:
 
 - **`cybrwire.yaml`** – Curated official threat feeds (CISA, NSA, Microsoft, etc.)
 - **`usrwire.yaml`** – Additional community and third-party feeds
-- **`comwire.yaml`** – Custom community-contributed feeds
+- **`comwire.yaml`** – Custom community-contributed feeds - Submit yours via PR
 - **`cybrwire_local.yaml`** – LOCAL TESTING ONLY (your private API keys, in .gitignore)
 
 ## Features in Detail
@@ -180,14 +182,18 @@ Query threat intelligence APIs directly from CybrWire:
 
 MIT License - See LICENSE file for details
 
-## Contributing
+## Contributing / Feed Crowd-sourcing
 
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
+Contributions are welcome and much needed! Please feel free to submit pull requests or open issues for bugs and feature requests.
+
+If you have a cool source for intel, please submit it via PR to the comwire.yaml 
+Verified feeds will be added to the canon.
 
 ## Author
 
 By: GitHub/QIO1984 // The Hacker known as MADNOTE
 
+
 ---
 
-**Stay vigilant. Stay informed. CybrWire brings the threat landscape to your terminal.**
+**Stay vigilant. Stay informed. CYBRWIRE**
