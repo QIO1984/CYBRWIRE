@@ -240,7 +240,7 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  [PROVIDERS] (ai: section of cybrwire_local.yaml)\n", style=f"bold {accent}")
         help_text.append("│    anthropic, gemini, openai, openrouter, ollama (local), openai_compatible\n", style=color)
-        help_text.append("│    Older configs with only enrichment.gemini_api_key keep working\n", style=color)
+        help_text.append("│    Set one provider in the ai: section of cybrwire_local.yaml (examples in usrwire.yaml)\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
