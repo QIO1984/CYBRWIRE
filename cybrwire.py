@@ -1243,9 +1243,10 @@ class CybrWireApp(App):
             if len(source_buckets[src]) < 50:
                 source_buckets[src].append(a)
         
+        # Newest first, with undated items (stamped at fetch time) after dated alerts
         alert_queue = sorted(
             [item for alerts in source_buckets.values() for item in alerts],
-            key=lambda x: x.get("ts", datetime.min.replace(tzinfo=timezone.utc)),
+            key=lambda x: (not x.get("undated"), x["ts"]),
             reverse=True
         )
         
@@ -1498,7 +1499,8 @@ class CybrWireApp(App):
             return text
         
         text.append(alert["title"] + "\n", style=f"bold {accent}")
-        text.append(f"{alert['source']}  •  {alert['ts']:%a %d %b %H:%M} UTC ({age(alert['ts'])} ago)  •  {alert['severity'].upper()}", style=dim)
+        when = "no publish date in feed" if alert.get("undated") else f"{alert['ts']:%a %d %b %H:%M} UTC ({age(alert['ts'])} ago)"
+        text.append(f"{alert['source']}  •  {when}  •  {alert['severity'].upper()}", style=dim)
         if STATE.is_new(alert):
             text.append("  •  NEW", style="bold #00ff00")
         text.append("\n")
@@ -1530,11 +1532,12 @@ class CybrWireApp(App):
         
         border = "#00FF00" if self.cold_war_mode else "#4499bb"
         table = Table(box=box.DOUBLE, show_header=False, padding=(0, 1), expand=True, border_style=border)
-        narrow = self.size.width < 100
-        table.add_column(width=3)                                    # NEW badge
-        table.add_column(width=7 if narrow else 11, justify="right")  # published
-        table.add_column(width=8 if narrow else 10)                   # severity
-        table.add_column()                                            # title
+        narrow = self.size.width < 120
+        date_width = 6 if narrow else 10
+        table.add_column(width=date_width, min_width=date_width, no_wrap=True)  # published date
+        table.add_column(width=3, min_width=3, no_wrap=True, justify="right")   # age
+        table.add_column(width=10, min_width=10, no_wrap=True)                  # severity
+        table.add_column(ratio=1, no_wrap=True, overflow="ellipsis")            # NEW badge + title
         
         filtered_alerts = self.filtered_alerts()
         total_pages = max(1, (len(filtered_alerts) + self.rows_per_page - 1) // self.rows_per_page)
@@ -1559,12 +1562,16 @@ class CybrWireApp(App):
             else:
                 title_style = severity_style = severity_colors.get(a["severity"], "white")
                 date_style = "#55bbdd"
-            is_new = STATE.is_new(a)
+            title = Text()
+            if STATE.is_new(a):
+                title.append(" NEW ", style="bold black on #00ff00")
+                title.append(" ")
+            title.append(a["title"], style=title_style)
             table.add_row(
-                Text("NEW", style="bold black on #00ff00") if is_new else Text(""),
-                Text(a["published"] if narrow else f"{a['published']} {age(a['ts']):>3}", style=date_style),
+                Text(f"{a['ts']:%d %b}" if narrow else f"{a['ts']:%a %d %b}", style=date_style),
+                Text("—" if a.get("undated") else age(a["ts"]), style=date_style),
                 Text(a["severity"].upper(), style=severity_style),
-                Text(a["title"][:MAX_TITLE_LEN], style=title_style + (" bold" if is_new and row_idx != self.hover_row else "")),
+                title,
             )
         
         if not self.page_alerts:
@@ -1616,7 +1623,10 @@ class CybrWireApp(App):
         apt_count = len([a for a in source_filtered_queue if a["severity"] == "apt" and a.get("ts", now) >= cutoff_time])
         exploit_count = len([a for a in source_filtered_queue if a["severity"] == "exploit" and a.get("ts", now) >= cutoff_time])
         filtered_count = len([a for a in source_filtered_queue if a.get("ts", now) >= cutoff_time])
-        new_count = len([a for a in source_filtered_queue if (now - a.get("ts", now)).total_seconds() < 3600 and a.get("ts", now) >= cutoff_time])
+        # Undated items (IP/URL lists, some blogs) are re-stamped on every fetch, so they
+        # don't count as "incoming"
+        dated_alerts = [a for a in source_filtered_queue if not a.get("undated")]
+        new_count = sum(1 for a in dated_alerts if now - a["ts"] < timedelta(hours=1))
         window_alerts = [a for a in source_filtered_queue if a["ts"] >= cutoff_time]
         ioc_count = sum(1 for a in window_alerts if a["title"].startswith(IOC_TITLE_PREFIXES))
         
@@ -1638,7 +1648,7 @@ class CybrWireApp(App):
             ("Exploits/POC", exploit_count, "#dd5555"),
             ("IOCs Detected", ioc_count, "#dd5555"),
             ("Incoming (1h)", new_count, "#66dd66"),
-            ("Avg/Hour", f"{rate:.1f}/hr", "#66dd66"),
+            ("Avg/Hour", f"{rate:.0f}/hr", "#66dd66"),
         ]
         
         # Right column - TOP SOURCES with feed selection indicators
@@ -1851,10 +1861,16 @@ class CybrWireApp(App):
             threat_label = f"DOMINANT THREAT: {dominant_name.upper()} WAVE"
             heat_info += f"\n[{threat_color}]{indent}[bold]{threat_label}[/bold][/]\n"
         
-        # Alert Velocity - alerts published in the last 24h vs the 24h before
+        # Alert Velocity - alerts published in the last 24h vs the 24h before. Each feed only
+        # keeps its newest items, so only count feeds whose history reaches back 48h;
+        # otherwise busy feeds make every day look like a spike.
         now = datetime.now(timezone.utc)
-        last_day = sum(1 for a in source_filtered_queue if a["ts"] > now - timedelta(hours=24))
-        prev_day = sum(1 for a in source_filtered_queue if now - timedelta(hours=48) < a["ts"] <= now - timedelta(hours=24))
+        oldest = {}
+        for a in dated_alerts:
+            oldest[a["source"]] = min(oldest.get(a["source"], a["ts"]), a["ts"])
+        covered = [a for a in dated_alerts if oldest[a["source"]] <= now - timedelta(hours=48)]
+        last_day = sum(1 for a in covered if a["ts"] > now - timedelta(hours=24))
+        prev_day = sum(1 for a in covered if now - timedelta(hours=48) < a["ts"] <= now - timedelta(hours=24))
         
         if prev_day > 0:
             velocity = last_day / prev_day
@@ -1920,7 +1936,17 @@ class CybrWireApp(App):
         else:
             title_text = "WAR ROOM DASHBOARD"
         
-        return Panel(Group(metrics_table, Text.from_markup(heat_info)),
+        # Render the indented lines in a two-column grid so wrapped text lines up
+        # under the text rather than at the panel edge
+        detail_grid = Table.grid(expand=True)
+        detail_grid.add_column(width=len(indent))
+        detail_grid.add_column(ratio=1)
+        for line in Text.from_markup(heat_info).split("\n", allow_blank=True):
+            if line.plain.startswith(indent):
+                line = line[len(indent):]
+            detail_grid.add_row("", line)
+        
+        return Panel(Group(metrics_table, detail_grid),
                     title=title_text,
                     border_style="#00ff00" if self.cold_war_mode else "#5588dd",
                     padding=(0,1))

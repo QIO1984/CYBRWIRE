@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import feedparser
 import httpx
 
-MAX_TITLE_LEN = 90
+MAX_TITLE_LEN = 200  # The feed table truncates to fit the screen
 
 # Full CISA KEV catalog (CVE ID -> description), refreshed with the KEV feed.
 # The feed list only keeps the newest entries; incidents check against all of them.
@@ -93,15 +93,34 @@ def parse_cisa(data, source_name, source_file):
         })
     return items
 
+# Formats feedparser doesn't recognize but some vendors publish
+EXTRA_DATE_FORMATS = ["%b %d, %Y %H:%M:%S%z", "%B %d, %Y %H:%M:%S%z", "%b %d, %Y", "%B %d, %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]
+
+
+def entry_time(entry):
+    """Publish time of a feed entry in UTC, or None if it has no readable date"""
+    # feedparser normalizes every format it understands to a UTC struct_time
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    if parsed:
+        return datetime(*parsed[:6], tzinfo=timezone.utc)
+    raw = (entry.get("published") or entry.get("updated") or "").strip()
+    for fmt in EXTRA_DATE_FORMATS:
+        try:
+            ts = datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+        return ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    return None
+
+
 def parse_rss(text, source_name, source_file):
     f = feedparser.parse(text)
     items = []
     for e in f.entries[:100]:  # Some feeds (e.g. MSRC) return thousands of entries
-        # feedparser normalizes every date format it understands to a UTC struct_time
-        parsed = e.get("published_parsed") or e.get("updated_parsed")
-        ts = datetime(*parsed[:6], tzinfo=timezone.utc) if parsed else datetime.now(timezone.utc)
-        if ts > datetime.now(timezone.utc) + timedelta(days=1):
-            ts = datetime.now(timezone.utc)  # Bogus future dates (e.g. ZDI "upcoming" placeholders)
+        ts = entry_time(e)
+        undated = ts is None or ts > datetime.now(timezone.utc) + timedelta(days=1)  # Future = placeholder
+        if undated:
+            ts = datetime.now(timezone.utc)
         title = clean_html(e.get("title", ""))[:MAX_TITLE_LEN]
         summary = clean_html(e.get("summary") or e.get("description") or "")[:MAX_SUMMARY_LEN]
         link = e.get("link", "")
@@ -117,7 +136,8 @@ def parse_rss(text, source_name, source_file):
                else "exploit" if any(k in lower for k in ["exploit","poc"])
                else "info")
         items.append({"title": title, "summary": summary, "published": ts.strftime("%a, %d %b"), 
-                      "severity": sev, "source": source_name, "source_file": source_file, "url": link, "ts": ts})
+                      "severity": sev, "source": source_name, "source_file": source_file, "url": link, "ts": ts,
+                      "undated": undated})
     return items
 
 def _parse_iso(value):
@@ -218,6 +238,7 @@ def parse_txt(text, source_name, source_file):
             else:
                 continue
         items.append({"title": title[:MAX_TITLE_LEN],
+                      "undated": not line.startswith('"'),  # Only URLhaus CSV rows carry a date
                       "summary": summary[:MAX_SUMMARY_LEN],
                       "published": ts.strftime("%a, %d %b"),
                       "severity": severity,
