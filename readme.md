@@ -25,8 +25,8 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Live scrolling ticker** displaying latest threats and alerts
-- **Multiple theme support** – cycle through GNOME Dark, Green/Black High Contrast, Solarized Dark, and more
-- **Cold War Mode** – authentic green-on-black terminal aesthetic for when you're feeling like it's 1985
+- **Retro themes** – Synthwave (default), Retro Warm and Amber CRT; press `t` to cycle
+- **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
 - **Customizable recency window** (24h / 48h / 7 days)
 - **Advanced filtering** – view alerts only, incidents, or API enrichment tools
 - **Interactive browsing** – open threat sources in your default browser
@@ -37,20 +37,34 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 
 ## Screenshots
 
-### Main Dashboard - Black Theme
-![CybrWire Main Dashboard](screenshots/cybrwire_black_main.png)
+### Main Dashboard (Synthwave, the default theme)
+The live threat feed with a preview of the selected alert, and the dashboard: severity counts, heat meters, recent breaches, threat insights, 24-hour activity and the most-reported CVEs.
 
-### Cold War Mode (Classic Green Terminal)
-![Cold War Mode](screenshots/cold_war_mode.png)
+![CybrWire main dashboard in the Synthwave theme](screenshots/dashboard_synthwave.png)
 
-### Alert View
-![Alert View](screenshots/shot1.png)
+### Incidents and War Room
+Alerts correlated into incidents when independent sources report the same CVE, IP, hash or threat actor, next to an AI briefing in the War Room.
 
-### Incident Correlation
-![Incident Correlation](screenshots/shot2.png)
+![Correlated incidents and the War Room AI briefing](screenshots/incidents_war_room.png)
 
-### API Tools & Enrichment
-![API Tools](screenshots/shot3.png)
+### Cold War Mode
+A green phosphor terminal: FLASH / IMMEDIATE / PRIORITY / ROUTINE message precedence, Zulu date-time groups, a classification banner and a teletype cursor. Press `c` to toggle.
+
+![Cold War mode](screenshots/cold_war.png)
+
+![Cold War secure-line boot sequence](screenshots/cold_war_boot.png)
+
+### API Tools
+Look up an IP, file hash, domain or URL across every configured enrichment provider.
+
+![API Tools enrichment lookup](screenshots/api_tools.png)
+
+### More Themes
+Press `t` to cycle themes. Your choice is remembered between runs.
+
+| Retro Warm | Amber CRT |
+|---|---|
+| ![Retro Warm theme](screenshots/theme_retro_warm.png) | ![Amber CRT theme](screenshots/theme_amber_crt.png) |
 
 ## Installation & Usage
 
@@ -86,7 +100,7 @@ python3 cybrwire.py
 | `tab` | Switch between main feed and dashboard panels |
 | `v` | Cycle main view (alerts → incidents → API tools) |
 | `c` | Toggle Cold War Mode |
-| `t` | Cycle theme |
+| `t` | Cycle theme (Synthwave → Retro Warm → Amber CRT) |
 | `↑` `↓` / click | Select an alert or incident (click again to open) |
 | `enter` | Open the selected alert or incident in your browser |
 | `a` | Explain the selected alert with AI |
