@@ -20,26 +20,45 @@
 # If you don't want to use a provider, just leave it empty: abuseipdb_api_key: ""
 
 # ==============================================================================
-# AI ANALYSIS (War Room briefing and per-alert explanations)
+# AI PROVIDER (War Room briefings and alert explanations)
 # ==============================================================================
-# Pick ONE provider. Leave model blank to use the default shown.
+# Optional. Choose ONE provider: uncomment the ai: line and one example block,
+# then fill in your key. Alerts in the current data window are sent to that
+# provider when you press g (briefing) or a (explain alert); nothing is sent
+# on launch unless auto_briefing is true.
 #
-#   anthropic          Claude          key: https://console.anthropic.com/  default model: claude-opus-5-5
-#                                      (cheaper: claude-sonnet-5-5 or claude-haiku-5-5)
-#   gemini             Google Gemini   key: https://aistudio.google.com/apikey  default model: gemini-flash-latest
-#   openai             OpenAI          key: https://platform.openai.com/  model: required
-#   openrouter         OpenRouter      key: https://openrouter.ai/  model: required (e.g. a model ID from their list)
-#   ollama             Local models    no key; model: required (e.g. llama3.1); base_url defaults to localhost
-#   openai_compatible  Any server with an OpenAI-style /chat/completions API (LM Studio, vLLM, Groq...)
-#                      base_url and model required
+# ai:
+#   # Anthropic Claude - key: https://console.anthropic.com/
+#   provider: "anthropic"
+#   api_key: "your-anthropic-key"
+#   model: "claude-haiku-5-5"      # or claude-sonnet-5-5 / claude-opus-5-5 (default if blank)
 #
-# Alerts in the current data window are sent to the provider you choose.
-ai:
-  provider: ""
-  api_key: ""
-  model: ""
-  base_url: ""
-  auto_briefing: false   # true = generate a new briefing every launch (one AI call each time)
+#   # Google Gemini - key: https://aistudio.google.com/apikey
+#   provider: "gemini"
+#   api_key: "your-gemini-key"
+#   model: ""                      # blank = gemini-flash-latest
+#
+#   # OpenAI - key: https://platform.openai.com/
+#   provider: "openai"
+#   api_key: "your-openai-key"
+#   model: "your-model-id"         # required
+#
+#   # OpenRouter - key: https://openrouter.ai/
+#   provider: "openrouter"
+#   api_key: "your-openrouter-key"
+#   model: "provider/model-id"     # required
+#
+#   # Ollama - models running on your own machine, no key, no data leaves it
+#   provider: "ollama"
+#   model: "llama3.1"              # required; base_url defaults to http://localhost:11434/v1
+#
+#   # Any OpenAI-compatible server (LM Studio, vLLM, Groq...)
+#   provider: "openai_compatible"
+#   base_url: "http://localhost:1234/v1"
+#   api_key: ""                    # if the server needs one
+#   model: "your-model-id"
+#
+#   auto_briefing: false           # true = new briefing at every launch (one call each time)
 
 enrichment:
   # AbuseIPDB - IP reputation and abuse history lookups

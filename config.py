@@ -95,9 +95,6 @@ def load_config() -> Config:
         if enrichment.get(yaml_key):
             config.enrichment[provider] = {"api_key": enrichment[yaml_key]}
 
-    # Older configs only had a Gemini key under enrichment
-    if not ai.get("provider") and enrichment.get("gemini_api_key"):
-        ai = {"provider": "gemini", "api_key": enrichment["gemini_api_key"], **ai}
     config.ai = ai
 
     return config

@@ -110,7 +110,7 @@ ai:
   base_url: ""             # only for ollama / openai_compatible
 ```
 
-OpenAI, OpenRouter, Ollama, and OpenAI-compatible servers need `model` set. Ollama runs models on your own machine, so no alert data leaves it. An `enrichment.gemini_api_key` from older configs still works.
+OpenAI, OpenRouter, Ollama, and OpenAI-compatible servers need `model` set. Ollama runs models on your own machine, so no alert data leaves it. One provider is active at a time; `usrwire.yaml` has a commented example for each.
 
 ## API Key Enrichment
 
