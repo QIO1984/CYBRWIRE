@@ -50,9 +50,20 @@ def is_blog_post_content(title: str, summary: str, source_name: str = "") -> boo
     return any(kw in text for kw in NON_INTEL_KEYWORDS)
 
 
+BROKEN_ENTITY = re.compile(r"&#;x([0-9a-fA-F]+);")
+
+
 def clean_html(text: str) -> str:
-    """Strip tags, decode entities and collapse whitespace"""
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]*>", " ", text or ""))).strip()
+    """Strip tags, decode entities (some feeds escape twice) and collapse whitespace"""
+    text = text or ""
+    for _ in range(8):
+        # Repair malformed numeric entities seen in some feeds ("&#;x26;" -> "&#x26;")
+        decoded = html.unescape(BROKEN_ENTITY.sub(r"&#x\1;", text))
+        if decoded == text:
+            break
+        text = decoded
+    text = text.replace("\u00c2\u00a0", " ")  # UTF-8 non-breaking space decoded as Latin-1
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", text)).strip()
 
 
 DOOMSDAY_URL = "https://thebulletin.org/doomsday-clock/"
