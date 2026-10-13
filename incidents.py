@@ -82,7 +82,9 @@ class Incident:
         if self.kind == "actor":
             victims = [a for a in self.alerts if a["title"].startswith("RANSOMWARE VICTIM")]
             if victims:
-                return f"{self.value} claimed {len(victims)} victim(s) in this window; also referenced in {len(self.alerts) - len(victims)} report(s)."
+                reports = len(self.alerts) - len(victims)
+                also = f" It is also named in {reports} report{'s' if reports != 1 else ''}." if reports else ""
+                return f"{self.value} claimed {len(victims)} victim{'s' if len(victims) != 1 else ''} in this window.{also}"
             return f"{self.value} is referenced in {len(self.alerts)} reports from {len(self.sources)} sources."
         summaries = [a["summary"] for a in self.alerts if a.get("summary")]
         # Prefer text that actually mentions this indicator over a neighbouring CVE's summary
@@ -93,7 +95,8 @@ class Incident:
     def why(self) -> str:
         names = ", ".join(self.sources[:5]) + (f" +{len(self.sources) - 5} more" if len(self.sources) > 5 else "")
         noun = {"cve": "this CVE", "ip": "this IP", "hash": "this file hash", "actor": "this actor"}[self.kind]
-        return f"{len(self.sources)} source(s) mention {noun}: {names}"
+        n = len(self.sources)
+        return f"{n} source{'s' if n != 1 else ''} mention{'' if n != 1 else 's'} {noun}: {names}"
 
     def related(self, all_incidents: List["Incident"]) -> List[str]:
         """Other correlated indicators that share alerts with this incident"""
@@ -144,7 +147,8 @@ def build_incidents(alerts: List[dict], kev_catalog: Optional[Dict[str, str]] = 
         inc for inc in groups.values()
         if len(inc.sources) >= 2 or (inc.kind == "actor" and len(inc.alerts) >= 2)
     ]
-    incidents.sort(key=lambda i: (SEVERITY_RANK.get(i.severity, 99), -len(i.sources), -i.last_seen.timestamp()))
+    # Independent corroboration first, then severity, then recency
+    incidents.sort(key=lambda i: (len(i.sources) < 2, SEVERITY_RANK.get(i.severity, 99), -len(i.sources), -i.last_seen.timestamp()))
     return incidents
 
 

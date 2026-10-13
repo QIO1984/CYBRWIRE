@@ -28,6 +28,8 @@ from textual.app import App, Screen, ComposeResult
 from textual.widgets import Static, Header
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.reactive import reactive
+from textual.theme import Theme as TextualTheme
+from theme import COLD_WAR, DEFAULT_PALETTE, PALETTES, Palette
 from textual import events
 
 # Log to a file - writing to stderr would draw over the TUI
@@ -105,9 +107,9 @@ class HelpScreen(Screen):
         ("q", "close_help", "Quit"),
     ]
     
-    def __init__(self, cold_war_mode=False):
+    def __init__(self, palette):
         super().__init__()
-        self.cold_war_mode = cold_war_mode
+        self.palette = palette
     
     def compose(self) -> ComposeResult:
         yield ScrollableContainer(Static(id="help-content"))
@@ -122,16 +124,15 @@ class HelpScreen(Screen):
     def update_help(self):
         """Update help content display"""
         help_text = Text()
-        color = "#00ff00" if self.cold_war_mode else "#55bbdd"
-        accent = "#00ff00" if self.cold_war_mode else "#9966ff"
-        critical = "#dd4444"
+        color = self.palette.text
+        accent = self.palette.accent
         
         # Header
         help_text.append("\n", style=color)
         help_text.append("═" * 100 + "\n", style=color)
         help_text.append(" " * 30 + "C Y B R W I R E  1.0  H E L P  S C R E E N\n", style=f"bold {color}")
         help_text.append("═" * 100 + "\n\n", style=color)
-        help_text.append("Press ESC or 'Q' to close help\n\n", style="dim yellow")
+        help_text.append("Press ESC or 'Q' to close help\n\n", style=self.palette.muted)
         
         # NAVIGATION & CONTROLS
         help_text.append("┌─ NAVIGATION & CONTROLS " + "─" * 72 + "┐\n", style=accent)
@@ -291,7 +292,7 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  [NORMAL MODE] (default)\n", style=f"bold {accent}")
         help_text.append("│    Colorful display with theme cycling (press 'T')\n", style=color)
-        help_text.append("│    Themes: textual-ansi, textual-dark, textual-light, nord, gruvbox, monokai, etc\n", style=color)
+        help_text.append("│    Themes: Retro Warm (default), Amber CRT, Synthwave\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [COLD WAR MODE] (Press 'C' to toggle)\n", style=f"bold {accent}")
         help_text.append("│    Classic green-on-black terminal aesthetic (Matrix-style)\n", style=color)
@@ -313,7 +314,7 @@ class HelpScreen(Screen):
         help_text.append("│  C              Toggle Cold War Mode - Switch between colorful and green-only\n", style=color)
         help_text.append("│  G              AI Briefing - Generate a fresh briefing in the War Room\n", style=color)
         help_text.append("│  A              Explain Alert - AI explanation of the selected alert\n", style=color)
-        help_text.append("│  T              Cycle Theme - Switch color themes (normal mode only)\n", style=color)
+        help_text.append("│  T              Cycle Theme - Retro Warm / Amber CRT / Synthwave (leaves Cold War mode)\n", style=color)
         help_text.append("│  H              Show This Help - Display help screen\n", style=color)
         help_text.append("│  Q / Esc        Quit / Close Help - Exit application or close help screen\n", style=color)
         help_text.append("│\n", style=accent)
@@ -332,8 +333,8 @@ class HelpScreen(Screen):
         help_text.append("│  NEW BADGES        - Alerts first seen since your last launch, until you open them\n", style=color)
         help_text.append("│  SAVED SETTINGS    - Theme, filters and modes persist; run with --setup to re-pick\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  PRO TIP: Use keyboard shortcuts to quickly switch between filters and views\n", style="bold yellow")
-        help_text.append("│           Example: D (switch time) → F (filter) → V (view) → Tab (Switch Panel Focus)\n", style="dim yellow")
+        help_text.append("│  PRO TIP: Use keyboard shortcuts to quickly switch between filters and views\n", style=f"bold {self.palette.warn}")
+        help_text.append("│           Example: D (switch time) → F (filter) → V (view) → Tab (Switch Panel Focus)\n", style=self.palette.muted)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -354,7 +355,7 @@ class ScrollableContainer(Container):
     
     DEFAULT_CSS = """
     ScrollableContainer {
-        background: black;
+        background: $background;
         height: 100%;
         overflow-y: auto;
     }
@@ -363,9 +364,10 @@ class ScrollableContainer(Container):
 class LoadingScreen(Screen):
     """Loading screen with animated ASCII art"""
     
-    def __init__(self, cold_war_mode=False):
+    def __init__(self, palette):
         super().__init__()
-        self.cold_war_mode = cold_war_mode
+        self.palette = palette
+        self.cold_war_mode = palette.monochrome
         self.loading_step = 0
         self.feed_animation_step = 0
         self.messages = [
@@ -396,6 +398,7 @@ class LoadingScreen(Screen):
         self.update_loading()
     
     def update_loading(self):
+        p = self.palette
         # ASCII art with gradient colors (or all green in cold war mode)
         if self.cold_war_mode:
             ascii_art = [
@@ -432,17 +435,22 @@ class LoadingScreen(Screen):
                 ("                            By: GitHub/QIO1984 // The Hacker known as MADNOTE", "#00ffff"),
             ]
         
+        if not self.cold_war_mode:
+            # Soft gradient from the palette instead of the original neon colors
+            gradient = [p.focus, p.accent, p.text, p.accent]
+            ascii_art = [(line, gradient[i % len(gradient)] if i < len(ascii_art) - 1 else p.muted)
+                         for i, (line, _) in enumerate(ascii_art)]
         art_text = "\n".join([f"[bold {color}]{line}[/]" for line, color in ascii_art])
         
         # Build stacked messages - completed messages stay static, current message blinks
         message_lines = []
         
         for i, msg in enumerate(self.messages[:self.loading_step]):
-            message_lines.append(f"[bold #00FF00]  {msg}[/]")
+            message_lines.append(f"[bold {p.accent}]  {msg}[/]")
             # If this is the "CHECKING APIS..." message and we have APIs, show them on the next line
             if i == 2 and self.configured_apis:  # Index 2 is "CHECKING APIS..."
                 apis_str = " • ".join(self.configured_apis)
-                message_lines.append(f"[bold #00FF00]    → {apis_str}[/]")
+                message_lines.append(f"[bold {p.accent}]    → {apis_str}[/]")
         
         if self.loading_step < len(self.messages):
             current_msg = self.messages[self.loading_step]
@@ -451,17 +459,17 @@ class LoadingScreen(Screen):
                 global currently_loading
                 feed_name = currently_loading if currently_loading else "INITIALIZING"
                 if self.feed_animation_step % 2 == 0:
-                    message_lines.append(f"[bold #00FF00]{spinner} {current_msg} - {feed_name[:40]}[/]")
+                    message_lines.append(f"[bold {p.accent}]{spinner} {current_msg} - {feed_name[:40]}[/]")
                 else:
-                    message_lines.append(f"[dim #006600]{spinner} {current_msg} - {feed_name[:40]}[/]")
+                    message_lines.append(f"[{p.muted}]{spinner} {current_msg} - {feed_name[:40]}[/]")
             else:
                 if self.feed_animation_step % 2 == 0:
-                    message_lines.append(f"[bold #00FF00]{current_msg}[/]")
+                    message_lines.append(f"[bold {p.accent}]{current_msg}[/]")
                 else:
-                    message_lines.append(f"[dim #006600]{current_msg}[/]")
+                    message_lines.append(f"[{p.muted}]{current_msg}[/]")
                 if current_msg == "CHECKING APIS..." and self.configured_apis:
                     apis_str = " • ".join(self.configured_apis)
-                    message_lines.append(f"[bold #00FF00]    → {apis_str}[/]")
+                    message_lines.append(f"[bold {p.accent}]    → {apis_str}[/]")
         
         messages_text = "\n".join(message_lines) if message_lines else ""
         
@@ -508,8 +516,8 @@ class CybrWireFooter(Static):
         footer_text = Text()
         
         # Determine color based on cold war mode
-        key_color = "bold #00ff00" if app.cold_war_mode else "bold yellow"
-        desc_color = "#00ff00" if app.cold_war_mode else "#55bbdd"
+        key_color = f"bold {app.palette.accent}"
+        desc_color = app.palette.muted
         
         # Force Refresh
         footer_text.append("r ", style=key_color)
@@ -541,7 +549,7 @@ class CybrWireFooter(Static):
         
         # Cycle Theme
         footer_text.append("t ", style=key_color)
-        footer_text.append("Background  ", style=desc_color)
+        footer_text.append(f"Theme: {app.palette.name}  ", style=desc_color)
         
         # Help
         footer_text.append("h ", style=key_color)
@@ -556,119 +564,51 @@ class CybrWireFooter(Static):
 class CybrWireApp(App):
     """Textual-based CybrWire threat intelligence dashboard"""
     
+    # Colors come from the active palette, registered as a Textual theme (see apply_theme)
     CSS = """
-    Screen {
-        background: black;
+    Screen, #main-layout, #feeds-container, #feeds, #dashboard, #ticker {
+        background: $background;
+        color: $foreground;
     }
     
     Header {
-        background: black;
-        color: white;
-    }
-    
-    .cold-war Header {
-        background: black;
-        color: #00FF00;
+        background: $background;
+        color: $foreground;
     }
     
     CybrWireFooter {
-        background: $boost;
-        color: $text;
+        background: $panel;
+        color: $foreground;
         height: 1;
-    }
-    
-    .cold-war CybrWireFooter {
-        background: $boost;
-        color: #00ff00;
     }
     
     #ticker {
         height: 3;
-        background: black;
-        color: #00ff00;
-    }
-    
-    .cold-war #ticker {
-        color: #00ff00;
     }
     
     #main-layout {
-        background: black;
         border: none;
     }
     
     #feeds-container {
         width: 3fr;
         height: 100%;
-        background: black;
         overflow-y: auto;
-    }
-    
-    #feeds-container:hover {
-        background: #111111;
     }
     
     #feeds {
         width: 100%;
-        background: black;
     }
     
     #dashboard {
         width: 1fr;
         height: 100%;
-        background: black;
-        color: white;
     }
     
     #loading-content {
-        background: black;
-        color: white;
         padding: 2;
     }
     """
-    
-    THEME_COLORS = {
-        "textual-ansi": {
-            "background": "#000000",
-            "background-hover": "#1a1a1a"
-        },
-        "textual-dark": {
-            "background": "#1e3050",
-            "background-hover": "#2e4060"
-        },
-        "textual-light": {
-            "background": "#d5e0f0",
-            "background-hover": "#e8f0ff"
-        },
-        "nord": {
-            "background": "#4c5a70",
-            "background-hover": "#5e6b82"
-        },
-        "gruvbox": {
-            "background": "#504540",
-            "background-hover": "#655550"
-        },
-        "monokai": {
-            "background": "#403f35",
-            "background-hover": "#555448"
-        },
-        "dracula": {
-            "background": "#3d4158",
-            "background-hover": "#525670"
-        },
-        "solarized-light": {
-            "background": "#f0e8c8",
-            "background-hover": "#fff8e0"
-        },
-        "solarized-dark": {
-            "background": "#0a5060",
-            "background-hover": "#0f6575"
-        },
-        "tokyo-night": {
-            "background": "#2a3355",
-            "background-hover": "#3a4365"
-        }
-    }
     
     TITLE = " C Y B R W I R E // v1.0 LEGENDARY EDITION "
     
@@ -719,7 +659,14 @@ class CybrWireApp(App):
         self.incident_page_offset = 0
         self.hover_row = -1
         self.rows_per_page = 20
-        self.theme_mode = saved.get("theme", "textual-ansi")
+        self.theme_mode = saved.get("theme") if saved.get("theme") in PALETTES else DEFAULT_PALETTE
+        for p in (*PALETTES.values(), COLD_WAR):
+            self.register_theme(TextualTheme(
+                name=f"cybrwire-{p.key}", dark=True,
+                primary=p.focus, secondary=p.accent, accent=p.accent,
+                foreground=p.text, background=p.bg, surface=p.bg, panel=p.surface,
+                success=p.good, warning=p.warn, error=p.bad,
+            ))
         self.filter_type_index = saved.get("filter_type_index", 0)
         self.filter_mode = ["all", "alerts", "posts"][self.filter_type_index]
         self.feed_source_index = saved.get("feed_source_index", 0)
@@ -767,14 +714,8 @@ class CybrWireApp(App):
         self.api_tools_loading = False  # Is query in progress
         self.api_tools_input_mode = True  # Always in input mode in this panel
         
-        # Set footer color based on cold war mode
-        self.footer_color = "#00FF00" if self.cold_war_mode else "#55bbdd"
-        
         # Initialize next refresh time
         self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
-        
-        if self.cold_war_mode:
-            self.add_class("cold-war")
         
         self._initializing = False  # Allow watchers to work now
     
@@ -1035,15 +976,16 @@ class CybrWireApp(App):
             self.mark_dirty()
     
 
+    @property
+    def palette(self) -> Palette:
+        """Colors for everything drawn right now; Cold War overrides the theme"""
+        return COLD_WAR if self.cold_war_mode else PALETTES.get(self.theme_mode, PALETTES[DEFAULT_PALETTE])
+    
     def watch_cold_war_mode(self, old_value, new_value):
-        """Update footer color when cold war mode changes"""
+        """Switch the whole UI between Cold War green and the selected theme"""
         if getattr(self, '_initializing', False):
             return
-        self.footer_color = "#00FF00" if new_value else "#55bbdd"
-        if new_value:
-            self.add_class("cold-war")
-        else:
-            self.remove_class("cold-war")
+        self.apply_theme()
     
     def watch_panel_focus(self, old_value, new_value):
         """Update border styling when panel focus changes"""
@@ -1084,55 +1026,14 @@ class CybrWireApp(App):
             pass
     
     def apply_theme(self):
-        """Apply current theme colors to CSS and Textual theme"""
-        # Set Textual's built-in theme for header/footer (only for supported themes)
-        # Textual only supports a subset of these themes natively
-        textual_supported = [
-            "textual-ansi", "textual-dark", "textual-light",
-            "nord", "gruvbox", "monokai", "dracula",
-            "solarized-light", "solarized-dark", "tokyo-night"
-        ]
-        
-        if self.theme_mode in textual_supported:
-            try:
-                self.theme = self.theme_mode
-            except Exception:
-                self.theme = "textual-dark"
-        else:
-            # For unsupported themes, use textual-dark as base
-            self.theme = "textual-dark"
-        
-        # Get custom background colors for our theme
-        colors = self.THEME_COLORS.get(self.theme_mode, self.THEME_COLORS["textual-dark"])
-        
-        # Update widget styles programmatically
-        try:
-            # Update screen background
-            self.screen.styles.background = colors["background"]
-            
-            # Update ticker
-            ticker = self.query_one("#ticker", Static)
-            ticker.styles.background = colors["background"]
-            
-            # Update feeds container
-            feeds_container = self.query_one("#feeds-container")
-            feeds_container.styles.background = colors["background"]
-            
-            # Update feeds
-            feeds = self.query_one("#feeds", Static)
-            feeds.styles.background = colors["background"]
-            
-            # Update dashboard
-            dashboard = self.query_one("#dashboard", Static)
-            dashboard.styles.background = colors["background"]
-        except Exception:
-            # Widgets might not exist yet on first call
-            pass
+        """Activate the Textual theme for the current palette (header, footer, backgrounds, scrollbars)"""
+        self.theme = f"cybrwire-{self.palette.key}"
+        self.mark_dirty()
     
     def on_mount(self) -> None:
         """Show loading screen then start app"""
         self.apply_theme()
-        self.push_screen(LoadingScreen(self.cold_war_mode))
+        self.push_screen(LoadingScreen(self.palette))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
     async def initial_load(self):
@@ -1307,91 +1208,7 @@ class CybrWireApp(App):
                     # War room panel
                     dashboard_content = self.make_war_room_panel()
                 elif self.dashboard_panel_index == 2:
-                    global failed_feeds, disabled_feeds
-                    
-                    is_focused = self.panel_focus == "dashboard"
-                    
-                    if not failed_feeds and not disabled_feeds:
-                        if not self.cold_war_mode:
-                            failed_msg = "✓ All feeds loaded successfully!"
-                        else:
-                            failed_msg = "[OK] All feeds loaded successfully!"
-                        failed_style = "bold #00FF00" if not is_focused else "bold #000000 on #00FF00"
-                        title_style = "#00FF00"
-                        dashboard_content = Panel(
-                            Text(failed_msg, style=failed_style),
-                            title="FEED STATUS",
-                            border_style=title_style,
-                            padding=(1, 2)
-                        )
-                    else:
-                        feeds_per_page = 8
-                        
-                        failed_list = sorted(failed_feeds.items())
-                        disabled_list = sorted(disabled_feeds.items())
-                        
-                        total_feeds = len(failed_list) + len(disabled_list)
-                        total_pages = (total_feeds + feeds_per_page - 1) // feeds_per_page
-                        
-                        self.dashboard_page_offset = max(0, min(self.dashboard_page_offset, total_pages - 1))
-                        
-                        start_idx = self.dashboard_page_offset * feeds_per_page
-                        end_idx = start_idx + feeds_per_page
-                        
-                        failed_msg = ""
-                        if not self.cold_war_mode:
-                            failed_msg = "⚠ FAILED FEEDS:\n\n"
-                        else:
-                            failed_msg = "[ALERT] FAILED FEEDS:\n\n"
-                        
-                        current_idx = 0
-                        for feed_name, (error_msg, failure_count) in failed_list:
-                            if start_idx <= current_idx < end_idx:
-                                error_short = error_msg[:50] + "..." if len(error_msg) > 50 else error_msg
-                                failed_msg += f"• {feed_name} ({failure_count}/7)\n  {error_short}\n"
-                            current_idx += 1
-                        
-                        if disabled_list and current_idx >= start_idx:
-                            if any(start_idx <= current_idx + i < end_idx for i in range(len(disabled_list))):
-                                failed_msg += "\n╶─ AUTOMATICALLY DISABLED FEEDS ─╴\n"
-                                failed_msg += "Re-enable with 'e' on focused panel\n\n"
-                        
-                        for feed_name, (error_msg, reason) in disabled_list:
-                            if start_idx <= current_idx < end_idx:
-                                error_short = error_msg[:40] + "..." if len(error_msg) > 40 else error_msg
-                                failed_msg += f"• {feed_name}\n  {reason}\n"
-                            current_idx += 1
-                        
-                        if self.cold_war_mode:
-                            title_style = "#00FF00"
-                            text_color = "#00FF00"
-                            border_color = "#00FF00"
-                        else:
-                            title_style = "#ff6666" if is_focused else "white"
-                            text_color = "#ff6666"
-                            border_color = "#ff6666" if is_focused else "white"
-                        
-                        failed_text = Text(failed_msg, style=text_color)
-                        
-                        if is_focused:
-                            title_text = f"FEED STATUS - Page {self.dashboard_page_offset + 1}/{total_pages}"
-                            title = Text(title_text, style=f"bold #000000 on {title_style}")
-                        else:
-                            title = "FEED STATUS"
-                        
-                        # Add pagination tip in subtitle if multiple pages
-                        subtitle = None
-                        if total_pages > 1:
-                            subtitle_text = f"← → to change pages"
-                            subtitle = Text(subtitle_text, style="bold #00ff00" if self.cold_war_mode else "bold cyan")
-                        
-                        dashboard_content = Panel(
-                            failed_text,
-                            title=title,
-                            subtitle=subtitle,
-                            border_style=border_color,
-                            padding=(1, 2)
-                        )
+                    dashboard_content = self.make_feed_status_panel()
                 else:
                     dashboard_content = self.make_dashboard()
                 
@@ -1462,9 +1279,10 @@ class CybrWireApp(App):
         loop = core + "   //   "
         offset = ticker_offset % len(loop)
         visible_text = (loop * 3)[offset:offset + max(self.size.width - 4, 10)]
-        color = "#00ff00" if self.cold_war_mode else "#66cc66"
-        return Panel(Text(visible_text, style=f"bold {color} on black"), title="LIVE THREAT TAPE",
-                     border_style=color, padding=0)
+        p = self.palette
+        return Panel(Text(visible_text, style=f"bold {p.accent}"),
+                     title=Text(" LIVE THREAT TAPE ", style=f"bold {p.muted}"),
+                     border_style=p.border, box=box.ROUNDED, padding=0)
     
     def is_alert(self, item):
         """Classify item as alert vs blog post"""
@@ -1492,53 +1310,66 @@ class CybrWireApp(App):
     
     def make_alert_preview(self, alert):
         """Detail pane for the highlighted alert"""
-        accent = "#00ff00" if self.cold_war_mode else "#44ccaa"
-        body = "#00ff00" if self.cold_war_mode else "#ccddee"
-        dim = "#00aa00" if self.cold_war_mode else "#778899"
+        p = self.palette
         text = Text()
         if not alert:
-            text.append("Select an alert with ↑/↓ to see its summary here.", style=dim)
+            text.append("Select an alert with ↑/↓ or a click to see its summary here.", style=p.muted)
             return text
         
-        text.append(alert["title"] + "\n", style=f"bold {accent}")
+        text.append(alert["title"] + "\n", style=f"bold {p.text}")
         when = "no publish date in feed" if alert.get("undated") else f"{alert['ts']:%a %d %b %H:%M} UTC ({age(alert['ts'])} ago)"
-        text.append(f"{alert['source']}  •  {when}  •  {alert['severity'].upper()}", style=dim)
+        text.append(alert["severity"].upper(), style=p.badge(alert["severity"]))
+        text.append(f"  {alert['source']}  •  {when}", style=p.muted)
         if STATE.is_new(alert):
-            text.append("  •  NEW", style="bold #00ff00")
+            text.append("  ")
+            text.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
         text.append("\n")
         
         key = alert_key(alert)
         if key in self.alert_explanations:
-            text.append("AI: " + self.alert_explanations[key].strip() + "\n", style="#ffcc66" if not self.cold_war_mode else body)
+            text.append("AI  ", style=f"bold {p.accent}")
+            text.append(self.alert_explanations[key].strip() + "\n", style=p.text)
         elif key in self.explaining:
-            text.append("AI: analyzing...\n", style="italic #ffcc66" if not self.cold_war_mode else body)
+            text.append("AI  analyzing...\n", style=f"italic {p.accent}")
         else:
-            text.append((alert.get("summary") or "No summary provided by this feed.") + "\n", style=body)
+            text.append((alert.get("summary") or "No summary provided by this feed.") + "\n", style=p.text)
         
         if alert.get("url"):
-            text.append(alert["url"] + "\n", style=f"underline {dim}")
-        hint = "Enter open in browser"
+            text.append(alert["url"] + "\n", style=f"underline {p.muted}")
+        hints = [("Enter", "open in browser")]
         if not self.ai_problem and key not in self.alert_explanations:
-            hint += "  •  a explain with AI"
-        text.append(hint, style=f"italic {dim}")
+            hints.append(("a", "explain with AI"))
+        text.append_text(self.hint_bar(hints))
         text.truncate(max(self.size.width, 40) * self.PREVIEW_LINES)
+        return text
+    
+    def hint_bar(self, hints):
+        """'key description' pairs with keys in the accent color"""
+        p = self.palette
+        text = Text()
+        for i, (key, desc) in enumerate(hints):
+            if i:
+                text.append("   ")
+            text.append(key, style=f"bold {p.accent}")
+            text.append(f" {desc}", style=p.muted)
         return text
     
     def make_feeds_table(self):
         """Create feeds table with pagination and a preview of the selected alert"""
+        p = self.palette
         try:
-            available_height = max(10, self.query_one("#feeds-container").size.height - 6)
+            container_height = self.query_one("#feeds-container").size.height
         except Exception:
-            available_height = max(10, self.size.height - 12)
-        self.rows_per_page = max(5, available_height - self.PREVIEW_LINES - 1)
+            container_height = self.size.height - 8
+        # Panel borders + padding (4) and the spacer above the preview (1)
+        self.rows_per_page = max(5, container_height - 5 - self.PREVIEW_LINES)
         
-        border = "#00FF00" if self.cold_war_mode else "#4499bb"
-        table = Table(box=box.DOUBLE, show_header=False, padding=(0, 1), expand=True, border_style=border)
+        table = Table(box=None, show_header=False, padding=(0, 1), expand=True)
         narrow = self.size.width < 120
         date_width = 6 if narrow else 10
         table.add_column(width=date_width, min_width=date_width, no_wrap=True)  # published date
         table.add_column(width=3, min_width=3, no_wrap=True, justify="right")   # age
-        table.add_column(width=10, min_width=10, no_wrap=True)                  # severity
+        table.add_column(width=12, min_width=12, no_wrap=True)                  # severity tag
         table.add_column(ratio=1, no_wrap=True, overflow="ellipsis")            # NEW badge + title
         
         filtered_alerts = self.filtered_alerts()
@@ -1548,410 +1379,255 @@ class CybrWireApp(App):
         self.alert_urls = [a.get("url", "") for a in self.page_alerts]
         self.hover_row = min(self.hover_row, len(self.page_alerts) - 1)
         
-        severity_colors = {
-            "critical": "bold white on #dd4444",
-            "zeroday": "bold black on #e6d144",
-            "ransomware": "bold black on #dd4488",
-            "apt": "bold black on #b866cc",
-            "exploit": "bold #dd5555",
-            "info": "#55bbdd",
-        }
         for row_idx, a in enumerate(self.page_alerts):
-            if row_idx == self.hover_row:
-                title_style = severity_style = date_style = "bold white on #004400" if self.cold_war_mode else "bold white on #333333"
-            elif self.cold_war_mode:
-                title_style = severity_style = date_style = "#00FF00"
-            else:
-                title_style = severity_style = severity_colors.get(a["severity"], "white")
-                date_style = "#55bbdd"
+            selected = row_idx == self.hover_row
+            sev = a["severity"]
             title = Text()
             if STATE.is_new(a):
-                title.append(" NEW ", style="bold black on #00ff00")
+                title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
                 title.append(" ")
-            title.append(a["title"], style=title_style)
+            urgent = sev in ("critical", "zeroday")
+            title.append(a["title"], style=f"bold {p.text}" if urgent or selected else p.text)
             table.add_row(
-                Text(f"{a['ts']:%d %b}" if narrow else f"{a['ts']:%a %d %b}", style=date_style),
-                Text("—" if a.get("undated") else age(a["ts"]), style=date_style),
-                Text(a["severity"].upper(), style=severity_style),
+                Text(f"{a['ts']:%d %b}" if narrow else f"{a['ts']:%a %d %b}", style=p.muted),
+                Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
+                Text(f" {sev.upper()} " if urgent and not p.monochrome else sev.upper(), style=p.badge(sev)),
                 title,
+                style=f"on {p.surface}" if selected else None,
             )
         
         if not self.page_alerts:
-            table.add_row("", "", Text("NO ALERTS", style="yellow"), Text("Nothing matches the current filters", style="dim"))
+            table.add_row("", "", Text("NO ALERTS", style=p.warn), Text("Nothing matches the current filters", style=p.muted))
         
         rem = int((self.next_refresh - datetime.now(timezone.utc)).total_seconds())
         uptime = datetime.now(timezone.utc) - start_time
         current_page = self.feed_page_offset // self.rows_per_page + 1
-        green = "bold green"
-        status = Text()
-        status.append(f"Next refresh {max(rem, 0) // 60 + 1}m", green if self.cold_war_mode else "bold bright_red")
-        status.append(f" — Up {int(uptime.total_seconds() // 3600)}h{int(uptime.total_seconds() % 3600 // 60):02d}m", green if self.cold_war_mode else "bold white")
-        status.append(" — ↑/↓ select  |  Enter open  |  a explain", green if self.cold_war_mode else "bold magenta")
+        status = Text(f" refresh in {max(rem, 0) // 60 + 1}m · up {int(uptime.total_seconds() // 3600)}h"
+                      f"{int(uptime.total_seconds() % 3600 // 60):02d}m   ", style=p.muted)
+        hints = [("↑↓", "select"), ("Enter", "open"), ("a", "explain")]
         if total_pages > 1:
-            status.append("  |  ← → pages", green if self.cold_war_mode else "bold cyan")
+            hints.append(("←→", "pages"))
+        status.append_text(self.hint_bar(hints))
+        status.append(" ")
         
         cw = " // *COLD*WAR*MODE*" if self.cold_war_mode else ""
-        page = f" - Page {current_page}/{total_pages}" if total_pages > 1 else ""
-        title_str = f"C Y B R W I R E 1.0 // Global Threat Feed ({len(filtered_alerts)}){page}{cw}"
-        if self.panel_focus == "main":
-            title_text = Text(title_str, style=f"bold black on {'#00ff00' if self.cold_war_mode else '#44ccaa'}")
-        else:
-            title_text = title_str
+        page = f" · page {current_page}/{total_pages}" if total_pages > 1 else ""
+        title_text, border = self.frame(f"GLOBAL THREAT FEED ({len(filtered_alerts)}){page}{cw}", self.panel_focus == "main")
         
-        preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=border, box=box.ROUNDED,
+        preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=p.border, box=box.ROUNDED,
                         padding=(0, 1), height=self.PREVIEW_LINES)
-        return Panel(Group(table, preview),
-                     title=title_text,
-                     subtitle=status,
-                     border_style="#00ff00" if self.cold_war_mode else "#44ccaa",
+        return Panel(Group(table, Text(""), preview),
+                     title=title_text, subtitle=status, border_style=border, box=box.ROUNDED,
                      padding=(1, 2))
+    
+    def frame(self, title, focused):
+        """Title and border style for a panel; only the focused panel is highlighted"""
+        p = self.palette
+        if focused:
+            return Text(f" {title} ", style=f"bold {p.bg} on {p.focus}"), p.focus
+        return Text(f" {title} ", style=f"bold {p.muted}"), p.border
+    
+    def bar(self, pct, color, width=HEAT_BAR_WIDTH):
+        """Horizontal meter: filled part in color, remainder muted"""
+        filled = int(round(max(0, min(100, pct)) / 100 * width))
+        meter = Text("█" * filled, style=color)
+        meter.append("░" * (width - filled), style=self.palette.surface if not self.palette.monochrome else self.palette.muted)
+        return meter
     
     def make_dashboard(self):
         """Create dashboard panel with all metrics"""
-        global active_feed_source
+        p = self.palette
         now = datetime.now(timezone.utc)
         cutoff_time = now - timedelta(hours=self.recency_hours)
         
-        # Filter to active feed source first
         if active_feed_source == "all":
             source_filtered_queue = alert_queue
         else:
             source_filtered_queue = [a for a in alert_queue if a.get("source_file") == active_feed_source]
-        
-        # Calculate all metrics from filtered queue
-        critical_count = len([a for a in source_filtered_queue if a["severity"] == "critical" and a.get("ts", now) >= cutoff_time])
-        zeroday_count = len([a for a in source_filtered_queue if a["severity"] == "zeroday" and a.get("ts", now) >= cutoff_time])
-        ransomware_count = len([a for a in source_filtered_queue if a["severity"] == "ransomware" and a.get("ts", now) >= cutoff_time])
-        apt_count = len([a for a in source_filtered_queue if a["severity"] == "apt" and a.get("ts", now) >= cutoff_time])
-        exploit_count = len([a for a in source_filtered_queue if a["severity"] == "exploit" and a.get("ts", now) >= cutoff_time])
-        filtered_count = len([a for a in source_filtered_queue if a.get("ts", now) >= cutoff_time])
+        window_alerts = [a for a in source_filtered_queue if a["ts"] >= cutoff_time]
         # Undated items (IP/URL lists, some blogs) are re-stamped on every fetch, so they
         # don't count as "incoming"
         dated_alerts = [a for a in source_filtered_queue if not a.get("undated")]
-        new_count = sum(1 for a in dated_alerts if now - a["ts"] < timedelta(hours=1))
-        window_alerts = [a for a in source_filtered_queue if a["ts"] >= cutoff_time]
-        ioc_count = sum(1 for a in window_alerts if a["title"].startswith(IOC_TITLE_PREFIXES))
         
-        # Rate calculation
-        hour_ago = now - timedelta(hours=1)
+        counts = Counter(a["severity"] for a in window_alerts)
+        critical_count, zeroday_count = counts["critical"], counts["zeroday"]
+        ransomware_count, apt_count, exploit_count = counts["ransomware"], counts["apt"], counts["exploit"]
+        filtered_count = len(window_alerts)
+        new_count = sum(1 for a in dated_alerts if now - a["ts"] < timedelta(hours=1))
+        ioc_count = sum(1 for a in window_alerts if a["title"].startswith(IOC_TITLE_PREFIXES))
         rate = filtered_count / max(self.recency_hours, 1)
         
-        # Build metrics table
-        metrics_table = Table(show_header=False, box=None, expand=True)
-        metrics_table.add_column(justify="left", no_wrap=True, ratio=1)
-        metrics_table.add_column(justify="left", no_wrap=True, ratio=1)
-        
+        # --- Metrics (left) and source mix (right) ---
         metrics_list = [
-            ("Total Alerts", filtered_count, "#55bbdd"),
-            ("Critical/KEV", critical_count, "#dd4444"),
-            ("Zero-Day", zeroday_count, "#e6d144"),
-            ("Ransomware", ransomware_count, "#dd4488"),
-            ("APT Activity", apt_count, "#b866cc"),
-            ("Exploits/POC", exploit_count, "#dd5555"),
-            ("IOCs Detected", ioc_count, "#dd5555"),
-            ("Incoming (1h)", new_count, "#66dd66"),
-            ("Avg/Hour", f"{rate:.0f}/hr", "#66dd66"),
+            ("Total Alerts", filtered_count, p.text),
+            ("Critical/KEV", critical_count, p.critical),
+            ("Zero-Day", zeroday_count, p.zeroday),
+            ("Ransomware", ransomware_count, p.ransomware),
+            ("APT Activity", apt_count, p.apt),
+            ("Exploits/POC", exploit_count, p.exploit),
+            ("IOCs Listed", ioc_count, p.text),
+            ("Incoming (1h)", new_count, p.text),
+            ("Avg/Hour", f"{rate:.0f}/hr", p.text),
         ]
+        source_counts = Counter(a.get("source_file", "curated") for a in alert_queue if a["ts"] >= cutoff_time)
+        total_sources = sum(source_counts.values()) or 1
+        sources_right = [Text("SOURCES", style=f"bold {p.accent}")]
+        for key, label in (("curated", "Curated"), ("custom", "Custom"), ("community", "Community")):
+            selected = active_feed_source == key
+            pct = source_counts.get(key, 0) / total_sources * 100
+            line = Text("● " if selected else "○ ", style=p.accent if selected else p.muted)
+            line.append(label, style=f"bold {p.text}" if selected else p.text)
+            sources_right.append(line)
+            meter = self.bar(pct, p.accent if selected else p.muted, width=12)
+            meter.append(f" {int(pct)}%", style=p.muted)
+            sources_right.append(meter)
+        all_line = Text("● " if active_feed_source == "all" else "○ ", style=p.accent if active_feed_source == "all" else p.muted)
+        all_line.append("All", style=f"bold {p.text}" if active_feed_source == "all" else p.text)
+        sources_right.append(all_line)
         
-        # Right column - TOP SOURCES with feed selection indicators
-        source_counts = {"curated": 0, "custom": 0, "community": 0}
-        for a in alert_queue:
-            if a.get("ts", datetime.now(timezone.utc)) >= datetime.now(timezone.utc) - timedelta(hours=self.recency_hours):
-                src_file = a.get("source_file", "curated")
-                source_counts[src_file] = source_counts.get(src_file, 0) + 1
-        
-        total_filtered_for_sources = sum(source_counts.values())
-        sources_right = []
-        header = Text("TOP SOURCES", style="#00ff00 bold" if self.cold_war_mode else "#55bbdd bold")
-        sources_right.append(header)
-        
-        if total_filtered_for_sources > 0:
-            bar_width = 12
-            curated_pct = (source_counts.get("curated", 0) / total_filtered_for_sources * 100)
-            custom_pct = (source_counts.get("custom", 0) / total_filtered_for_sources * 100)
-            community_pct = (source_counts.get("community", 0) / total_filtered_for_sources * 100)
-            
-            # Curated - with indicator
-            curated_indicator = "● " if active_feed_source == "curated" else "○ "
-            curated_bar = "█" * int(curated_pct / (100 / bar_width)) + "░" * (bar_width - int(curated_pct / (100 / bar_width)))
-            s = Text(curated_indicator + "Curated", style="#00ff00 bold" if self.cold_war_mode else "#66cc66 bold")
-            sources_right.append(s)
-            bar_text = Text()
-            bar_text.append(f"[{curated_bar}] {int(curated_pct)}%", style="#00ff00" if self.cold_war_mode else "#66cc66")
-            sources_right.append(bar_text)
-            
-            # Custom - with indicator
-            custom_indicator = "● " if active_feed_source == "custom" else "○ "
-            custom_bar = "█" * int(custom_pct / (100 / bar_width)) + "░" * (bar_width - int(custom_pct / (100 / bar_width)))
-            s = Text(custom_indicator + "Custom", style="#00ff00 bold" if self.cold_war_mode else "#9966ff bold")
-            sources_right.append(s)
-            bar_text = Text()
-            bar_text.append(f"[{custom_bar}] {int(custom_pct)}%", style="#00ff00" if self.cold_war_mode else "#9966ff")
-            sources_right.append(bar_text)
-            
-            # Community - with indicator
-            community_indicator = "● " if active_feed_source == "community" else "○ "
-            community_bar = "█" * int(community_pct / (100 / bar_width)) + "░" * (bar_width - int(community_pct / (100 / bar_width)))
-            s = Text(community_indicator + "Community", style="#00ff00 bold" if self.cold_war_mode else "#66ccff bold")
-            sources_right.append(s)
-            bar_text = Text()
-            bar_text.append(f"[{community_bar}] {int(community_pct)}%", style="#00ff00" if self.cold_war_mode else "#66ccff")
-            sources_right.append(bar_text)
-            
-            # ALL option - with indicator
-            all_indicator = "● " if active_feed_source == "all" else "○ "
-            s = Text(all_indicator + "All", style="#00ff00 bold" if self.cold_war_mode else "#dddd66 bold")
-            sources_right.append(s)
-        
-        # Add rows with both columns
-        rows = max(len(metrics_list), len(sources_right))
-        for i in range(rows):
+        metrics_table = Table(show_header=False, box=None, expand=True, padding=(0, 1))
+        metrics_table.add_column(no_wrap=True, ratio=1)
+        metrics_table.add_column(no_wrap=True, ratio=1)
+        for i in range(max(len(metrics_list), len(sources_right))):
+            left = Text()
             if i < len(metrics_list):
-                lbl, val, style = metrics_list[i]
-                left_cell = Text()
-                left_cell.append(f"{lbl:12} : ", style="#00ff00" if self.cold_war_mode else style)
-                left_cell.append(str(val), style="#00ff00" if self.cold_war_mode else style)
-            else:
-                left_cell = Text("")
-            
-            right_cell = sources_right[i] if i < len(sources_right) else Text("")
-            metrics_table.add_row(left_cell, right_cell)
+                label, value, color = metrics_list[i]
+                left.append(f"{label:<13} ", style=p.muted)
+                left.append(str(value), style=f"bold {color}" if value not in (0, "0/hr") else p.muted)
+            metrics_table.add_row(left, sources_right[i] if i < len(sources_right) else Text(""))
         
-        # Heat calculations
+        # --- Heat meters ---
+        def pct_of(n):
+            return n / filtered_count * 100 if filtered_count else 0
         total_threats = critical_count + zeroday_count + ransomware_count + apt_count + exploit_count
-        heat_pct = (total_threats / max(filtered_count, 1)) * 100 if filtered_count > 0 else 0
-        ransomware_pct = (ransomware_count / max(filtered_count, 1)) * 100 if filtered_count > 0 else 0
-        apt_pct = (apt_count / max(filtered_count, 1)) * 100 if filtered_count > 0 else 0
-        zeroday_pct = (zeroday_count / max(filtered_count, 1)) * 100 if filtered_count > 0 else 0
-        exploit_pct = (exploit_count / max(filtered_count, 1)) * 100 if filtered_count > 0 else 0
-        
-        # Weighted threat score: prioritize severity and exploitability
-        # Zero-days (5x), Critical/KEV (4x), Ransomware & APT (3x), Exploits (2x)
-        weighted_threats = (
-            critical_count * 4 +
-            zeroday_count * 5 +
-            ransomware_count * 3 +
-            apt_count * 3 +
-            exploit_count * 2
-        )
-        # Normalize to 0-100% based on maximum possible threat value
-        max_threat_value = filtered_count * 17 if filtered_count > 0 else 1
-        master_pct = min(100, (weighted_threats / max_threat_value) * 100) if filtered_count > 0 else 0
-        
-        # Cap percentages early for style determination
-        capped_heat = min(100, heat_pct)
-        capped_ransomware = min(100, ransomware_pct)
-        capped_apt = min(100, apt_pct)
-        capped_zeroday = min(100, zeroday_pct)
-        capped_exploit = min(100, exploit_pct)
-        capped_master = min(100, master_pct)
-        
-        # Determine Heat Level style (responsive) - based on capped percentage
-        if capped_heat < 20:
-            heat_style = "#66cc66"
-        elif capped_heat < 50:
-            heat_style = "#e6d144"
-        elif capped_heat < 80:
-            heat_style = "#dd5555"
-        else:
-            heat_style = "bold reverse #dd4444"
-        
-        # Determine DEFCON level
-        if master_pct < 20:
-            defcon = 5
-            defcon_style = "#66cc66"
-        elif master_pct < 40:
-            defcon = 4
-            defcon_style = "#e6d144"
-        elif master_pct < 60:
-            defcon = 3
-            defcon_style = "#e6b944"
-        elif master_pct < 80:
-            defcon = 2
-            defcon_style = "#dd5555"
-        else:
-            defcon = 1
-            defcon_style = "bold reverse #dd4444"
-        
-        # Get time since last zero-day
+        heat_pct = pct_of(total_threats)
+        # Weighted score: zero-days 5x, critical/KEV 4x, ransomware & APT 3x, exploits 2x
+        weighted = critical_count * 4 + zeroday_count * 5 + (ransomware_count + apt_count) * 3 + exploit_count * 2
+        master_pct = min(100, weighted / (filtered_count * 17) * 100) if filtered_count else 0
+        defcon = 5 if master_pct < 20 else 4 if master_pct < 40 else 3 if master_pct < 60 else 2 if master_pct < 80 else 1
         last_zeroday_time = max((a["ts"] for a in window_alerts if a["severity"] == "zeroday"), default=None)
-        time_since_zeroday = f"{age(last_zeroday_time)} ago" if last_zeroday_time else "none in window"
-        
-        # Build heat bars (already capped above)
-        indent = " " * 2
-        heat_bar = "█" * int(capped_heat / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_heat / 3))
-        ransomware_bar = "█" * int(capped_ransomware / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_ransomware / 3))
-        apt_bar = "█" * int(capped_apt / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_apt / 3))
-        zeroday_bar = "█" * int(capped_zeroday / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_zeroday / 3))
-        exploit_bar = "█" * int(capped_exploit / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_exploit / 3))
-        defcon_bar = "█" * int(capped_master / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_master / 3))
+        time_since_zeroday = f"last {age(last_zeroday_time)} ago" if last_zeroday_time else "none in window"
         # 0% at the farthest setting ever (17 minutes, 1991), 100% at midnight
         doomsday_pct = max(0, min(100, (1 - self.doomsday_seconds / 1020) * 100))
-        doomsday_bar = "█" * int(doomsday_pct / 3) + "░" * (HEAT_BAR_WIDTH - int(doomsday_pct / 3))
         
-        heat_info = ""
-        heat_info += f"\n[{'#00ff00' if self.cold_war_mode else heat_style}]{indent}[bold]Heat Level (High-Threat %)[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else heat_style}]{heat_bar}[/] {int(capped_heat)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#dd4488'}]{indent}[bold]Ransomware Heat[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#dd4488'}]{ransomware_bar}[/] {int(capped_ransomware)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#b866cc'}]{indent}[bold]APT Heat[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#b866cc'}]{apt_bar}[/] {int(capped_apt)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#e6d144'}]{indent}[bold]Zero-Day Heat (Last: {time_since_zeroday})[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#e6d144'}]{zeroday_bar}[/] {int(capped_zeroday)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#dd5555'}]{indent}[bold]Exploit Heat[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#dd5555'}]{exploit_bar}[/] {int(capped_exploit)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else 'bold #dd4444'}]{indent}[bold]Doomsday Clock ({self.doomsday_seconds}s to Midnight)[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else 'bold #dd4444'}]{doomsday_bar}[/][/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else defcon_style}]{indent}[bold]Cyber DEFCON Level (DEFCON {defcon})[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else defcon_style}]{defcon_bar}[/] {int(capped_master)}%[/]\n\n"
+        meters = [
+            ("Heat Level", "high-threat share", heat_pct, p.level(heat_pct)),
+            ("Ransomware", None, pct_of(ransomware_count), p.ransomware),
+            ("APT", None, pct_of(apt_count), p.apt),
+            ("Zero-Day", time_since_zeroday, pct_of(zeroday_count), p.zeroday),
+            ("Exploit", None, pct_of(exploit_count), p.exploit),
+            ("Doomsday Clock", f"{self.doomsday_seconds}s to midnight", doomsday_pct, p.bad),
+            (f"Cyber DEFCON {defcon}", None, master_pct, p.level(master_pct)),
+        ]
+        lines = [Text("")]
+        for label, note, pct, color in meters:
+            head = Text(label, style=f"bold {p.text}")
+            if note:
+                head.append(f"  {note}", style=p.muted)
+            lines.append(head)
+            meter = self.bar(pct, color)
+            meter.append(f" {int(pct)}%" if not label.startswith("Doomsday") else "", style=p.muted)
+            lines.append(meter)
         
-        # PwnList section with padding
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#dd4444'}]{indent}[bold]PwnList[/bold]:[/]\n"
-        
-        breach_colors = ["#ff6666", "#ff9966", "#ffcc66", "#66ff66", "#66ccff", "#cc99ff", "#99ffff"]
+        # --- Recent breaches (HIBP) ---
+        lines.append(Text(""))
+        lines.append(Text("RECENT BREACHES", style=f"bold {p.accent}"))
         self.breach_urls = []
-        
-        for idx, breach in enumerate(breach_list):
-            breach_name = breach.get('Title', 'Unknown')
-            # Truncate long breach names to fit on one line - be more aggressive
-            if len(breach_name) > 20:
-                breach_name = breach_name[:17] + "..."
-            # Use AddedDate (when added to HIBP) instead of BreachDate (when breach occurred)
-            added_date = breach.get('AddedDate', 'Unknown')
-            # Shorten date to just MM-DD for space
-            if len(added_date) >= 10:
-                added_date = added_date[5:10]  # Get MM-DD from YYYY-MM-DD
-            breach_count = breach.get('PwnCount', 0)
-            
-            # Format count nicely
-            if breach_count > 1000000:
-                count_str = f"{breach_count/1000000:.1f}M"
-            elif breach_count > 1000:
-                count_str = f"{breach_count/1000:.1f}K"
-            else:
-                count_str = str(breach_count)
-            
-            color = "#00ff00" if self.cold_war_mode else breach_colors[idx % len(breach_colors)]
-            breach_url = f"https://haveibeenpwned.com/?q={breach_name.replace(' ', '+')}"
-            self.breach_urls.append(breach_url)
-            
-            heat_info += f"{indent}[{color}]{breach_name}[/] [{color}]{added_date}[/] [{color}]•[/] [{color}]{count_str}[/]\n"
-        
+        for breach in breach_list:
+            name = breach.get("Title", "Unknown")
+            name = name if len(name) <= 20 else name[:19] + "…"
+            count = breach.get("PwnCount", 0)
+            count_str = f"{count / 1e6:.1f}M" if count >= 1e6 else f"{count / 1e3:.0f}K" if count >= 1e3 else str(count)
+            self.breach_urls.append(f"https://haveibeenpwned.com/?q={name.replace(' ', '+')}")
+            row = Text(f"{name:<21}", style=p.text)
+            row.append(f"{breach.get('AddedDate', '')[5:10]:<6}", style=p.muted)
+            row.append(f"{count_str:>7}", style=p.accent)
+            lines.append(row)
         if not breach_list:
-            heat_info += f"{indent}[dim]Fetching breach data...[/dim]\n"
+            lines.append(Text("Fetching breach data...", style=p.muted))
         
-        # Dominant Threat - which threat type is dominating
-        threat_types = {
-            "Ransomware": ransomware_count,
-            "APT": apt_count,
-            "Zero-Day": zeroday_count,
-            "Exploitation": exploit_count,
-            "Critical": critical_count,
-        }
-        if total_threats > 0:
-            dominant_type = max(threat_types.items(), key=lambda x: x[1])
-            dominant_name, dominant_count = dominant_type
-            dominant_pct = (dominant_count / total_threats) * 100 if total_threats > 0 else 0
-            
-            # Determine color based on type
-            threat_colors = {
-                "Ransomware": "#ff0066",
-                "APT": "#800080",
-                "Zero-Day": "#e6d144",
-                "Exploitation": "#dd5555",
-                "Critical": "#dd4444",
-            }
-            threat_color = threat_colors.get(dominant_name, "#66ccff")
-            
-            # In cold war mode, everything is green
-            if self.cold_war_mode:
-                threat_color = "#00ff00"
-            
-            threat_label = f"DOMINANT THREAT: {dominant_name.upper()} WAVE"
-            heat_info += f"\n[{threat_color}]{indent}[bold]{threat_label}[/bold][/]\n"
+        # --- Insights ---
+        insights = []
+        if total_threats:
+            name, _ = max({"Ransomware": ransomware_count, "APT": apt_count, "Zero-Day": zeroday_count,
+                           "Exploitation": exploit_count, "Critical": critical_count}.items(), key=lambda x: x[1])
+            color = {"Ransomware": p.ransomware, "APT": p.apt, "Zero-Day": p.zeroday,
+                     "Exploitation": p.exploit, "Critical": p.critical}[name]
+            insights.append(("Dominant threat", f"{name} wave", color))
         
         # Alert Velocity - alerts published in the last 24h vs the 24h before. Each feed only
         # keeps its newest items, so only count feeds whose history reaches back 48h;
         # otherwise busy feeds make every day look like a spike.
-        now = datetime.now(timezone.utc)
         oldest = {}
         for a in dated_alerts:
             oldest[a["source"]] = min(oldest.get(a["source"], a["ts"]), a["ts"])
         covered = [a for a in dated_alerts if oldest[a["source"]] <= now - timedelta(hours=48)]
         last_day = sum(1 for a in covered if a["ts"] > now - timedelta(hours=24))
         prev_day = sum(1 for a in covered if now - timedelta(hours=48) < a["ts"] <= now - timedelta(hours=24))
-        
-        if prev_day > 0:
-            velocity = last_day / prev_day
-            if velocity > 1.5:
-                velocity_status = f"SPIKING ({last_day} vs {prev_day} prior day)"
-                velocity_color = "bold #dd4444" if not self.cold_war_mode else "bold #00ff00"
-            elif velocity > 1.2:
-                velocity_status = f"INCREASING ({last_day} vs {prev_day})"
-                velocity_color = "#dd5555" if not self.cold_war_mode else "#00ff00"
-            elif velocity < 0.7:
-                velocity_status = f"COOLING ({last_day} vs {prev_day})"
-                velocity_color = "#66cc66" if not self.cold_war_mode else "#00ff00"
-            else:
-                velocity_status = f"STEADY ({last_day} vs {prev_day})"
-                velocity_color = "#e6d144" if not self.cold_war_mode else "#00ff00"
+        if prev_day:
+            ratio = last_day / prev_day
+            status, color = (("Spiking", p.bad) if ratio > 1.5 else ("Increasing", p.warn) if ratio > 1.2
+                             else ("Cooling", p.good) if ratio < 0.7 else ("Steady", p.text))
+            insights.append(("Alert velocity", f"{status} ({last_day} vs {prev_day} prior day)", color))
         else:
-            velocity_status = "NOT ENOUGH HISTORY"
-            velocity_color = "dim white" if not self.cold_war_mode else "#00ff00"
+            insights.append(("Alert velocity", "not enough history", p.muted))
         
-        velocity_label = f"ALERT VELOCITY: {velocity_status}"
-        heat_info += f"[{velocity_color}]{indent}[bold]{velocity_label}[/bold][/]\n"
-        
-        # Top Attack Vector - most common attack method in current alerts
-        vector_keywords = {
-            "Malware": 0,
-            "Ransomware": 0,
-            "Web": 0,
-            "Exploit": 0,
-            "Phishing": 0,
-            "Email": 0,
-        }
+        vectors = Counter()
         for alert in window_alerts:
-            title_lower = alert.get("title", "").lower()
-            for vector in vector_keywords:
-                if vector.lower() in title_lower:
-                    vector_keywords[vector] += 1
+            title_lower = alert["title"].lower()
+            vectors.update(v for v in ("Malware", "Ransomware", "Web", "Exploit", "Phishing", "Email") if v.lower() in title_lower)
+        if vectors:
+            vector, n = vectors.most_common(1)[0]
+            insights.append(("Primary vector", f"{vector} ({int(n / max(filtered_count, 1) * 100)}%)", p.text))
         
-        if any(vector_keywords.values()):
-            top_vector = max(vector_keywords.items(), key=lambda x: x[1])
-            vector_name, vector_count = top_vector
-            vector_pct = (vector_count / max(filtered_count, 1)) * 100
-            vector_color = "#66ccff" if not self.cold_war_mode else "#00ff00"
-            heat_info += f"[{vector_color}]{indent}[bold]PRIMARY VECTOR: {vector_name.upper()} ({int(vector_pct)}%)[/bold][/]\n"
-        
-        # Ransomware hotspot - victim countries and groups from Ransomware.live in the window
-        victims = [RANSOM_VICTIM_RE.match(a["title"]) for a in window_alerts if a["title"].startswith("RANSOMWARE VICTIM")]
-        victims = [m for m in victims if m]
+        victims = [m for m in (RANSOM_VICTIM_RE.match(a["title"]) for a in window_alerts
+                               if a["title"].startswith("RANSOMWARE VICTIM")) if m]
         if victims:
-            geo_color = "#00ff00" if self.cold_war_mode else "#ff0066"
             countries = Counter(m.group(2) for m in victims if m.group(2))
-            groups = Counter(m.group(1) for m in victims)
             if countries:
                 code, n = countries.most_common(1)[0]
-                heat_info += f"[{geo_color}]{indent}[bold]RANSOMWARE HOTSPOT: {COUNTRY_NAMES.get(code, code)} ({n} of {len(victims)} victims)[/bold][/]\n"
-            group, n = groups.most_common(1)[0]
-            heat_info += f"[{geo_color}]{indent}[bold]MOST ACTIVE GROUP: {group.upper()} ({n} victims)[/bold][/]\n"
+                insights.append(("Ransom hotspot", f"{COUNTRY_NAMES.get(code, code)} ({n} of {len(victims)} victims)", p.ransomware))
+            group, n = Counter(m.group(1) for m in victims).most_common(1)[0]
+            insights.append(("Top group", f"{group.upper()} ({n} victims)", p.ransomware))
         
-        # Add focus indicator with highlighted style when focused
-        if self.panel_focus == "dashboard":
-            # Use green in cold war mode, otherwise use blue
-            bg_color = "#00ff00" if self.cold_war_mode else "#5588dd"
-            title_text = Text("WAR ROOM DASHBOARD", style=f"bold black on {bg_color}")
-        else:
-            title_text = "WAR ROOM DASHBOARD"
+        insight_grid = Table.grid(expand=True, padding=(0, 1))
+        insight_grid.add_column(no_wrap=True, style=p.muted)
+        insight_grid.add_column(ratio=1)
+        for label, value, color in insights:
+            insight_grid.add_row(label, Text(value, style=f"bold {color}"))
         
-        # Render the indented lines in a two-column grid so wrapped text lines up
-        # under the text rather than at the panel edge
-        detail_grid = Table.grid(expand=True)
-        detail_grid.add_column(width=len(indent))
-        detail_grid.add_column(ratio=1)
-        for line in Text.from_markup(heat_info).split("\n", allow_blank=True):
-            if line.plain.startswith(indent):
-                line = line[len(indent):]
-            detail_grid.add_row("", line)
+        title, border = self.frame("WAR ROOM DASHBOARD", self.panel_focus == "dashboard")
+        return Panel(Group(metrics_table, *lines, Text(""), insight_grid),
+                     title=title, border_style=border, box=box.ROUNDED, padding=(0, 1))
+    
+    def make_feed_status_panel(self):
+        """Failed and auto-disabled feeds, paginated"""
+        p = self.palette
+        total = len(CONFIG.sources)
+        broken = len(failed_feeds) + len(disabled_feeds)
+        body = [Text(f"{total - broken} of {total} feeds healthy", style=f"bold {p.good if not broken else p.text}"), Text("")]
         
-        return Panel(Group(metrics_table, detail_grid),
-                    title=title_text,
-                    border_style="#00ff00" if self.cold_war_mode else "#5588dd",
-                    padding=(0,1))
+        entries = [("failed", name, f"{msg}", f"{count}/7 failures") for name, (msg, count) in sorted(failed_feeds.items())]
+        entries += [("disabled", name, msg, reason) for name, (msg, reason) in sorted(disabled_feeds.items())]
+        per_page = 8
+        total_pages = max(1, (len(entries) + per_page - 1) // per_page)
+        self.dashboard_page_offset = max(0, min(self.dashboard_page_offset, total_pages - 1))
+        section = None
+        for kind, name, msg, detail in entries[self.dashboard_page_offset * per_page:(self.dashboard_page_offset + 1) * per_page]:
+            if kind != section:
+                section = kind
+                heading = "FAILED THIS CYCLE" if kind == "failed" else "AUTO-DISABLED (press e to re-enable)"
+                body.append(Text(heading, style=f"bold {p.warn if kind == 'failed' else p.bad}"))
+            line = Text(f"{name}  ", style=p.text)
+            line.append(detail, style=p.muted)
+            body.append(line)
+            body.append(Text(f"  {msg[:60]}", style=p.muted))
+        
+        title_str = "FEED STATUS" + (f" · page {self.dashboard_page_offset + 1}/{total_pages}" if total_pages > 1 else "")
+        title, border = self.frame(title_str, self.panel_focus == "dashboard")
+        hints = [("←→", "pages"), ("e", "re-enable")] if total_pages > 1 else [("e", "re-enable"), ("r", "refresh")]
+        return Panel(Group(*body), title=title, subtitle=self.hint_bar(hints),
+                     border_style=border, box=box.ROUNDED, padding=(1, 2))
     
     def current_incidents(self):
         """Incidents for the current window and feed source, rebuilt only when those change"""
@@ -1965,83 +1641,100 @@ class CybrWireApp(App):
             self.incidents_key = key
         return self.incidents
     
+    def incident_block(self, inc, incidents, width, now, selected):
+        """Lines describing one incident"""
+        p = self.palette
+        
+        def labeled(label, value, value_style=p.text):
+            line = Text(f"    {label + ':':<9}", style=p.muted)
+            line.append(value, style=value_style)
+            line.truncate(width, overflow="ellipsis")
+            return line
+        
+        lines = []
+        header = Text()
+        header.append("▶ " if selected else "  ", style=f"bold {p.accent}")
+        # Incident headers always get a filled badge (Cold War keeps plain green text)
+        badge_style = f"bold {p.text}" if p.monochrome else f"bold {p.bg} on {p.severity(inc.severity)}"
+        header.append(f" {inc.severity.upper()} ", style=badge_style)
+        header.append(f"  {KIND_LABELS[inc.kind]} ", style=p.muted)
+        header.append(inc.value, style=f"bold {p.accent if selected else p.text}" + (" underline" if selected else ""))
+        if inc.kev:
+            header.append("  KNOWN EXPLOITED", style=f"bold {p.bad}")
+        n_src = len(inc.sources)
+        header.append(f"   {n_src} source{'s' if n_src != 1 else ''} · {len(inc.alerts)} alerts · latest {age(inc.last_seen, now)} ago",
+                      style=p.muted)
+        lines.append(header)
+        
+        lines.append(Text(f"    {inc.headline}"[:width], style=f"bold {p.text}"))
+        what_lines = textwrap.wrap(inc.what, width=width - 13, max_lines=3, placeholder=" ...")
+        for i, line in enumerate(what_lines):
+            lines.append(labeled("What", line) if i == 0 else Text(f"{'':13}{line}", style=p.text))
+        lines.append(labeled("Why", inc.why))
+        first = min(inc.alerts, key=lambda a: a["ts"])
+        lines.append(labeled("When", f"first {age(inc.first_seen, now)} ago ({first['source']}) → "
+                                     f"latest {age(inc.last_seen, now)} ago ({inc.timeline[0]['source']})"))
+        related = inc.related(incidents)
+        if related:
+            lines.append(labeled("Related", ", ".join(related), p.accent))
+        for a in inc.timeline[:2]:
+            row = Text(f"{'':13}{age(a['ts'], now):>3}  ", style=p.muted)
+            row.append(f"{a['source'][:22]:<23}", style=p.muted)
+            row.append(a["title"], style=p.text)
+            row.truncate(width, overflow="ellipsis")
+            lines.append(row)
+        lines.append(Text(""))
+        return lines
+    
     def make_incidents_panel(self):
         """Correlated incidents with the context needed to act on them"""
         now = datetime.now(timezone.utc)
         incidents = self.current_incidents()
-        cw = self.cold_war_mode
-        green = "#00ff00"
-        severity_colors = {"critical": "#dd4444", "zeroday": "#e6d144", "ransomware": "#dd4488",
-                           "apt": "#b866cc", "exploit": "#dd5555", "info": "#55bbdd"}
+        p = self.palette
         
         try:
             available = max(12, self.query_one("#feeds-container").size.height - 6)
         except Exception:
             available = 30
-        lines_per_incident = 11
-        per_page = max(1, available // lines_per_incident)
-        total_pages = max(1, (len(incidents) + per_page - 1) // per_page)
+        width = max(40, self.size.width * 3 // 4 - 10)
+        
+        # Fill pages by actual block height so the panel isn't left half empty
+        heights = [len(self.incident_block(inc, incidents, width, now, False)) for inc in incidents]
+        pages, current, used = [], [], 0
+        for i, h in enumerate(heights):
+            if current and used + h > available:
+                pages.append(current)
+                current, used = [], 0
+            current.append(i)
+            used += h
+        pages.append(current)
+        total_pages = len(pages)
         self.incident_page_offset = max(0, min(self.incident_page_offset, total_pages - 1))
-        page = incidents[self.incident_page_offset * per_page:(self.incident_page_offset + 1) * per_page]
+        page = [incidents[i] for i in pages[self.incident_page_offset]]
         self.hover_row = min(self.hover_row, len(page) - 1)
         
-        width = max(40, self.size.width * 3 // 4 - 10)
         lines = []
         self.incident_rows = []
         for idx, inc in enumerate(page):
-            selected = idx == self.hover_row
             start = len(lines)
-            sev_color = green if cw else severity_colors.get(inc.severity, "#888888")
-            body = green if cw else "#ccddee"
-            dim = "#00aa00" if cw else "#778899"
-            
-            header = Text()
-            header.append("▶ " if selected else "  ", style=f"bold {sev_color}")
-            header.append(f" {inc.severity.upper()} ", style=f"bold black on {sev_color}")
-            header.append(f"  {KIND_LABELS[inc.kind]} ", style=f"bold {dim}")
-            header.append(inc.value, style=f"bold {green if cw else '#55bbdd'}")
-            if inc.kev:
-                header.append("  KNOWN EXPLOITED (CISA KEV)", style=f"bold {green if cw else '#ff6666'}")
-            header.append(f"   {len(inc.sources)} sources • {len(inc.alerts)} alerts • latest {age(inc.last_seen, now)} ago",
-                          style=dim)
-            if selected:
-                header.stylize("on #1a2a2a" if not cw else "on #002200")
-            lines.append(header)
-            
-            lines.append(Text(f"    {inc.headline}"[:width], style=f"bold {body}"))
-            what_lines = textwrap.wrap(f"What: {inc.what}", width=width - 4, max_lines=3, placeholder=" ...")
-            lines.extend(Text(f"    {line}", style=body) for line in what_lines)
-            lines.append(Text(f"    Why grouped: {inc.why}"[:width], style=dim))
-            first = min(inc.alerts, key=lambda a: a["ts"])
-            lines.append(Text(f"    Timeline: first seen {age(inc.first_seen, now)} ago ({first['source']}) → "
-                              f"latest {age(inc.last_seen, now)} ago ({inc.timeline[0]['source']})"[:width], style=dim))
-            related = inc.related(incidents)
-            if related:
-                lines.append(Text(f"    Related: {', '.join(related)}"[:width], style=green if cw else "#bb88dd"))
-            for a in inc.timeline[:2]:
-                lines.append(Text(f"      • {age(a['ts'], now):>3}  {a['source'][:22]:22}  {a['title']}"[:width], style=dim))
-            lines.append(Text(""))
+            lines.extend(self.incident_block(inc, incidents, width, now, idx == self.hover_row))
             self.incident_rows.append((inc, start, len(lines) - 1))
         
         if not page:
-            lines.append(Text("No correlated incidents in this window.", style="dim yellow"))
-            lines.append(Text("An incident needs the same CVE, IP or hash reported by two or more sources,", style="dim"))
-            lines.append(Text("or a named threat actor appearing in several alerts. Try a longer data age (d).", style="dim"))
+            lines.append(Text("No correlated incidents in this window.", style=f"bold {p.text}"))
+            lines.append(Text("An incident needs the same CVE, IP or hash reported by two or more sources,", style=p.muted))
+            lines.append(Text("or a named threat actor appearing in several alerts. Try a longer data age (d).", style=p.muted))
         
-        status = Text()
-        status.append(f"{len(incidents)} incidents from {len(self.filtered_alerts())} alerts",
-                      "bold green" if cw else "bold cyan")
+        status = Text(f" {len(incidents)} incidents from {len(self.filtered_alerts())} alerts   ", style=p.muted)
+        hints = [("↑↓", "select"), ("Enter", "open latest report")]
         if total_pages > 1:
-            status.append(f" — Page {self.incident_page_offset + 1}/{total_pages}  |  ← → pages", "bold green" if cw else "bold yellow")
-        status.append(" — ↑/↓ select  |  Enter open latest report", "bold green" if cw else "bold magenta")
+            hints.append(("←→", f"page {self.incident_page_offset + 1}/{total_pages}"))
+        status.append_text(self.hint_bar(hints))
+        status.append(" ")
         
-        title_str = "CORRELATED INCIDENTS"
-        if self.panel_focus == "main":
-            title_text = Text(title_str, style=f"bold black on {green if cw else '#dd8866'}")
-        else:
-            title_text = title_str
+        title_text, border = self.frame("CORRELATED INCIDENTS", self.panel_focus == "main")
         return Panel(Group(*lines), title=title_text, subtitle=status,
-                     border_style=green if cw else "#dd8866", padding=(1, 2))
+                     border_style=border, box=box.ROUNDED, padding=(1, 2))
     
     def action_refresh(self):
         """Force refresh feeds"""
@@ -2049,10 +1742,11 @@ class CybrWireApp(App):
     
     def action_show_help(self):
         """Show help screen"""
-        self.push_screen(HelpScreen(self.cold_war_mode))
+        self.push_screen(HelpScreen(self.palette))
     
     def make_api_tools_panel(self) -> Panel:
         """Display unified API enrichment tools for multiple providers - interactive query panel"""
+        p = self.palette
         content = Text()
         
         # Provider info with tier information
@@ -2089,28 +1783,27 @@ class CybrWireApp(App):
         
         if not configured:
             # No providers configured
-            content.append("╭─ NO PROVIDERS CONFIGURED ─╮\n\n", style="bold #ffaa00" if not self.cold_war_mode else "bold #00ff00")
-            content.append("Available providers:\n\n", style="#00ff00" if self.cold_war_mode else "white")
+            content.append("╭─ NO PROVIDERS CONFIGURED ─╮\n\n", style=f"bold {p.warn}")
+            content.append("Available providers:\n\n", style=p.text)
             for key in providers_info.keys():
                 info = providers_info[key]
                 tier_note = info.get("tier_note", "")
-                content.append(f"  {info['name']}: {info['accepts']}\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
+                content.append(f"  {info['name']}: {info['accepts']}\n", style=p.muted)
                 if tier_note:
-                    content.append(f"    {tier_note}\n", style="dim white" if self.cold_war_mode else "dim #888888")
-            content.append("\nTo enable: Add API keys to cybrwire_local.yaml and restart.\n", style="dim white" if self.cold_war_mode else "dim #888888")
-            content.append("\nNote: Free/limited tier accounts have restrictions on indicator types.\n", style="dim #ffaa00" if not self.cold_war_mode else "dim #00ff00")
-            content.append("      Upgrade to paid plans for full IOC database access.\n", style="dim #ffaa00" if not self.cold_war_mode else "dim #00ff00")
+                    content.append(f"    {tier_note}\n", style=p.muted)
+            content.append("\nTo enable: Add API keys to cybrwire_local.yaml and restart.\n", style=p.muted)
+            content.append("\nNote: Free/limited tier accounts have restrictions on indicator types.\n", style=p.warn)
+            content.append("      Upgrade to paid plans for full IOC database access.\n", style=p.warn)
             
-            title_text = Text("API TOOLS", style="bold #00ff00" if self.cold_war_mode else "bold cyan")
         else:
             # Show input field
-            content.append("╭─ ENRICHMENT QUERY ─╮\n", style="dim #00ff00" if self.cold_war_mode else "dim #4499bb")
+            content.append("╭─ ENRICHMENT QUERY ─╮\n", style=f"bold {p.accent}")
             
             if self.api_tools_loading:
-                content.append(f"[⏳ Querying] {self.api_tools_input_buffer}\n\n", style="bold #ffaa00" if not self.cold_war_mode else "bold #00ff00")
+                content.append(f"[⏳ Querying] {self.api_tools_input_buffer}\n\n", style=f"bold {p.warn}")
             else:
                 # Input prompt
-                input_style = "bold #ffff00" if not self.cold_war_mode else "bold #00ff00"
+                input_style = f"bold {p.accent}"
                 cursor = "█" if len(self.api_tools_input_buffer) > 0 or self.api_tools_input_mode else ""
                 content.append(f"Indicator: {self.api_tools_input_buffer}{cursor}\n", style=input_style)
             
@@ -2125,11 +1818,11 @@ class CybrWireApp(App):
             if unconfigured:
                 provider_line += f"[disabled: {', '.join([providers_info[p]['name'] for p in unconfigured])}]"
             
-            content.append(f"\n{provider_line}\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
+            content.append(f"\n{provider_line}\n", style=p.muted)
             
             # Results section
             if self.api_tools_last_query and self.api_tools_last_results:
-                content.append("╭─ RESULTS ─╮\n\n", style="dim #00ff00" if self.cold_war_mode else "dim #4499bb")
+                content.append("╭─ RESULTS ─╮\n\n", style=f"bold {p.accent}")
                 
                 for provider_name, enrichment_data in self.api_tools_last_results.items():
                     if enrichment_data is None:
@@ -2140,21 +1833,13 @@ class CybrWireApp(App):
                     icon = provider_info.get("icon", "•") if not self.cold_war_mode else ""
                     provider_display = provider_info.get("name", provider_name)
                     provider_text = f"{icon} {provider_display}".lstrip() if self.cold_war_mode else f"{icon} {provider_display}"
-                    content.append(f"\n{provider_text}\n", style="bold #00ff00" if self.cold_war_mode else "bold white")
-                    content.append("─" * 40 + "\n", style="dim #666666")
+                    content.append(f"\n{provider_text}\n", style=f"bold {p.text}")
+                    content.append("─" * 40 + "\n", style=p.muted)
                     
                     # Threat level with color
                     threat_level = enrichment_data.threat_level.value.upper()
-                    threat_color = {
-                        "CLEAN": "#00FF00",
-                        "LOW": "#00FF00",
-                        "MEDIUM": "#ffff00",
-                        "HIGH": "#ff6666",
-                        "CRITICAL": "#ff0000"
-                    }.get(threat_level, "#00FF00")
-                    
-                    if self.cold_war_mode:
-                        threat_color = "#00ff00"
+                    threat_color = {"CLEAN": p.good, "LOW": p.good, "MEDIUM": p.warn,
+                                    "HIGH": p.bad, "CRITICAL": p.critical}.get(threat_level, p.text)
                     
                     content.append(f"Threat: {threat_level}  |  Score: {int(enrichment_data.reputation_score)}/100\n", style=threat_color)
                     
@@ -2194,7 +1879,7 @@ class CybrWireApp(App):
                                 else:
                                     value_str = str(value)[:50]
                                 
-                                content.append(f"  {field}: {value_str}\n", style="dim white")
+                                content.append(f"  {field}: {value_str}\n", style=p.muted)
                                 displayed_fields.add(field)
                         
                         # Show other interesting fields (skip internal ones)
@@ -2216,40 +1901,30 @@ class CybrWireApp(App):
                                     else:
                                         value_str = str(value)[:40]
                                     
-                                    content.append(f"  {key}: {value_str}\n", style="dim white" if self.cold_war_mode else "dim #888888")
+                                    content.append(f"  {key}: {value_str}\n", style=p.muted)
                     
                     content.append("\n", style="")
             elif self.api_tools_last_query and not self.api_tools_last_results:
-                content.append("╭─ NO RESULTS ─╮\n", style="dim #00ff00" if self.cold_war_mode else "dim #4499bb")
-                content.append(f"No threat data found for: {self.api_tools_last_query}\n", style="dim white")
+                content.append("╭─ NO RESULTS ─╮\n", style=f"bold {p.accent}")
+                content.append(f"No threat data found for: {self.api_tools_last_query}\n", style=p.muted)
             else:
-                content.append("╭─ USAGE ─╮\n\n", style="dim #00ff00" if self.cold_war_mode else "dim #4499bb")
-                content.append("Type an indicator (IP, hash, domain, URL) and press ENTER to query all configured providers.\n", style="#00ff00" if self.cold_war_mode else "white")
-                content.append("Results will display below with threat scores from each provider.\n", style="#00ff00" if self.cold_war_mode else "white")
-                content.append("\nPress ESC to clear the query buffer.\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
-                content.append("Press Ctrl+Shift+V to paste from clipboard.\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
+                content.append("╭─ USAGE ─╮\n\n", style=f"bold {p.accent}")
+                content.append("Type an indicator (IP, hash, domain, URL) and press ENTER to query all configured providers.\n", style=p.text)
+                content.append("Results will display below with threat scores from each provider.\n", style=p.text)
+                content.append("\nPress ESC to clear the query buffer.\n", style=p.muted)
+                content.append("Press Ctrl+Shift+V to paste from clipboard.\n", style=p.muted)
                 
                 # Add API tier limitation note
-                content.append("\n╭─ API TIER INFORMATION ─╮\n", style="dim #00ff00" if self.cold_war_mode else "dim #4499bb")
-                content.append("\nFree/limited API keys have restrictions on the indicator types they can query:\n\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
-                content.append("  VirusTotal Free:  All indicator types, 4 lookups/min, 500/day\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
-                content.append("  AbuseIPDB Free:   IP lookups only\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
-                content.append("  Pulsedive Free:   Limited indicator database\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
-                content.append("  Abuse.ch:         Free Auth-Key (hashes via MalwareBazaar; URLs/IPs/domains via URLhaus)\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
-                content.append("\nCLEAN means the provider has no record of the indicator, not that it is safe.\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
+                content.append("\n╭─ API TIER INFORMATION ─╮\n", style=f"bold {p.accent}")
+                content.append("\nFree/limited API keys have restrictions on the indicator types they can query:\n\n", style=p.muted)
+                content.append("  VirusTotal Free:  All indicator types, 4 lookups/min, 500/day\n", style=p.muted)
+                content.append("  AbuseIPDB Free:   IP lookups only\n", style=p.muted)
+                content.append("  Pulsedive Free:   Limited indicator database\n", style=p.muted)
+                content.append("  Abuse.ch:         Free Auth-Key (hashes via MalwareBazaar; URLs/IPs/domains via URLhaus)\n", style=p.muted)
+                content.append("\nCLEAN means the provider has no record of the indicator, not that it is safe.\n", style=p.muted)
             
-            # Title with focus indicator
-            if self.panel_focus == "main":
-                title_text = Text("API TOOLS - IOC Enrichment", style="bold black on #00ff00" if self.cold_war_mode else "bold black on #336699")
-            else:
-                title_text = Text("API TOOLS - IOC Enrichment", style="bold #00ff00" if self.cold_war_mode else "bold cyan")
-        
-        return Panel(
-            content,
-            title=title_text,
-            border_style="#00ff00" if self.cold_war_mode else "#336699",
-            padding=(1, 2)
-        )
+        title_text, border = self.frame("API TOOLS · IOC ENRICHMENT", self.panel_focus == "main")
+        return Panel(content, title=title_text, border_style=border, box=box.ROUNDED, padding=(1, 2))
     
     def action_cycle_data_age(self):
         """Cycle data age window: 24h → 48h → 7d → 24h"""
@@ -2412,18 +2087,18 @@ class CybrWireApp(App):
     
     def make_war_room_panel(self) -> Panel:
         """AI briefing followed by the local keyword analysis, paginated"""
-        cw = self.cold_war_mode
-        heading = "bold #00ff00" if cw else "bold cyan"
-        body = "#00ff00" if cw else "#dde6ee"
-        dim = "#00aa00" if cw else "#778899"
+        p = self.palette
+        heading = f"bold {p.accent}"
+        body = p.text
+        dim = p.muted
         
         lines = []
         label = ai.describe(self.ai_settings) if self.ai_settings.get("provider") else "no provider"
         lines.append(Text(f"AI BRIEFING ({label})", style=heading))
         if self.ai_briefing_loading:
-            lines.append(Text("⏳ Analyzing current alerts...", style="bold yellow"))
+            lines.append(Text("⏳ Analyzing current alerts...", style=f"bold {p.warn}"))
         if self.ai_briefing_error:
-            lines.append(Text(self.ai_briefing_error, style="bold #ff6666" if not cw else body))
+            lines.append(Text(self.ai_briefing_error, style=f"bold {p.bad}"))
             if self.ai_problem:
                 lines.append(Text("Configure the ai: section in cybrwire_local.yaml (see readme), then restart.", style=dim))
         if self.ai_briefing:
@@ -2447,7 +2122,7 @@ class CybrWireApp(App):
                 elif line.endswith(":") or line == "LOCAL KEYWORD ANALYSIS":
                     lines.append(Text(line, style=heading))
                 else:
-                    lines.append(Text(line, style=body if not ("CVE-" in line and "[" in line) else ("bold #ff6666" if not cw else body)))
+                    lines.append(Text(line, style=body if not ("CVE-" in line and "[" in line) else f"bold {p.text}"))
         
         try:
             page_height = max(10, self.query_one("#dashboard").size.height - 6)
@@ -2471,33 +2146,12 @@ class CybrWireApp(App):
         self.threat_summary_page = max(0, min(self.threat_summary_page, len(pages) - 1))
         
         title_str = "WAR ROOM" + (f" - Page {self.threat_summary_page + 1}/{len(pages)}" if len(pages) > 1 else "")
-        border_color = "#00ff00" if cw else "#9933ff"
-        if self.panel_focus == "dashboard":
-            title_text = Text(title_str, style=f"bold black on {border_color}")
-        else:
-            title_text = title_str
-        subtitle = Text("← → pages  •  g refresh", style=f"bold {border_color}") if len(pages) > 1 else Text("g refresh", style=f"bold {border_color}")
+        title_text, border = self.frame(title_str, self.panel_focus == "dashboard")
+        hints = [("←→", "pages"), ("g", "refresh")] if len(pages) > 1 else [("g", "refresh")]
+        subtitle = self.hint_bar(hints)
         return Panel(Group(*pages[self.threat_summary_page]), title=title_text, subtitle=subtitle,
-                     border_style=border_color, padding=(1, 2), expand=True)
+                     border_style=border, box=box.ROUNDED, padding=(1, 2), expand=True)
     
-    async def _run_api_tools_query(self, indicator: str):
-        """Run enrichment query for the given indicator across all configured providers"""
-#        logging.info(f"Starting API Tools enrichment for: {indicator}")
-        
-        try:
-            # Run the enrichment query
-            results = await enrichment_engine.enrich(indicator)
-            self.api_tools_last_results = results
-#            logging.info(f"API Tools enrichment complete for {indicator}: {len(results)} providers returned data")
-        
-        except Exception as e:
-            logging.error(f"Error querying providers for {indicator}: {e}")
-            self.api_tools_last_results = {}
-        
-        finally:
-            self.api_tools_loading = False
-            self.call_later(self.update_display)
-
     def action_toggle_view(self):
         """Toggle view in the focused panel - alerts/incidents/api_tools on left, dashboard views on right"""
         if self.panel_focus == "main":
@@ -2708,16 +2362,15 @@ class CybrWireApp(App):
         self.call_later(self.update_display)
     
     def action_cycle_theme(self):
-        """Cycle through available themes"""
-        themes = [
-            "textual-ansi", "textual-dark", "textual-light",
-            "nord", "gruvbox", "monokai", "dracula",
-            "solarized-light", "solarized-dark", "tokyo-night"
-        ]
-        current_idx = themes.index(self.theme_mode) if self.theme_mode in themes else 0
-        self.theme_mode = themes[(current_idx + 1) % len(themes)]
+        """Cycle through the color themes (Cold War is separate, on 'c')"""
+        keys = list(PALETTES)
+        current_idx = keys.index(self.theme_mode) if self.theme_mode in keys else 0
+        self.theme_mode = keys[(current_idx + 1) % len(keys)]
+        if self.cold_war_mode:
+            self.cold_war_mode = False  # 't' means "show me the themes"
         self.apply_theme()
         self.save_settings()
+        self.notify(f"Theme: {self.palette.name}", timeout=2)
         self.call_later(self.update_display)
     
     def action_page_up(self):
@@ -2740,8 +2393,8 @@ class CybrWireApp(App):
         if self.main_view_mode not in ("alerts", "incidents") or getattr(event.widget, "id", None) != "feeds":
             return
         if self.main_view_mode == "alerts":
-            # Outer panel border + padding + table top border = 3 rows before the first alert
-            row = event.y - 3
+            # Outer panel border + top padding = 2 rows before the first alert
+            row = event.y - 2
             if not 0 <= row < len(self.page_alerts):
                 return
         else:
