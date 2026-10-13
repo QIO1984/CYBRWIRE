@@ -138,7 +138,8 @@ enrichment:
   abuse_ch_api_key: "your-abuse-ch-api-key-here"
 ```
 
-**Note:** API keys in `cybrwire_local.yaml` are in `.gitignore` and will never be committed to GitHub.
+**Note:** API keys in `cybrwire_local.yaml` are in `.gitignore` and will never be committed to GitHub. 
+          Use file `usrwire.yaml` as template to create `cybrwire_local.yaml`, or rename it.
 
 ## API Tier Limitations ⚠️
 
@@ -247,4 +248,4 @@ By: GitHub/QIO1984 // The Hacker known as MADNOTE
 
 ---
 
-**Stay vigilant. Stay informed. CYBRWIRE**
+**Stay vigilant. Stay informed. Stay WIREed**
