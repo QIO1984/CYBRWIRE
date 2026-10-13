@@ -21,8 +21,9 @@ from collections import Counter
 from enrichment import enrichment_engine, initialize_enrichment
 import ai
 from config import load_config
-from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_txt, fetch_doomsday_seconds
+from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, fetch_doomsday_seconds
 from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
+import cve_intel
 from state import AppState, alert_key
 from textual.app import App, Screen, ComposeResult
 from textual.widgets import Static, Header
@@ -75,7 +76,6 @@ incidents_cache = []
 start_time = datetime.now(timezone.utc)
 ticker_offset = 0
 
-IOC_TITLE_PREFIXES = ("TOP MALICIOUS IP", "MALWARE URL", "PHISHING URL")
 RANSOM_VICTIM_RE = re.compile(r"^RANSOMWARE VICTIM: .* \(([^)]+)\)(?: \[([A-Z]{2})\])?")
 COUNTRY_NAMES = {
     "US": "United States", "CA": "Canada", "GB": "United Kingdom", "DE": "Germany", "FR": "France",
@@ -84,7 +84,9 @@ COUNTRY_NAMES = {
     "TW": "Taiwan", "CN": "China", "SG": "Singapore", "ZA": "South Africa", "SE": "Sweden", "PL": "Poland",
 }
 force_event = asyncio.Event()
-active_feed_source = "all"
+# What '4' cycles through. "All" leaves indicators out; they have their own view.
+CONTENT_KINDS = [("all", "All"), ("advisory", "Advisories"), ("news", "News & Research"),
+                 ("ransomware", "Ransomware"), ("indicators", "Indicators")]
 
 
 async def fetch_breaches():
@@ -167,11 +169,12 @@ class HelpScreen(Screen):
         help_text.append("│    Alerts        - Critical/structured threat data only (excludes informational)\n", style=color)
         help_text.append("│    Posts         - Blog posts and advisories only\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [FEED SOURCES] (Press '4' to cycle)\n", style=f"bold {accent}")
-        help_text.append("│    Curated       - Hand-selected threat intelligence (premium quality)\n", style=color)
-        help_text.append("│    Custom        - User-configured feeds\n", style=color)
-        help_text.append("│    Community     - Open-source and community feeds\n", style=color)
-        help_text.append("│    All (default) - All sources combined\n", style=color)
+        help_text.append("│  [CONTENT TYPE] (Press '4' to cycle)\n", style=f"bold {accent}")
+        help_text.append("│    All (default) - Advisories, news and ransomware (indicators have their own view)\n", style=color)
+        help_text.append("│    Advisories    - Vendor bulletins, CISA/KEV, national CERTs, GitHub advisories: what to patch\n", style=color)
+        help_text.append("│    News & Research - Security news and vendor research: what's happening\n", style=color)
+        help_text.append("│    Ransomware    - Ransomware.live victim claims: who's getting hit\n", style=color)
+        help_text.append("│    Indicators    - Malicious IPs, URLs and C2 servers; Enter looks one up in API Tools\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [FEED MANAGEMENT] (Press 'E' to re-enable)\n", style=f"bold {accent}")
         help_text.append("│    Auto-Disable  - Feeds that fail 7 consecutive times are auto-disabled\n", style=color)
@@ -209,21 +212,15 @@ class HelpScreen(Screen):
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
         # SOURCES BAR EXPLANATION
-        help_text.append("┌─ TOP SOURCES BREAKDOWN (Right Side) " + "─" * 58 + "┐\n", style=accent)
+        help_text.append("┌─ CONTENT MIX & CVE SCORES (Right Side) " + "─" * 57 + "┐\n", style=accent)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [SOURCE SELECTION]\n", style=f"bold {accent}")
-        help_text.append("│    ● (filled dot)    - Currently selected source\n", style=color)
-        help_text.append("│    ○ (empty circle)  - Unselected source (shows %% even if not selected)\n", style=color)
+        help_text.append("│  [CONTENT]\n", style=f"bold {accent}")
+        help_text.append("│    How the current window splits by type; the type '4' is showing is highlighted\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [SOURCE BREAKDOWN]\n", style=f"bold {accent}")
-        help_text.append("│    Curated %         - % of alerts from curated (premium) feeds\n", style=color)
-        help_text.append("│    Custom %          - % of alerts from user-configured feeds\n", style=color)
-        help_text.append("│    Community %       - % of alerts from open-source community feeds\n", style=color)
-        help_text.append("│\n", style=accent)
-        help_text.append("│  [SOURCE LOGIC]\n", style=f"bold {accent}")
-        help_text.append("│    Press '4' to cycle between 'All' and individual source filters\n", style=color)
-        help_text.append("│    When filtered to one source, only that source's alerts display\n", style=color)
-        help_text.append("│    The percentages update dynamically based on filtered data\n", style=color)
+        help_text.append("│  [CVE SCORES] (alert preview, incidents, Top CVEs)\n", style=f"bold {accent}")
+        help_text.append("│    KEV               - In CISA's Known Exploited Vulnerabilities catalog\n", style=color)
+        help_text.append("│    CVSS              - Severity score 0-10 from NVD, fetched for the alert you select\n", style=color)
+        help_text.append("│    EPSS              - FIRST.org estimate of the chance of exploitation in the next 30 days\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -307,7 +304,7 @@ class HelpScreen(Screen):
         help_text.append("│  R              Force Refresh - Fetch alerts immediately (don't wait for timer)\n", style=color)
         help_text.append("│  D              Cycle Data Age - Switch between 24h / 48h / 7d windows\n", style=color)
         help_text.append("│  F              Cycle Alert Type - Switch between All / Alerts / Posts\n", style=color)
-        help_text.append("│  4              Cycle Feed Source - Switch between Curated / Custom / Community / All\n", style=color)
+        help_text.append("│  4              Content Type - All / Advisories / News & Research / Ransomware / Indicators\n", style=color)
         help_text.append("│  Tab            Switch Panel Focus - Toggle between left and right panels\n", style=color)
         help_text.append("│  V              Toggle View in Focused Panel - Switch between Alerts / Incidents / API Tools\n", style=color)
         help_text.append("│  E              Re-enable Feeds - Re-enable all auto-disabled feeds\n", style=color)
@@ -506,18 +503,8 @@ class CybrWireFooter(Static):
         data_age_label = time_windows[app.data_age_index]
         filter_label = filter_types[app.filter_type_index]
         
-        # Count alerts for the current filter
-        now = datetime.now(timezone.utc)
-        cutoff_time = now - timedelta(hours=app.recency_hours)
-        time_filtered = [a for a in alert_queue if a.get("ts", now) >= cutoff_time]
-        
-        # Apply content filter to get count
-        if app.filter_type_index == 1:  # alerts only
-            count = len([a for a in time_filtered if a["severity"] != "info"])
-        elif app.filter_type_index == 2:  # posts only
-            count = len([a for a in time_filtered if a["severity"] == "info"])
-        else:  # all
-            count = len(time_filtered)
+        # Count of what the feed panel is showing
+        count = len(app.filtered_alerts()) if not app.is_loading else 0
         
         # Build custom footer text with proper styling
         footer_text = Text()
@@ -540,7 +527,7 @@ class CybrWireFooter(Static):
         
         # Cycle Feeds
         footer_text.append("4 ", style=key_color)
-        footer_text.append("Feeds  ", style=desc_color)
+        footer_text.append(f"Type: {CONTENT_KINDS[app.kind_index][1]}  ", style=desc_color)
         
         # Switch Panel
         footer_text.append("tab ", style=key_color)
@@ -623,7 +610,7 @@ class CybrWireApp(App):
         ("r", "refresh", "Force Refresh"),
         ("d", "cycle_data_age", "Data Age"),
         ("f", "cycle_filter_type", "Alert Type"),
-        ("4", "cycle_feeds", "Cycle Feeds"),
+        ("4", "cycle_feeds", "Content Type"),
         ("tab", "toggle_panel_focus", "Switch Panel"),
         ("v", "toggle_view", "Toggle View"),
         ("e", "re_enable_feeds", "Re-enable Feeds"),
@@ -645,7 +632,7 @@ class CybrWireApp(App):
     hover_row = reactive(-1)
     filter_mode = reactive("all")  # all, alerts, posts
     theme_mode = reactive("default")  # default, dark, blue, purple, matrix
-    feed_source_index = reactive(0)  # Cycle: 0=all, 1=curated, 2=custom, 3=community
+    kind_index = reactive(0)  # Index into CONTENT_KINDS
     data_age_index = reactive(0)  # Cycle: 0=24h, 1=48h, 2=7d
     filter_type_index = reactive(0)  # Cycle: 0=all, 1=alerts, 2=posts
     dashboard_panel_index = reactive(0)  # Cycle dashboard: 0=metrics, 1=failed feeds
@@ -676,9 +663,7 @@ class CybrWireApp(App):
             ))
         self.filter_type_index = saved.get("filter_type_index", 0)
         self.filter_mode = ["all", "alerts", "posts"][self.filter_type_index]
-        self.feed_source_index = saved.get("feed_source_index", 0)
-        global active_feed_source
-        active_feed_source = ["all", "curated", "custom", "community"][self.feed_source_index]
+        self.kind_index = saved.get("kind_index", 0) if 0 <= saved.get("kind_index", 0) < len(CONTENT_KINDS) else 0
         
         self.feed_failure_counts = {}  # Track consecutive failures per feed
         
@@ -711,6 +696,10 @@ class CybrWireApp(App):
         self.alert_explanations = {}  # alert key -> AI explanation text (or error)
         self.explaining = set()       # alert keys with a request in flight
         
+        # CVSS lookups (NVD, rate-limited, cached in the app state)
+        self.nvd = cve_intel.NvdClient(STATE.cvss, (CONFIG.enrichment.get("nvd") or {}).get("api_key"))
+        self.nvd.prune_unscored()
+        
         # Doomsday Clock (seconds to midnight), refreshed from thebulletin.org daily
         self.doomsday_seconds = STATE.doomsday.get("seconds", DOOMSDAY_DEFAULT_SECONDS)
         
@@ -733,7 +722,7 @@ class CybrWireApp(App):
             "cold_war": self.cold_war_mode,
             "theme": self.theme_mode,
             "filter_type_index": self.filter_type_index,
-            "feed_source_index": self.feed_source_index,
+            "kind_index": self.kind_index,
         }
         STATE.save()
     
@@ -1115,18 +1104,26 @@ class CybrWireApp(App):
         source_file_stats = {"curated": 0, "custom": 0, "community": 0}
         failed_feeds = {}
 
-        all_sources = [s for s in CONFIG.sources if s['name'] not in disabled_feeds]
+        abusech_key = (CONFIG.enrichment.get("abusech") or {}).get("api_key")
+        # ThreatFox needs the abuse.ch Auth-Key; without one it is skipped rather than failing
+        all_sources = [s for s in CONFIG.sources if s['name'] not in disabled_feeds
+                       and (s["type"] != "threatfox" or abusech_key)]
         parsers = {"json": lambda r, n, f: parse_json(r.json(), n, f),
                    "rss": lambda r, n, f: parse_rss(r.text, n, f),
-                   "txt": lambda r, n, f: parse_txt(r.text, n, f)}
+                   "txt": lambda r, n, f: parse_txt(r.text, n, f),
+                   "threatfox": lambda r, n, f: parse_threatfox(r.json(), n, f)}
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
 
         async def fetch_one(c, src):
             global currently_loading
             async with semaphore:
                 currently_loading = src['name']
-                # Optional per-feed headers in YAML (e.g. API keys that must not go in the URL)
-                r = await c.get(src["url"], headers=src.get("headers"))
+                if src["type"] == "threatfox":
+                    r = await c.post(src["url"], json={"query": "get_iocs", "days": 1},
+                                     headers={"Auth-Key": abusech_key})
+                else:
+                    # Optional per-feed headers in YAML (e.g. API keys that must not go in the URL)
+                    r = await c.get(src["url"], headers=src.get("headers"))
                 r.raise_for_status()
                 # Parse in a thread so large feeds don't freeze the UI
                 return await asyncio.to_thread(parsers[src["type"]], r, src['name'], src.get("source_file", "curated"))
@@ -1138,6 +1135,9 @@ class CybrWireApp(App):
             src_name = src['name']
             if not isinstance(result, BaseException):
                 self.feed_failure_counts.pop(src_name, None)  # Failures must be consecutive
+                for item in result:
+                    # Parsers that know their content type set it; otherwise the feed's kind applies
+                    item.setdefault("kind", src.get("kind", "news"))
                 new.extend(result)
                 source_file = src.get("source_file", "curated")
                 source_file_stats[source_file] = source_file_stats.get(source_file, 0) + len(result)
@@ -1172,6 +1172,9 @@ class CybrWireApp(App):
         
         currently_loading = None  # Clear loading indicator
         
+        # Exploit-likelihood scores for every CVE mentioned (one batched, free request)
+        await cve_intel.fetch_epss(m.upper() for a in alert_queue for m in CVE_RE.findall(f"{a['title']} {a['summary']}"))
+        
         STATE.record_alerts(alert_queue)
         STATE.save()
         self.incidents_key = None  # Rebuild incidents for the new data
@@ -1198,6 +1201,7 @@ class CybrWireApp(App):
         self.dirty = False
         self.last_full_render = time.monotonic()
         try:
+            self.query_one(CybrWireFooter).refresh()  # Type, filter and count change with the feed
             self.ticker_core = self.make_ticker_core()
             self.animate_ticker(advance=False)
             
@@ -1312,8 +1316,8 @@ class CybrWireApp(App):
         """Alerts in the current time window, feed source and alert-type filter"""
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
         alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
-        if active_feed_source != "all":
-            alerts = [a for a in alerts if a.get("source_file") == active_feed_source]
+        kind = self.active_kind
+        alerts = [a for a in alerts if (a.get("kind") != "indicators" if kind == "all" else a.get("kind") == kind)]
         if self.filter_mode == "alerts":
             alerts = [a for a in alerts if self.is_alert(a)]
         elif self.filter_mode == "posts":
@@ -1325,12 +1329,51 @@ class CybrWireApp(App):
             return self.page_alerts[self.hover_row]
         return None
     
+    def cve_scores(self, cve, scores_only=False):
+        """'CVE-x KEV CVSS 9.8 EPSS 12.3%' with each score colored by how bad it is"""
+        p = self.palette
+        text = Text() if scores_only else Text(cve, style=f"bold {p.text}")
+        if cve in KEV_CATALOG and not scores_only:
+            text.append(" ")
+            text.append(" KEV ", style=f"bold {p.bg} on {p.bad}")
+        cvss = self.nvd.get(cve)
+        if cvss and cvss.get("score") is not None:
+            score = cvss["score"]
+            text.append(f"  CVSS {score:.1f}", style=f"bold {p.bad if score >= 9 else p.warn if score >= 7 else p.text}")
+        elif cvss:
+            text.append("  CVSS not yet scored", style=p.muted)
+        elif cve in self.nvd.pending:
+            text.append("  CVSS …", style=p.muted)
+        if cve in cve_intel.EPSS:
+            prob = cve_intel.EPSS[cve][0] * 100
+            text.append(f"  EPSS {prob:.1f}%" if prob < 10 else f"  EPSS {prob:.0f}%",
+                        style=f"bold {p.bad if prob >= 10 else p.warn if prob >= 1 else p.muted}")
+        return text
+    
+    async def _fetch_cvss(self, cves):
+        for cve in cves:
+            if await self.nvd.fetch(cve):
+                self.mark_dirty()
+        STATE.save()
+    
     def make_alert_preview(self, alert):
         """Detail pane for the highlighted alert"""
         p = self.palette
         text = Text()
         if not alert:
             text.append("Select an alert with ↑/↓ or a click to see its summary here.", style=p.muted)
+            return text
+        
+        if alert.get("kind") == "indicators":
+            text.append((alert.get("ioc") or alert["title"]) + "\n", style=f"bold {p.text}")
+            when = "no date in feed (list refreshed each fetch)" if alert.get("undated") else f"{p.stamp(alert['ts'], long=True)} ({age(alert['ts'])} ago)"
+            text.append(f" {(alert.get('ioc_type') or 'IOC').upper()} ", style=f"bold {p.bg} on {p.accent}")
+            text.append(f"  {alert.get('threat') or ''}  •  {alert['source']}  •  {when}\n", style=p.muted)
+            text.append(alert.get("summary", "") + "\n", style=p.text)
+            if alert.get("url"):
+                text.append(alert["url"] + "\n", style=f"underline {p.muted}")
+            hints = [("Enter", "look up in API Tools")] if enrichment_engine.providers else []
+            text.append_text(self.hint_bar(hints) if hints else Text("Add enrichment API keys to look indicators up", style=p.muted))
             return text
         
         text.append(alert["title"] + "\n", style=f"bold {p.text}")
@@ -1345,6 +1388,17 @@ class CybrWireApp(App):
             text.append("  ")
             text.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
         text.append("\n")
+        
+        cves = list(dict.fromkeys(m.upper() for m in CVE_RE.findall(f"{alert['title']} {alert.get('summary', '')}")))[:3]
+        if cves:
+            for i, cve in enumerate(cves):
+                if i:
+                    text.append("   ")
+                text.append_text(self.cve_scores(cve))
+            text.append("\n")
+            missing = [c for c in cves if self.nvd.get(c) is None and c not in self.nvd.pending]
+            if missing:
+                asyncio.create_task(self._fetch_cvss(missing))
         
         key = alert_key(alert)
         if key in self.alert_explanations:
@@ -1385,13 +1439,23 @@ class CybrWireApp(App):
         # Panel borders + padding (4) and the spacer above the preview (1)
         self.rows_per_page = max(5, container_height - 5 - self.PREVIEW_LINES)
         
-        table = Table(box=None, show_header=False, padding=(0, 1), expand=True)
+        indicators_view = self.active_kind == "indicators"
+        table = Table(box=None, show_header=indicators_view, header_style=f"bold {p.muted}",
+                      padding=(0, 1), expand=True)
         narrow = self.size.width < 120
         date_width = 7 if p.military_time else 6 if narrow else 10
-        table.add_column(width=date_width, min_width=date_width, no_wrap=True)  # published date
-        table.add_column(width=3, min_width=3, no_wrap=True, justify="right")   # age
-        table.add_column(width=12, min_width=12, no_wrap=True)                  # severity tag
-        table.add_column(ratio=1, no_wrap=True, overflow="ellipsis")            # NEW badge + title
+        table.add_column("SEEN", width=date_width, min_width=date_width, no_wrap=True)  # published date
+        table.add_column("AGE", width=3, min_width=3, no_wrap=True, justify="right")    # age
+        if indicators_view:
+            table.add_column("TYPE", width=5, min_width=5, no_wrap=True)
+            table.add_column("INDICATOR", ratio=3, no_wrap=True, overflow="ellipsis")
+            table.add_column("THREAT", ratio=1, no_wrap=True, overflow="ellipsis")
+            table.add_column("SOURCE", width=18, min_width=18, no_wrap=True, overflow="ellipsis")
+            if table.show_header:
+                self.rows_per_page -= 1
+        else:
+            table.add_column(width=12, min_width=12, no_wrap=True)                  # severity tag
+            table.add_column(ratio=1, no_wrap=True, overflow="ellipsis")            # NEW badge + title
         
         filtered_alerts = self.filtered_alerts()
         total_pages = max(1, (len(filtered_alerts) + self.rows_per_page - 1) // self.rows_per_page)
@@ -1413,16 +1477,29 @@ class CybrWireApp(App):
             if selected and p.monochrome:
                 title.append(" █", style=f"blink {p.focus}")  # teletype cursor
             short_date = f"{a['ts']:%d %b}" if narrow and not p.military_time else p.stamp(a["ts"])
+            row_style = f"on {p.surface}" if selected else None
+            if indicators_view:
+                table.add_row(
+                    Text(short_date, style=p.muted),
+                    Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
+                    Text((a.get("ioc_type") or "").upper(), style=f"bold {p.accent}"),
+                    Text(a.get("ioc") or a["title"], style=title_style),
+                    Text(a.get("threat") or "", style=p.text),
+                    Text(a["source"], style=p.muted),
+                    style=row_style,
+                )
+                continue
             table.add_row(
                 Text(short_date, style=p.muted),
                 Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
                 Text(f" {p.severity_name(sev)} " if urgent else p.severity_name(sev), style=p.badge(sev)),
                 title,
-                style=f"on {p.surface}" if selected else None,
+                style=row_style,
             )
         
         if not self.page_alerts:
-            table.add_row("", "", Text("NO ALERTS", style=p.warn), Text("Nothing matches the current filters", style=p.muted))
+            empty = [Text("NO ALERTS", style=p.warn), Text("Nothing matches the current filters", style=p.muted)]
+            table.add_row("", "", *empty, *([""] * (len(table.columns) - 4)))
         
         rem = int((self.next_refresh - datetime.now(timezone.utc)).total_seconds())
         uptime = datetime.now(timezone.utc) - start_time
@@ -1436,7 +1513,8 @@ class CybrWireApp(App):
         status.append(" ")
         
         page = f" · page {current_page}/{total_pages}" if total_pages > 1 else ""
-        title_text, border = self.frame(f"GLOBAL THREAT FEED ({len(filtered_alerts)}){page}", self.panel_focus == "main")
+        kind_label = "" if self.active_kind == "all" else f" · {CONTENT_KINDS[self.kind_index][1].upper()}"
+        title_text, border = self.frame(f"GLOBAL THREAT FEED{kind_label} ({len(filtered_alerts)}){page}", self.panel_focus == "main")
         
         preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=p.border, box=box.ROUNDED,
                         padding=(0, 1), height=self.PREVIEW_LINES)
@@ -1465,10 +1543,7 @@ class CybrWireApp(App):
         now = datetime.now(timezone.utc)
         cutoff_time = now - timedelta(hours=self.recency_hours)
         
-        if active_feed_source == "all":
-            source_filtered_queue = alert_queue
-        else:
-            source_filtered_queue = [a for a in alert_queue if a.get("source_file") == active_feed_source]
+        source_filtered_queue = alert_queue
         window_alerts = [a for a in source_filtered_queue if a["ts"] >= cutoff_time]
         # Undated items (IP/URL lists, some blogs) are re-stamped on every fetch, so they
         # don't count as "incoming"
@@ -1479,7 +1554,7 @@ class CybrWireApp(App):
         ransomware_count, apt_count, exploit_count = counts["ransomware"], counts["apt"], counts["exploit"]
         filtered_count = len(window_alerts)
         new_count = sum(1 for a in dated_alerts if now - a["ts"] < timedelta(hours=1))
-        ioc_count = sum(1 for a in window_alerts if a["title"].startswith(IOC_TITLE_PREFIXES))
+        ioc_count = sum(1 for a in window_alerts if a.get("kind") == "indicators")
         rate = filtered_count / max(self.recency_hours, 1)
         
         # --- Metrics (left) and source mix (right) ---
@@ -1494,21 +1569,17 @@ class CybrWireApp(App):
             ("Incoming (1h)", new_count, p.text),
             ("Avg/Hour", f"{rate:.0f}/hr", p.text),
         ]
-        source_counts = Counter(a.get("source_file", "curated") for a in alert_queue if a["ts"] >= cutoff_time)
-        total_sources = sum(source_counts.values()) or 1
-        sources_right = [Text("SOURCES", style=f"bold {p.accent}")]
-        for key, label in (("curated", "Curated"), ("custom", "Custom"), ("community", "Community")):
-            selected = active_feed_source == key
-            pct = source_counts.get(key, 0) / total_sources * 100
-            line = Text("● " if selected else "○ ", style=p.accent if selected else p.muted)
-            line.append(label, style=f"bold {p.text}" if selected else p.text)
+        # Content mix of the window, by type (the '4' key filters the feed by these)
+        kind_counts = Counter(a.get("kind", "news") for a in window_alerts)
+        total_kinds = sum(kind_counts.values()) or 1
+        sources_right = [Text("CONTENT", style=f"bold {p.accent}")]
+        for key, label in CONTENT_KINDS[1:]:
+            selected = self.active_kind == key
+            line = Text(f"{label} ", style=f"bold {p.text}" if selected else p.text)
+            line.append(str(kind_counts.get(key, 0)), style=p.muted)
             sources_right.append(line)
-            meter = self.bar(pct, p.accent if selected else p.muted, width=12)
-            meter.append(f" {int(pct)}%", style=p.muted)
-            sources_right.append(meter)
-        all_line = Text("● " if active_feed_source == "all" else "○ ", style=p.accent if active_feed_source == "all" else p.muted)
-        all_line.append("All", style=f"bold {p.text}" if active_feed_source == "all" else p.text)
-        sources_right.append(all_line)
+            pct = kind_counts.get(key, 0) / total_kinds * 100
+            sources_right.append(self.bar(pct, p.accent if selected else p.muted, width=12))
         
         metrics_table = Table(show_header=False, box=None, expand=True, padding=(0, 1))
         metrics_table.add_column(no_wrap=True, ratio=1)
@@ -1650,7 +1721,11 @@ class CybrWireApp(App):
         for cve, sources in top_cves:
             row = Text(f"{cve:<17}", style=p.text)
             row.append(" KEV " if cve in KEV_CATALOG else "     ", style=f"bold {p.bg} on {p.bad}" if cve in KEV_CATALOG else "")
-            row.append(f" {len(sources)} source{'s' if len(sources) != 1 else ''}", style=p.muted)
+            row.append(f" {len(sources)} src", style=p.muted)
+            if cve in cve_intel.EPSS:
+                prob = cve_intel.EPSS[cve][0] * 100
+                row.append(f"  EPSS {prob:.0f}%" if prob >= 10 else f"  EPSS {prob:.1f}%",
+                           style=p.bad if prob >= 10 else p.warn if prob >= 1 else p.muted)
             cve_lines.append(row)
         if not top_cves:
             cve_lines.append(Text("No CVEs mentioned in this window", style=p.muted))
@@ -1690,12 +1765,10 @@ class CybrWireApp(App):
     
     def current_incidents(self):
         """Incidents for the current window and feed source, rebuilt only when those change"""
-        key = (id(alert_queue), self.recency_hours, active_feed_source)
+        key = (id(alert_queue), self.recency_hours)
         if key != self.incidents_key:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
             alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
-            if active_feed_source != "all":
-                alerts = [a for a in alerts if a.get("source_file") == active_feed_source]
             self.incidents = build_incidents(alerts, KEV_CATALOG)
             self.incidents_key = key
         return self.incidents
@@ -1720,6 +1793,9 @@ class CybrWireApp(App):
         header.append(inc.value, style=f"bold {p.accent if selected else p.text}" + (" underline" if selected else ""))
         if inc.kev:
             header.append("  KNOWN EXPLOITED", style=f"bold {p.bad}")
+        if inc.kind == "cve":
+            # Scores only (the CVE ID and KEV status are already in the header)
+            header.append_text(self.cve_scores(inc.value, scores_only=True))
         n_src = len(inc.sources)
         header.append(f"   {n_src} source{'s' if n_src != 1 else ''} · {len(inc.alerts)} alerts · latest {age(inc.last_seen, now)} ago",
                       style=p.muted)
@@ -2005,17 +2081,20 @@ class CybrWireApp(App):
         self.save_settings()
         self.call_later(self.update_display)
     
+    @property
+    def active_kind(self) -> str:
+        return CONTENT_KINDS[self.kind_index][0]
+    
     def action_cycle_feeds(self):
-        """Cycle through feed sources: all → curated → custom → community → all"""
-        global active_feed_source
-        sources = ["all", "curated", "custom", "community"]
-        self.feed_source_index = (self.feed_source_index + 1) % len(sources)
-        active_feed_source = sources[self.feed_source_index]
+        """Cycle content types: All → Advisories → News & Research → Ransomware → Indicators"""
+        self.kind_index = (self.kind_index + 1) % len(CONTENT_KINDS)
         self.feed_page_offset = 0
         self.hover_row = -1
+        if self.main_view_mode != "alerts":
+            self.main_view_mode = "alerts"
         self.save_settings()
+        self.notify(f"Showing: {CONTENT_KINDS[self.kind_index][1]}", timeout=2)
         self.call_later(self.update_display)
-    
     def action_re_enable_feeds(self):
         """Re-enable all disabled feeds and reset failure counts"""
         global disabled_feeds
@@ -2059,7 +2138,7 @@ class CybrWireApp(App):
         window = [a for a in alert_queue if a["ts"] >= cutoff_time]
         ranked = sorted(window, key=lambda a: (SEVERITY_RANK.get(a["severity"], 9), -a["ts"].timestamp()))
         # Indicator lists (IPs, URLs) add little to a briefing; keep them out of the digest
-        ranked = [a for a in ranked if not a["title"].startswith(IOC_TITLE_PREFIXES)][:60]
+        ranked = [a for a in ranked if a.get("kind") != "indicators"][:60]
         lines = [f"Data window: last {self.recency_hours} hours. {len(window)} alerts from {len({a['source'] for a in window})} sources.", ""]
         incidents = self.current_incidents()[:10]
         if incidents:
@@ -2205,6 +2284,25 @@ class CybrWireApp(App):
         return Panel(Group(*pages[self.threat_summary_page]), title=title_text, subtitle=subtitle,
                      border_style=border, box=box.ROUNDED, padding=(1, 2), expand=True)
     
+    def lookup_indicator(self, alert):
+        """Send an indicator from the Indicators view to API Tools and run the lookup"""
+        if not enrichment_engine.providers:
+            self.notify("No enrichment providers configured (see usrwire.yaml)", timeout=4)
+            return
+        value = alert.get("ioc") or ""
+        if alert.get("ioc_type") == "cidr":
+            value = value.split("/")[0]
+            self.notify("Looking up the network address of this range", timeout=3)
+        STATE.mark_read(alert)
+        self.main_view_mode = "api_tools"
+        self.api_tools_input_mode = True
+        self.api_tools_input_buffer = value
+        self.api_tools_last_query = value
+        self.api_tools_last_results = {}
+        self.api_tools_loading = True
+        asyncio.create_task(self._run_api_tools_query(value))
+        self.update_display()
+    
     async def _run_api_tools_query(self, indicator: str):
         """Run an enrichment lookup for the indicator across all configured providers"""
         try:
@@ -2245,6 +2343,9 @@ class CybrWireApp(App):
         """Open the highlighted alert, or the latest report for the highlighted incident"""
         if self.main_view_mode == "alerts":
             alert = self.selected_alert()
+            if alert and alert.get("kind") == "indicators":
+                self.lookup_indicator(alert)
+                return
             if not alert:
                 self.notify("Select an alert with ↑/↓ first", timeout=2)
             elif alert.get("url"):
@@ -2457,8 +2558,8 @@ class CybrWireApp(App):
         if self.main_view_mode not in ("alerts", "incidents") or getattr(event.widget, "id", None) != "feeds":
             return
         if self.main_view_mode == "alerts":
-            # Outer panel border + top padding = 2 rows before the first alert
-            row = event.y - 2
+            # Outer panel border + top padding = 2 rows before the first alert (+1 header in Indicators)
+            row = event.y - 2 - (1 if self.active_kind == "indicators" else 0)
             if not 0 <= row < len(self.page_alerts):
                 return
         else:

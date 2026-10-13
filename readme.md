@@ -15,7 +15,9 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 
 ## Features
 
-- **75+ curated threat intelligence sources** including CISA, SANS, Microsoft, Cisco Talos, Kaspersky, Unit 42, Ransomware.live, and more
+- **85+ curated threat intelligence sources** including CISA, vendor advisories (Fortinet, Palo Alto, Cisco, Ivanti, Microsoft), national CERTs, GitHub security advisories, Ransomware.live, ThreatFox, and more
+- **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, and Indicators (what to block)
+- **CVE scores** – CISA KEV status, CVSS severity (NVD) and EPSS exploit likelihood shown wherever a CVE appears
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
 - **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
 - **Real-time threat enrichment** – Integrate with VirusTotal, AbuseIPDB, Pulsedive, and Abuse.ch APIs
@@ -96,7 +98,7 @@ python3 cybrwire.py
 | `r` | Force refresh all feeds |
 | `d` | Cycle data age (24h → 48h → 7d) |
 | `f` | Cycle filter (all → alerts only → posts only) |
-| `4` | Cycle threat feed source (all → curated → custom → community) |
+| `4` | Cycle content type (All → Advisories → News & Research → Ransomware → Indicators) |
 | `tab` | Switch between main feed and dashboard panels |
 | `v` | Cycle main view (alerts → incidents → API tools) |
 | `c` | Toggle Cold War Mode |
@@ -184,8 +186,10 @@ A **CLEAN** result means the provider has no record of the indicator, not that i
 - **`comwire.yaml`** – Community-contributed feeds - Submit yours via PR
 - **`cybrwire_local.yaml`** – Your private API keys and feeds (in .gitignore)
 
-Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, and AlienVault OTX formats), or `txt`
-(IP/CIDR lists, URL lists, DShield, and URLhaus CSV). Feeds that need an API key can send it
+Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),
+`txt` (IP/CIDR lists, URL lists, DShield, and URLhaus CSV), or `threatfox` (uses your abuse.ch key).
+Give each feed a `kind` so it lands in the right group: `advisory`, `news` (the default),
+`ransomware`, or `indicators`. Feeds that need an API key can send it
 as a header instead of putting it in the URL:
 
 ```yaml

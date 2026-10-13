@@ -77,6 +77,10 @@ enrichment:
   # Visit: https://abuse.ch/ (some features are free, no API key needed)
   abuse_ch_api_key: ""
 
+  # NVD - CVSS scores for CVEs (optional; works without a key, just slower)
+  # Get a free key at: https://nvd.nist.gov/developers/request-an-api-key
+  nvd_api_key: ""
+
 # ==============================================================================
 # CUSTOM THREAT FEEDS
 # ==============================================================================
@@ -90,6 +94,7 @@ enrichment:
 #     - name: "Security Blog"
 #       url: "https://example.com/feed.rss"
 #       type: "rss"
+#       kind: "news"          # advisory | news | ransomware | indicators
 #
 #   JSON Feed:
 #     - name: "Threat API"
@@ -99,7 +104,7 @@ enrichment:
 #   Text/IP List:
 #     - name: "Malicious IPs"
 #       url: "https://example.com/ips.txt"
-#       type: "txt"
+#       type: "txt"           # text lists always show under Indicators
 
 custom:
   # Add your custom feeds here

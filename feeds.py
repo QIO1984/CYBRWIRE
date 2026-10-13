@@ -42,6 +42,23 @@ THREAT_KEYWORDS = [
 ]
 
 
+# Severity keywords, matched as whole words so "conti" doesn't match "continue"
+SEVERITY_RULES = [
+    ("ransomware", re.compile(r"\b(ransom\w*|lockbit|conti|blackcat|alphv|akira|cl[o0]p|qilin|play ransomware|black basta|rhysida|medusa)\b")),
+    ("apt", re.compile(r"\b(apt\s?\d+|lazarus|kimsuky|sandworm|turla|volt typhoon|salt typhoon|\w+ typhoon|\w+ blizzard|"
+                       r"nation[- ]state|state[- ]sponsored|iran(ian)?|chin(a|ese)|russia(n)?|north korea(n)?|dprk)\b")),
+    ("zeroday", re.compile(r"\b(zero[- ]day|0[- ]?day|wormable|in the wild|actively exploited|exploited in attacks|under active exploitation)\b")),
+    ("exploit", re.compile(r"\b(exploit\w*|poc|proof[- ]of[- ]concept|rce|remote code execution|code injection|"
+                           r"authentication bypass|privilege escalation)\b")),
+]
+
+
+def classify(text: str) -> str:
+    """Severity tag for free text: the first matching rule wins, otherwise info"""
+    lower = text.lower()
+    return next((sev for sev, rule in SEVERITY_RULES if rule.search(lower)), "info")
+
+
 def is_blog_post_content(title: str, summary: str, source_name: str = "") -> bool:
     """True for marketing/event posts that carry no threat intelligence"""
     text = f"{title} {summary}".lower()
@@ -100,7 +117,8 @@ def parse_cisa(data, source_name, source_file):
             "source": source_name,
             "source_file": source_file,
             "url": f"https://nvd.nist.gov/vuln/detail/{v['cveID']}",
-            "ts": ts
+            "ts": ts,
+            "kind": "advisory",
         })
     return items
 
@@ -140,12 +158,7 @@ def parse_rss(text, source_name, source_file):
         if is_blog_post_content(title, summary, source_name):
             continue  # Skip this item - it's a blog post, not threat intel
         
-        lower = (title + summary).lower()
-        sev = ("ransomware" if any(k in lower for k in ["ransom","lockbit","conti","blackcat","akira","clop"])
-               else "apt" if any(k in lower for k in ["apt41","apt28","lazarus","iran","china","russia","dprk"])
-               else "zeroday" if any(k in lower for k in ["wormable","0day","zero-day","in the wild","rce","actively exploited"])
-               else "exploit" if any(k in lower for k in ["exploit","poc"])
-               else "info")
+        sev = classify(f"{title} {summary}")
         items.append({"title": title, "summary": summary, "published": ts.strftime("%a, %d %b"), 
                       "severity": sev, "source": source_name, "source_file": source_file, "url": link, "ts": ts,
                       "undated": undated})
@@ -175,6 +188,7 @@ def parse_ransomware_live(data, source_name, source_file):
             "source_file": source_file,
             "url": v.get("url", ""),
             "ts": ts,
+            "kind": "ransomware",
         })
     return items
 
@@ -183,11 +197,9 @@ def parse_otx(data, source_name, source_file):
     items = []
     for p in data.get("results", []):
         ts = _parse_iso(p.get("modified") or p.get("created"))
-        text = f"{p.get('name', '')} {p.get('description', '')}".lower()
-        sev = ("ransomware" if "ransom" in text
-               else "apt" if p.get("adversary") or "apt" in text
-               else "exploit" if "exploit" in text or "cve-" in text
-               else "info")
+        sev = classify(f"{p.get('name', '')} {p.get('description', '')}")
+        if sev == "info" and p.get("adversary"):
+            sev = "apt"
         items.append({
             "title": f"OTX: {p.get('name', 'Untitled pulse')}"[:MAX_TITLE_LEN],
             "summary": (p.get("description") or "")[:MAX_SUMMARY_LEN],
@@ -200,6 +212,60 @@ def parse_otx(data, source_name, source_file):
         })
     return items
 
+def parse_ghsa(data, source_name, source_file):
+    """GitHub reviewed security advisories (open-source packages)"""
+    items = []
+    for adv in data:
+        ts = _parse_iso(adv.get("published_at"))
+        ecosystems = sorted({v["package"]["ecosystem"] for v in adv.get("vulnerabilities") or [] if v.get("package")})
+        packages = sorted({v["package"]["name"] for v in adv.get("vulnerabilities") or [] if v.get("package")})
+        summary = clean_html(adv.get("summary") or "")
+        cve = f"{adv['cve_id']} " if adv.get("cve_id") and adv["cve_id"] not in summary else ""
+        title = f"{cve}{summary} [{', '.join(ecosystems)}]" if ecosystems else f"{cve}{summary}"
+        # Advisory bodies are Markdown; drop heading marks and emphasis for the one-line summary
+        detail = re.sub(r"(^|\s)#+\s*|\*\*|`", " ", clean_html(adv.get("description") or ""))
+        detail = re.sub(r"\s+", " ", detail).strip()
+        items.append({
+            "title": title[:MAX_TITLE_LEN],
+            "summary": f"{adv.get('severity', '').title()} severity in {', '.join(packages[:3])}. {detail}"[:MAX_SUMMARY_LEN],
+            "published": ts.strftime("%a, %d %b"),
+            "severity": classify(f"{summary} {detail}"),
+            "source": source_name,
+            "source_file": source_file,
+            "url": adv.get("html_url", ""),
+            "ts": ts,
+            "kind": "advisory",
+        })
+    return items
+
+def parse_threatfox(data, source_name, source_file, limit=20):
+    """abuse.ch ThreatFox: newest high-confidence indicators with their malware family"""
+    labels = {"botnet_cc": "C2", "payload_delivery": "PAYLOAD", "payload": "PAYLOAD"}
+    iocs = [x for x in data.get("data") or [] if (x.get("confidence_level") or 0) >= 75]
+    iocs.sort(key=lambda x: x.get("first_seen") or "", reverse=True)
+    items = []
+    for x in iocs[:limit]:
+        ts = _parse_iso(x.get("first_seen"))
+        ioc_type = (x.get("ioc_type") or "").split(":")[0]  # "ip:port" -> "ip"
+        value = x.get("ioc", "")
+        malware = x.get("malware_printable") or "unknown malware"
+        label = labels.get(x.get("threat_type"), "IOC")
+        items.append({
+            "title": f"{label} {ioc_type.upper()}: {value} ({malware})"[:MAX_TITLE_LEN],
+            "summary": f"ThreatFox: {x.get('threat_type_desc') or x.get('threat_type', '')}, {malware}, confidence {x.get('confidence_level')}%"[:MAX_SUMMARY_LEN],
+            "published": ts.strftime("%a, %d %b"),
+            "severity": "exploit",
+            "source": source_name,
+            "source_file": source_file,
+            "url": f"https://threatfox.abuse.ch/ioc/{x.get('id')}/",
+            "ts": ts,
+            "kind": "indicators",
+            "ioc": value.split(":")[0] if ioc_type == "ip" else value,
+            "ioc_type": ioc_type,
+            "threat": malware,
+        })
+    return items
+
 def parse_json(data, source_name, source_file):
     """Pick a JSON parser based on the shape of the response"""
     if isinstance(data, dict) and "vulnerabilities" in data:
@@ -208,6 +274,8 @@ def parse_json(data, source_name, source_file):
         return parse_otx(data, source_name, source_file)
     if isinstance(data, list) and data and isinstance(data[0], dict) and "victim" in data[0]:
         return parse_ransomware_live(data, source_name, source_file)
+    if isinstance(data, list) and data and isinstance(data[0], dict) and "ghsa_id" in data[0]:
+        return parse_ghsa(data, source_name, source_file)
     logging.warning(f"No parser for JSON feed '{source_name}'")
     return []
 
@@ -231,6 +299,7 @@ def parse_txt(text, source_name, source_file):
             title = f"MALWARE URL: {cols[2]} ({cols[5]})"
             summary = f"URLhaus: {cols[5]}, status {cols[3]}"
             link = cols[7]
+            ioc, ioc_type, threat = cols[2], "url", cols[5].replace("_", " ")
         else:
             parts = re.split(r'[\s;]+', line)
             first = parts[0]
@@ -238,12 +307,15 @@ def parse_txt(text, source_name, source_file):
                 title = f"PHISHING URL: {first}"
                 summary = f"Reported by {source_name}"
                 link = ""
+                ioc, ioc_type, threat = first, "url", "phishing"
             elif IP_OR_CIDR.match(first):
                 # DShield block.txt: start, end, netblock, attacks, name, country, email
                 if len(parts) >= 4 and IP_OR_CIDR.match(parts[1]) and parts[2].isdigit():
                     title = f"TOP MALICIOUS IP: {first}/{parts[2]} ({parts[3]} attacks)"
+                    ioc, ioc_type, threat = f"{first}/{parts[2]}", "cidr", f"{parts[3]} attacks"
                 else:
                     title = f"TOP MALICIOUS IP: {first}"
+                    ioc, ioc_type, threat = first, "cidr" if "/" in first else "ip", "listed"
                 summary = f"Listed by {source_name}"
                 link = f"https://isc.sans.edu/ipinfo.html?ip={first.split('/')[0]}"
             else:
@@ -256,5 +328,9 @@ def parse_txt(text, source_name, source_file):
                       "source": source_name,
                       "source_file": source_file,
                       "url": link,
-                      "ts": ts})
+                      "ts": ts,
+                      "kind": "indicators",
+                      "ioc": ioc,
+                      "ioc_type": ioc_type,
+                      "threat": threat})
     return items

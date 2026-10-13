@@ -28,6 +28,7 @@ ENRICHMENT_KEYS = {
     "virustotal_api_key": ("virustotal", "VIRUSTOTAL"),
     "pulsedive_api_key": ("pulsedive", "PULSEDIVE"),
     "abuse_ch_api_key": ("abusech", "ABUSE.CH"),
+    "nvd_api_key": ("nvd", "NVD"),  # optional: raises NVD's CVSS lookup rate limit
 }
 
 FALLBACK_SOURCES = [
