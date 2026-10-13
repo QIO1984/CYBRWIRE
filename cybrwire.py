@@ -1096,7 +1096,7 @@ class CybrWireApp(App):
         
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
-        yield StyledHeader(show_clock=True)
+        yield StyledHeader(show_clock=True, icon="◆")
         yield Static(id="ticker")
         
         # Always create both layouts, use CSS to control visibility
@@ -1813,25 +1813,21 @@ class CybrWireApp(App):
             "abuseipdb": {
                 "name": "AbuseIPDB",
                 "accepts": "IPs",
-                "icon": "🌐",
                 "tier_note": "(Free tier: IP lookups only)"
             },
             "virustotal": {
                 "name": "VirusTotal",
                 "accepts": "IPs, hashes, domains, URLs",
-                "icon": "🔍",
                 "tier_note": "(Free tier: 4 lookups/min, 500/day)"
             },
             "pulsedive": {
                 "name": "Pulsedive",
                 "accepts": "IPs, domains, hashes, URLs",
-                "icon": "📊",
                 "tier_note": "(Free tier: limited indicator database)"
             },
             "abusech": {
                 "name": "Abuse.ch",
                 "accepts": "Hashes, URLs, IPs, domains",
-                "icon": "⚠️",
                 "tier_note": "(Free Auth-Key: MalwareBazaar + URLhaus)"
             }
         }
@@ -1842,7 +1838,7 @@ class CybrWireApp(App):
         
         if not configured:
             # No providers configured
-            content.append("╭─ NO PROVIDERS CONFIGURED ─╮\n\n", style=f"bold {p.warn}")
+            content.append("NO PROVIDERS CONFIGURED\n\n", style=f"bold {p.warn}")
             content.append("Available providers:\n\n", style=p.text)
             for key in providers_info.keys():
                 info = providers_info[key]
@@ -1856,7 +1852,7 @@ class CybrWireApp(App):
             
         else:
             # Show input field
-            content.append("╭─ ENRICHMENT QUERY ─╮\n", style=f"bold {p.accent}")
+            content.append("ENRICHMENT QUERY\n", style=f"bold {p.accent}")
             
             if self.api_tools_loading:
                 content.append(f"[⏳ Querying] {self.api_tools_input_buffer}\n\n", style=f"bold {p.warn}")
@@ -1869,10 +1865,9 @@ class CybrWireApp(App):
             # Provider status line
             provider_line = "Providers: "
             for provider in configured:
-                icon = providers_info[provider].get("icon", "•") if not self.cold_war_mode else ""
                 name = providers_info[provider]['name']
                 tier_note = providers_info[provider].get("tier_note", "")
-                provider_line += f"{icon} {name}  ".lstrip() if self.cold_war_mode else f"{icon} {name}  "
+                provider_line += f"{name}  "
             
             if unconfigured:
                 provider_line += f"[disabled: {', '.join([providers_info[p]['name'] for p in unconfigured])}]"
@@ -1881,7 +1876,7 @@ class CybrWireApp(App):
             
             # Results section
             if self.api_tools_last_query and self.api_tools_last_results:
-                content.append("╭─ RESULTS ─╮\n\n", style=f"bold {p.accent}")
+                content.append("RESULTS\n\n", style=f"bold {p.accent}")
                 
                 for provider_name, enrichment_data in self.api_tools_last_results.items():
                     if enrichment_data is None:
@@ -1889,9 +1884,8 @@ class CybrWireApp(App):
                     
                     # Provider header
                     provider_info = providers_info.get(provider_name, {})
-                    icon = provider_info.get("icon", "•") if not self.cold_war_mode else ""
                     provider_display = provider_info.get("name", provider_name)
-                    provider_text = f"{icon} {provider_display}".lstrip() if self.cold_war_mode else f"{icon} {provider_display}"
+                    provider_text = provider_display
                     content.append(f"\n{provider_text}\n", style=f"bold {p.text}")
                     content.append("─" * 40 + "\n", style=p.muted)
                     
@@ -1964,17 +1958,17 @@ class CybrWireApp(App):
                     
                     content.append("\n", style="")
             elif self.api_tools_last_query and not self.api_tools_last_results:
-                content.append("╭─ NO RESULTS ─╮\n", style=f"bold {p.accent}")
+                content.append("NO RESULTS\n", style=f"bold {p.accent}")
                 content.append(f"No threat data found for: {self.api_tools_last_query}\n", style=p.muted)
             else:
-                content.append("╭─ USAGE ─╮\n\n", style=f"bold {p.accent}")
+                content.append("USAGE\n\n", style=f"bold {p.accent}")
                 content.append("Type an indicator (IP, hash, domain, URL) and press ENTER to query all configured providers.\n", style=p.text)
                 content.append("Results will display below with threat scores from each provider.\n", style=p.text)
                 content.append("\nPress ESC to clear the query buffer.\n", style=p.muted)
                 content.append("Press Ctrl+Shift+V to paste from clipboard.\n", style=p.muted)
                 
                 # Add API tier limitation note
-                content.append("\n╭─ API TIER INFORMATION ─╮\n", style=f"bold {p.accent}")
+                content.append("\nAPI TIER INFORMATION\n", style=f"bold {p.accent}")
                 content.append("\nFree/limited API keys have restrictions on the indicator types they can query:\n\n", style=p.muted)
                 content.append("  VirusTotal Free:  All indicator types, 4 lookups/min, 500/day\n", style=p.muted)
                 content.append("  AbuseIPDB Free:   IP lookups only\n", style=p.muted)
@@ -2210,6 +2204,17 @@ class CybrWireApp(App):
         subtitle = self.hint_bar(hints)
         return Panel(Group(*pages[self.threat_summary_page]), title=title_text, subtitle=subtitle,
                      border_style=border, box=box.ROUNDED, padding=(1, 2), expand=True)
+    
+    async def _run_api_tools_query(self, indicator: str):
+        """Run an enrichment lookup for the indicator across all configured providers"""
+        try:
+            self.api_tools_last_results = await enrichment_engine.enrich(indicator)
+        except Exception as e:
+            logging.error(f"Error querying providers for {indicator}: {e}")
+            self.api_tools_last_results = {}
+        finally:
+            self.api_tools_loading = False
+            self.mark_dirty()
     
     def action_toggle_view(self):
         """Toggle view in the focused panel - alerts/incidents/api_tools on left, dashboard views on right"""
