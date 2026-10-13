@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import io
 import time
 import httpx
 import logging
@@ -212,10 +213,10 @@ class HelpScreen(Screen):
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
         # SOURCES BAR EXPLANATION
-        help_text.append("┌─ CONTENT MIX & CVE SCORES (Right Side) " + "─" * 57 + "┐\n", style=accent)
+        help_text.append("┌─ SOURCES & CVE SCORES (Right Side) " + "─" * 61 + "┐\n", style=accent)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [CONTENT]\n", style=f"bold {accent}")
-        help_text.append("│    How the current window splits by type; the type '4' is showing is highlighted\n", style=color)
+        help_text.append("│  [SOURCES]\n", style=f"bold {accent}")
+        help_text.append("│    Items in the window from curated (vetted), custom and community feed sets\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [CVE SCORES] (alert preview, incidents, Top CVEs)\n", style=f"bold {accent}")
         help_text.append("│    KEV               - In CISA's Known Exploited Vulnerabilities catalog\n", style=color)
@@ -1569,17 +1570,18 @@ class CybrWireApp(App):
             ("Incoming (1h)", new_count, p.text),
             ("Avg/Hour", f"{rate:.0f}/hr", p.text),
         ]
-        # Content mix of the window, by type (the '4' key filters the feed by these)
-        kind_counts = Counter(a.get("kind", "news") for a in window_alerts)
-        total_kinds = sum(kind_counts.values()) or 1
-        sources_right = [Text("CONTENT", style=f"bold {p.accent}")]
-        for key, label in CONTENT_KINDS[1:]:
-            selected = self.active_kind == key
-            line = Text(f"{label} ", style=f"bold {p.text}" if selected else p.text)
-            line.append(str(kind_counts.get(key, 0)), style=p.muted)
+        # Which feed sets are loaded: curated (vetted) vs custom and community contributions
+        source_counts = Counter(a.get("source_file", "curated") for a in window_alerts)
+        total_sources = sum(source_counts.values()) or 1
+        sources_right = [Text("SOURCES", style=f"bold {p.accent}")]
+        for key, label in (("curated", "Curated"), ("custom", "Custom"), ("community", "Community")):
+            n = source_counts.get(key, 0)
+            line = Text(f"{label} ", style=p.text if n else p.muted)
+            line.append(str(n), style=p.muted)
             sources_right.append(line)
-            pct = kind_counts.get(key, 0) / total_kinds * 100
-            sources_right.append(self.bar(pct, p.accent if selected else p.muted, width=12))
+            meter = self.bar(n / total_sources * 100, p.accent if n else p.muted, width=12)
+            meter.append(f" {int(n / total_sources * 100)}%", style=p.muted)
+            sources_right.append(meter)
         
         metrics_table = Table(show_header=False, box=None, expand=True, padding=(0, 1))
         metrics_table.add_column(no_wrap=True, ratio=1)
@@ -1730,8 +1732,29 @@ class CybrWireApp(App):
         if not top_cves:
             cve_lines.append(Text("No CVEs mentioned in this window", style=p.muted))
         
+        # Sections in display order; when space is short, drop the lowest priority first
+        breaches_start = lines.index(next(l for l in lines if l.plain == "RECENT BREACHES")) - 1
+        sections = [
+            ("metrics", [metrics_table], 0),
+            ("meters", lines[:breaches_start], 0),
+            ("breaches", lines[breaches_start:], 3),
+            ("insights", [Text(""), insight_grid], 2),
+            ("activity", [Text(""), *activity], 1),
+            ("cves", [Text(""), *cve_lines], 1),
+        ]
+        try:
+            available = self.query_one("#dashboard").size.height - 2
+            measure = Console(width=max(20, self.query_one("#dashboard").size.width - 4), file=io.StringIO())
+            heights = {name: len(measure.render_lines(Group(*parts), pad=False)) for name, parts, _ in sections}
+            for name, _, priority in sorted(sections, key=lambda s: -s[2]):
+                if priority == 0 or sum(heights[n] for n, _, _ in sections) <= available:
+                    break
+                sections = [sec for sec in sections if sec[0] != name]
+        except Exception:
+            pass  # Not mounted yet; render everything
+        
         title, border = self.frame("WAR ROOM DASHBOARD", self.panel_focus == "dashboard")
-        return Panel(Group(metrics_table, *lines, Text(""), insight_grid, Text(""), *activity, Text(""), *cve_lines),
+        return Panel(Group(*(part for _, parts, _ in sections for part in parts)),
                      title=title, border_style=border, box=box.ROUNDED, padding=(0, 1))
     
     def make_feed_status_panel(self):
