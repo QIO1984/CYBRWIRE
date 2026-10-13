@@ -22,7 +22,7 @@ from enrichment import enrichment_engine, initialize_enrichment
 import ai
 from config import load_config
 from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_txt, fetch_doomsday_seconds
-from incidents import build_incidents, age, KIND_LABELS, SEVERITY_RANK
+from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 from state import AppState, alert_key
 from textual.app import App, Screen, ComposeResult
 from textual.widgets import Static, Header
@@ -1531,28 +1531,31 @@ class CybrWireApp(App):
         master_pct = min(100, weighted / (filtered_count * 17) * 100) if filtered_count else 0
         defcon = 5 if master_pct < 20 else 4 if master_pct < 40 else 3 if master_pct < 60 else 2 if master_pct < 80 else 1
         last_zeroday_time = max((a["ts"] for a in window_alerts if a["severity"] == "zeroday"), default=None)
-        time_since_zeroday = f"last {age(last_zeroday_time)} ago" if last_zeroday_time else "none in window"
+        time_since_zeroday = f"{age(last_zeroday_time)} ago" if last_zeroday_time else "none in window"
         # 0% at the farthest setting ever (17 minutes, 1991), 100% at midnight
         doomsday_pct = max(0, min(100, (1 - self.doomsday_seconds / 1020) * 100))
         
         meters = [
-            ("Heat Level", "high-threat share", heat_pct, p.level(heat_pct)),
-            ("Ransomware", None, pct_of(ransomware_count), p.ransomware),
-            ("APT", None, pct_of(apt_count), p.apt),
-            ("Zero-Day", time_since_zeroday, pct_of(zeroday_count), p.zeroday),
-            ("Exploit", None, pct_of(exploit_count), p.exploit),
-            ("Doomsday Clock", f"{self.doomsday_seconds}s to midnight", doomsday_pct, p.bad),
-            (f"Cyber DEFCON {defcon}", None, master_pct, p.level(master_pct)),
+            ("Heat Level", f"{int(heat_pct)}%", heat_pct, p.level(heat_pct)),
+            ("Ransomware", f"{int(pct_of(ransomware_count))}%", pct_of(ransomware_count), p.ransomware),
+            ("APT", f"{int(pct_of(apt_count))}%", pct_of(apt_count), p.apt),
+            ("Zero-Day", f"{int(pct_of(zeroday_count))}%", pct_of(zeroday_count), p.zeroday),
+            ("Exploit", f"{int(pct_of(exploit_count))}%", pct_of(exploit_count), p.exploit),
+            ("Doomsday", f"{self.doomsday_seconds}s", doomsday_pct, p.bad),
+            (f"DEFCON {defcon}", f"{int(master_pct)}%", master_pct, p.level(master_pct)),
         ]
+        try:
+            inner_width = self.query_one("#dashboard").size.width - 4
+        except Exception:
+            inner_width = 44
+        # One line per meter: label, bar, value
+        bar_width = max(8, inner_width - 11 - 6)
         lines = [Text("")]
-        for label, note, pct, color in meters:
-            head = Text(label, style=f"bold {p.text}")
-            if note:
-                head.append(f"  {note}", style=p.muted)
-            lines.append(head)
-            meter = self.bar(pct, color)
-            meter.append(f" {int(pct)}%" if not label.startswith("Doomsday") else "", style=p.muted)
-            lines.append(meter)
+        for label, value, pct, color in meters:
+            row = Text(f"{label:<11}", style=f"bold {p.text}")
+            row.append_text(self.bar(pct, color, width=bar_width))
+            row.append(f" {value:>4}", style=p.muted)
+            lines.append(row)
         
         # --- Recent breaches (HIBP) ---
         lines.append(Text(""))
@@ -1579,6 +1582,7 @@ class CybrWireApp(App):
             color = {"Ransomware": p.ransomware, "APT": p.apt, "Zero-Day": p.zeroday,
                      "Exploitation": p.exploit, "Critical": p.critical}[name]
             insights.append(("Dominant threat", f"{name} wave", color))
+        insights.append(("Last zero-day", time_since_zeroday, p.zeroday if last_zeroday_time else p.muted))
         
         # Alert Velocity - alerts published in the last 24h vs the 24h before. Each feed only
         # keeps its newest items, so only count feeds whose history reaches back 48h;
@@ -1621,8 +1625,38 @@ class CybrWireApp(App):
         for label, value, color in insights:
             insight_grid.add_row(label, Text(value, style=f"bold {color}"))
         
+        # --- Activity: dated alerts per hour over the last 24h, oldest on the left ---
+        hourly = [0] * 24
+        for a in dated_alerts:
+            hours_ago = int((now - a["ts"]).total_seconds() // 3600)
+            if 0 <= hours_ago < 24:
+                hourly[23 - hours_ago] += 1
+        peak = max(hourly) or 1
+        blocks = "▁▂▃▄▅▆▇█"
+        spark = Text()
+        for n in hourly:
+            # Quiet hours stay visible as a muted baseline
+            spark.append(blocks[max(1, min(7, round(n / peak * 7)))] if n else blocks[0], style=p.accent if n else p.border)
+        activity = [Text("ACTIVITY", style=f"bold {p.accent}") + Text(f"  last 24h · peak {peak}/hr", style=p.muted),
+                    Text("24h ", style=p.muted) + spark + Text(" now", style=p.muted)]
+        
+        # --- Top CVEs: most independent sources in the window, KEV first on ties ---
+        cve_sources = {}
+        for a in window_alerts:
+            for cve in set(m.upper() for m in CVE_RE.findall(f"{a['title']} {a['summary']}")):
+                cve_sources.setdefault(cve, set()).add(a["source"])
+        top_cves = sorted(cve_sources.items(), key=lambda kv: (-len(kv[1]), kv[0] not in KEV_CATALOG, kv[0]))[:3]
+        cve_lines = [Text("TOP CVEs", style=f"bold {p.accent}") + Text("  by number of sources", style=p.muted)]
+        for cve, sources in top_cves:
+            row = Text(f"{cve:<17}", style=p.text)
+            row.append(" KEV " if cve in KEV_CATALOG else "     ", style=f"bold {p.bg} on {p.bad}" if cve in KEV_CATALOG else "")
+            row.append(f" {len(sources)} source{'s' if len(sources) != 1 else ''}", style=p.muted)
+            cve_lines.append(row)
+        if not top_cves:
+            cve_lines.append(Text("No CVEs mentioned in this window", style=p.muted))
+        
         title, border = self.frame("WAR ROOM DASHBOARD", self.panel_focus == "dashboard")
-        return Panel(Group(metrics_table, *lines, Text(""), insight_grid),
+        return Panel(Group(metrics_table, *lines, Text(""), insight_grid, Text(""), *activity, Text(""), *cve_lines),
                      title=title, border_style=border, box=box.ROUNDED, padding=(0, 1))
     
     def make_feed_status_panel(self):
