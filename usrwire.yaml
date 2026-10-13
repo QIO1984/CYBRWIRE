@@ -5,7 +5,7 @@
 # For LOCAL use and testing with PRIVATE API KEYS, create and use cybrwire_local.yaml instead
 # (cybrwire_local.yaml IS in .gitignore and will never be committed)
 # If you aren't using local overrides, add your keys here but be advised if you push to GitHub
-# they will be public. The app will look for keys here first, then in cybrwire_local.yaml
+# they will be public. Keys in cybrwire_local.yaml take priority over keys here.
 #
 # Add your API keys and custom feeds below
 

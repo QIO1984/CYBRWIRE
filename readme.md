@@ -1,13 +1,13 @@
 # C Y B R W I R E // Legendary Edition
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rich](https://img.shields.io/badge/Powered%20by-Rich-brightgreen)](https://github.com/Textualize/rich)
 [![Textual](https://img.shields.io/badge/Built%20with-Textual-blueviolet)](https://github.com/Textualize/textual)
 
 **A real-time cyber threat intelligence dashboard in your terminal.**
 
-CYBRWIRE pulls the latest alerts from hundreds of top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Textual](https://github.com/Textualize/textual)** and **[Rich](https://github.com/Textualize/rich)**.
+CYBRWIRE pulls the latest alerts from dozens of top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Textual](https://github.com/Textualize/textual)** and **[Rich](https://github.com/Textualize/rich)**.
 
 CYBRWIRE also includes tools (via api keys) to identify malicious IPs and query databases for malicous file hashes.
 
@@ -15,7 +15,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 
 ## Features
 
-- **300+ curated threat intelligence sources** including CISA, NSA, FBI, SANS, Microsoft, Cisco, Kaspersky, and more
+- **75+ curated threat intelligence sources** including CISA, SANS, Microsoft, Cisco Talos, Kaspersky, Unit 42, Ransomware.live, and more
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
 - **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
 - **Real-time threat enrichment** – Integrate with VirusTotal, AbuseIPDB, Pulsedive, and Abuse.ch APIs
@@ -64,7 +64,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Configure API keys (optional, for enrichment features)
-cp cybrwire.yaml cybrwire_local.yaml
+cp usrwire.yaml cybrwire_local.yaml
 # Edit cybrwire_local.yaml and add your API keys
 
 # Run it!
@@ -108,11 +108,9 @@ enrichment:
 CybrWire supports multiple threat intelligence providers with optional API key enrichment. **Free and limited API tiers have restrictions on indicator types they can query.**
 
 ### VirusTotal
-- **Free Tier**: IP addresses only
-  - Hash/domain/URL lookups not supported on free tier
+- **Free Tier**: IPs, file hashes, domains, and URLs
   - Rate limit: 4 queries/minute, 500/day quota
-- **Paid Tier**: Full access to IPs, hashes, domains, URLs
-- **When to upgrade**: If you need comprehensive hash and domain enrichment
+- **Paid Tier**: Higher quotas and premium features
 
 ### AbuseIPDB
 - **Free Tier**: IP reputation lookups only
@@ -127,25 +125,41 @@ CybrWire supports multiple threat intelligence providers with optional API key e
 - **When to upgrade**: For comprehensive threat data across all indicator types
 
 ### Abuse.ch
-- **Free/Open**: Full access to hash and URL databases
-  - No API key required (public database)
-  - Best option for free hash and malicious URL lookups
-- **Recommended for**: Hash and URL enrichment on free tier (no upgrade needed)
+- **Free**: MalwareBazaar (hashes) and URLhaus (URLs, IPs, domains)
+  - Requires a free Auth-Key from https://auth.abuse.ch/
+- **Recommended for**: Hash and malicious URL lookups
 
 ### Recommendation
 
 For best results with CybrWire enrichment:
-1. **Use Abuse.ch** (free, no key needed) for hash and URL enrichment
+1. **Use Abuse.ch** (free Auth-Key) for hash and URL enrichment
 2. **Use AbuseIPDB** for IP reputation (free tier available)
-3. **Upgrade VirusTotal** if you frequently check hashes and domains
+3. **Use VirusTotal** for multi-engine verdicts on any indicator type
 4. **Configure multiple providers** for redundancy and broader coverage
+
+A **CLEAN** result means the provider has no record of the indicator, not that it is known to be safe.
 
 ## Configuration Files
 
-- **`cybrwire.yaml`** – Curated official threat feeds (CISA, NSA, Microsoft, etc.)
-- **`usrwire.yaml`** – Additional community and third-party feeds
-- **`comwire.yaml`** – Custom community-contributed feeds - Submit yours via PR
-- **`cybrwire_local.yaml`** – LOCAL TESTING ONLY (your private API keys, in .gitignore)
+- **`cybrwire.yaml`** – Curated official threat feeds (CISA, Microsoft, Talos, etc.)
+- **`usrwire.yaml`** – Template for your own API keys and custom feeds
+- **`comwire.yaml`** – Community-contributed feeds - Submit yours via PR
+- **`cybrwire_local.yaml`** – Your private API keys and feeds (in .gitignore)
+
+Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, and AlienVault OTX formats), or `txt`
+(IP/CIDR lists, URL lists, DShield, and URLhaus CSV). Feeds that need an API key can send it
+as a header instead of putting it in the URL:
+
+```yaml
+custom:
+  - name: "AlienVault OTX - Subscribed Pulses"
+    url: "https://otx.alienvault.com/api/v1/pulses/subscribed?limit=10"
+    type: "json"
+    headers:
+      X-OTX-API-KEY: "your-otx-key"
+```
+
+Errors and feed failures are written to `cybrwire.log` in the app folder.
 
 ## Features in Detail
 
@@ -170,7 +184,7 @@ Query threat intelligence APIs directly from CybrWire:
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+
 - `rich` – Beautiful terminal output
 - `httpx` – Async HTTP client for feed fetching
 - `feedparser` – RSS/Atom feed parsing

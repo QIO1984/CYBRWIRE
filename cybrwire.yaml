@@ -6,22 +6,14 @@ curated:
   - name: "CISA KEV"
     url: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     type: "json"
-  - name: "CISA AA"
-    url: "https://www.cisa.gov/sites/default/files/feeds/alert_advisories.json"
-    type: "json"
-  - name: "NSA Cybersecurity Advisories"
-    url: "https://www.nsa.gov/feeds/cisa-nsa-releases/"
+  - name: "CISA Advisories"
+    url: "https://www.cisa.gov/cybersecurity-advisories/all.xml"
     type: "rss"
-
 
   # === ACADEMIC & RESEARCH ===
   - name: "SANS ISC Diary"
     url: "https://isc.sans.edu/rssfeed.xml"
     type: "rss"
-
-  - name: "National Vulnerability Database"
-    url: "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json"
-    type: "json"
 
   # === VULNERABILITY DATABASES ===
   - name: "VulDB"
@@ -37,10 +29,9 @@ curated:
     url: "https://www.zerodayinitiative.com/rss/upcoming/"
     type: "rss"
 
-
   # === SECURITY VENDORS ===
-  - name: "Microsoft MSRC"
-    url: "https://msrc.microsoft.com/blog/rss"
+  - name: "Microsoft Security Update Guide"
+    url: "https://api.msrc.microsoft.com/update-guide/rss"
     type: "rss"
   - name: "Palo Alto Unit 42"
     url: "https://unit42.paloaltonetworks.com/feed/"
@@ -59,19 +50,19 @@ curated:
     url: "https://www.crowdstrike.com/blog/feed/"
     type: "rss"
   - name: "Mandiant Threat Intelligence"
-    url: "https://www.mandiant.com/feed"
+    url: "https://feeds.feedburner.com/threatintelligence/pvexyqv7v0v"
     type: "rss"
   - name: "Check Point Research"
     url: "https://research.checkpoint.com/feed/"
     type: "rss"
-  - name: "Trend Micro Security"
-    url: "https://www.trendmicro.com/en_us/research.html/rss"
+  - name: "Trend Micro Research"
+    url: "http://feeds.trendmicro.com/TrendMicroResearch"
     type: "rss"
-  - name: "ESET Security"
-    url: "https://www.eset.com/feed/"
+  - name: "ESET WeLiveSecurity"
+    url: "https://www.welivesecurity.com/en/rss/feed/"
     type: "rss"
   - name: "SentinelOne Labs"
-    url: "https://www.sentinelone.com/blog/feed/"
+    url: "https://www.sentinelone.com/labs/feed/"
     type: "rss"
   - name: "Malwarebytes Labs"
     url: "https://www.malwarebytes.com/blog/feed"
@@ -91,7 +82,6 @@ curated:
     url: "https://www.darkreading.com/rss.xml"
     type: "rss"
 
-
   - name: "Help Net Security"
     url: "https://www.helpnetsecurity.com/feed/"
     type: "rss"
@@ -109,12 +99,6 @@ curated:
   - name: "DShield Block"
     url: "https://feeds.dshield.org/block.txt"
     type: "txt"
-  - name: "Abuse.ch Malware"
-    url: "https://urlhaus-api.abuse.ch/v1/urls/recent/"
-    type: "json"
-  - name: "PhishTank"
-    url: "https://phishtank.com/feed.xml"
-    type: "rss"
   - name: "OpenPhish"
     url: "https://openphish.com/feed.txt"
     type: "txt"
@@ -124,22 +108,13 @@ curated:
 
   # === RANSOMWARE & APT TRACKING ===
   - name: "Ransomware.live"
-    url: "https://ransomware.live/api/v2/all/latest"
+    url: "https://api.ransomware.live/v2/recentvictims"
     type: "json"
-
-
-
-  # === SUPPLY CHAIN & SOFTWARE SECURITY ===
-  - name: "NIST Product Advisories"
-    url: "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json"
-    type: "json"
-
 
   # === EMERGING THREATS ===
   - name: "Emerging Threats IPs"
-    url: "https://rules.emergingthreats.net/blockips/compromised-ips.txt"
+    url: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt"
     type: "txt"
-
 
   # === SECURITY RESEARCH & ANALYSIS BLOGS ===
   - name: "Cloudflare Security"
@@ -152,10 +127,7 @@ curated:
     url: "https://googleprojectzero.blogspot.com/feeds/posts/default"
     type: "rss"
   - name: "Google Online Security Blog"
-    url: "https://www.blog.google/products/chrome/rss"
-    type: "rss"
-  - name: "The Hacker News"
-    url: "https://feeds.feedburner.com/TheHackersNews"
+    url: "https://security.googleblog.com/feeds/posts/default"
     type: "rss"
   - name: "Binary Ninja"
     url: "https://binary.ninja/feed.xml"
@@ -163,15 +135,9 @@ curated:
   - name: "Trail of Bits"
     url: "https://blog.trailofbits.com/feed/"
     type: "rss"
-  - name: "Trended Future"
+  - name: "Recorded Future"
     url: "https://www.recordedfuture.com/feed"
     type: "rss"
-  - name: "Shodan"
-    url: "https://blog.shodan.io/"
-    type: "rss"
-  - name: "Abuse.ch URLhaus"
-    url: "https://urlhaus.abuse.ch/downloads/csv_recent/"
-    type: "txt"
 
   # === SPECIALIZED THREAT INTEL ===
   - name: "ANY.RUN Malware Analysis"
@@ -179,12 +145,6 @@ curated:
     type: "rss"
   - name: "Greynoise Labs"
     url: "https://www.labs.greynoise.io/grimoire/index.xml"
-    type: "rss"
-  - name: "Intezer Security"
-    url: "https://intezer.com/blog/research/feed/"
-    type: "rss"
-  - name: "Shodan Blog"
-    url: "https://blog.shodan.io/rss.xml"
     type: "rss"
   - name: "JPCERT/CC"
     url: "https://blogs.jpcert.or.jp/en/atom.xml"
@@ -209,9 +169,6 @@ curated:
   - name: "Dr.Web Security News"
     url: "https://news.drweb.com/rss/get/?c=23"
     type: "rss"
-  - name: "Malwarebytes Labs"
-    url: "https://www.malwarebytes.com/blog/feed"
-    type: "rss"
   - name: "Sucuri Security Blog"
     url: "https://blog.sucuri.net/feed"
     type: "rss"
@@ -220,9 +177,6 @@ curated:
     type: "txt"
 
   # === MOBILE & APP SECURITY ===
-  - name: "Lookout Mobile Security"
-    url: "https://www.lookout.net/feed.xml"
-    type: "rss"
   - name: "NowSecure Research"
     url: "https://www.nowsecure.com/feed/"
     type: "rss"
@@ -240,17 +194,11 @@ curated:
   - name: "Prisma Cloud Research"
     url: "https://www.paloaltonetworks.com/blog/feed/"
     type: "rss"
-  - name: "BishopFox Labs"
-    url: "https://labs.bishopfox.com/tech-blog/rss.xml"
-    type: "rss"
-  - name: "Qualys Blog"
-    url: "https://blog.qualys.com/feed"
+  - name: "Bishop Fox"
+    url: "https://bishopfox.com/blog/feed"
     type: "rss"
 
   # === ZERO-DAY & VULNERABILITY TRACKING ===
-  - name: "Synopsys Software Integrity"
-    url: "https://www.synopsys.com/blogs/software-security/feed/"
-    type: "rss"
 
   - name: "SonarSource Security"
     url: "https://www.sonarsource.com/rss.xml"
@@ -261,22 +209,13 @@ curated:
   - name: "Tenable Blog"
     url: "https://www.tenable.com/blog/feed"
     type: "rss"
-  - name: "Qualys Vulnerabilities"
-    url: "https://blog.qualys.com/vulnerabilities-threat-research/feed"
-    type: "rss"
 
   # === NETWORK & INFRASTRUCTURE THREATS ===
-  - name: "Team Cymru Threat Intelligence"
-    url: "https://team-cymru.com/blog-feed.xml"
-    type: "rss"
-  - name: "Arbor Networks Security"
-    url: "https://www.arbornetworks.com/blog/feed/"
-    type: "rss"
   - name: "Akamai Security Blog"
     url: "https://feeds.feedburner.com/akamai/blog"
     type: "rss"
-  - name: "F5 Labs Security Research"
-    url: "https://www.f5.com/company/blog/articles/rss"
+  - name: "F5 Labs"
+    url: "https://www.f5.com/labs/rss-feeds/all.xml"
     type: "rss"
 
   # === DATA BREACH & PRIVACY ===
@@ -297,20 +236,14 @@ curated:
   - name: "The DFIR Report"
     url: "https://thedfirreport.com/feed/"
     type: "rss"
-  - name: "CyberArk Labs"
-    url: "https://www.cyberark.com/blog/rss/"
-    type: "rss"
   - name: "Varonis Security Research"
-    url: "https://www.varonis.com/blog/rss/"
+    url: "https://www.varonis.com/blog/rss.xml"
     type: "rss"
   - name: "Huntress Security Blog"
     url: "https://www.huntress.com/blog/rss.xml"
     type: "rss"
 
   # === RED TEAM & ADVERSARY SIMULATION ===
-  - name: "SpecterOps Posts"
-    url: "https://posts.specterops.io/feed"
-    type: "rss"
   - name: "TrustedSec Blog"
     url: "https://trustedsec.com/feed.rss"
     type: "rss"
@@ -329,7 +262,6 @@ curated:
     url: "https://www.w3.org/blog/news/feed/"
     type: "rss"
 
-
   # === GEOPOLITICAL & STATE-SPONSORED THREATS ===
   - name: "The Record Cybercrime"
     url: "https://therecord.media/news/cybercrime/feed/"
@@ -340,5 +272,4 @@ curated:
   - name: "Citizen Lab"
     url: "https://citizenlab.ca/feed/"
     type: "rss"
-
 

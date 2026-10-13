@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import csv
 import feedparser
 import httpx
 import json
@@ -27,8 +28,12 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.reactive import reactive
 from textual import events
 
-# Configure logging to suppress noisy library logs (httpx, etc.)
-logging.basicConfig(level=logging.WARNING, format='%(message)s')
+# Log to a file - writing to stderr would draw over the TUI
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), "cybrwire.log"),
+)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
@@ -48,6 +53,8 @@ MAX_TITLE_LEN = 90
 MAX_SUMMARY_LEN = 140
 HEAT_BAR_WIDTH = 33
 REFRESH_INTERVAL = 300
+FEED_TIMEOUT = 15          # Seconds before giving up on a single feed
+MAX_CONCURRENT_FEEDS = 8   # Higher values can overwhelm local DNS resolvers
 
 # Fallback sources if YAML files can't be loaded
 FALLBACK_SOURCES = [
@@ -468,7 +475,7 @@ def parse_cisa(data, source_name, source_file):
 def parse_rss(text, source_name, source_file):
     f = feedparser.parse(text)
     items = []
-    for e in f.entries:
+    for e in f.entries[:100]:  # Some feeds (e.g. MSRC) return thousands of entries
         pub = e.get("published") or e.get("updated") or ""
         try:
             if "Z" in pub:
@@ -497,22 +504,111 @@ def parse_rss(text, source_name, source_file):
                       "severity": sev, "source": source_name, "source_file": source_file, "url": link, "ts": ts})
     return items
 
-def parse_txt(text, source_name, source_file):
-    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
+def _parse_iso(value):
+    """Parse an ISO-8601 timestamp, assuming UTC when no offset is given"""
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00").replace(" UTC", "+00:00"))
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc)
+
+def parse_ransomware_live(data, source_name, source_file):
+    """Parse ransomware.live /v2/recentvictims (a list of victim posts)"""
     items = []
-    for line in lines[:20]:  # Limit IPs to 20 since there can be thousands
-        parts = line.split()
-        if len(parts) >= 3:
-            ip_net = parts[0]
-            attacks = parts[1]
-            items.append({"title": f"TOP MALICIOUS IP: {ip_net} ({attacks} attacks)", 
-                         "summary": "DShield top attacker", 
-                         "published": datetime.now(timezone.utc).strftime("%a, %d %b"), 
-                         "severity": "exploit", 
-                         "source": source_name,
-                         "source_file": source_file,
-                         "url": f"https://www.dshield.org/ipinfo.html?ip={ip_net.split('/')[0]}",
-                         "ts": datetime.now(timezone.utc)})
+    for v in data:
+        ts = _parse_iso(v.get("discovered") or v.get("attackdate"))
+        group = v.get("group", "unknown")
+        country = f" [{v['country']}]" if v.get("country") else ""
+        items.append({
+            "title": f"RANSOMWARE VICTIM: {v.get('victim', 'Unknown')} ({group}){country}"[:MAX_TITLE_LEN],
+            "summary": f"{group} ransomware claim. Sector: {v.get('activity') or 'Unknown'}"[:MAX_SUMMARY_LEN],
+            "published": ts.strftime("%a, %d %b"),
+            "severity": "ransomware",
+            "source": source_name,
+            "source_file": source_file,
+            "url": v.get("url", ""),
+            "ts": ts,
+        })
+    return items
+
+def parse_otx(data, source_name, source_file):
+    """Parse AlienVault OTX pulse listings ({"results": [pulse, ...]})"""
+    items = []
+    for p in data.get("results", []):
+        ts = _parse_iso(p.get("modified") or p.get("created"))
+        text = f"{p.get('name', '')} {p.get('description', '')}".lower()
+        sev = ("ransomware" if "ransom" in text
+               else "apt" if p.get("adversary") or "apt" in text
+               else "exploit" if "exploit" in text or "cve-" in text
+               else "info")
+        items.append({
+            "title": f"OTX: {p.get('name', 'Untitled pulse')}"[:MAX_TITLE_LEN],
+            "summary": (p.get("description") or "")[:MAX_SUMMARY_LEN],
+            "published": ts.strftime("%a, %d %b"),
+            "severity": sev,
+            "source": source_name,
+            "source_file": source_file,
+            "url": f"https://otx.alienvault.com/pulse/{p.get('id', '')}",
+            "ts": ts,
+        })
+    return items
+
+def parse_json(data, source_name, source_file):
+    """Pick a JSON parser based on the shape of the response"""
+    if isinstance(data, dict) and "vulnerabilities" in data:
+        return parse_cisa(data, source_name, source_file)
+    if isinstance(data, dict) and "results" in data:
+        return parse_otx(data, source_name, source_file)
+    if isinstance(data, list) and data and isinstance(data[0], dict) and "victim" in data[0]:
+        return parse_ransomware_live(data, source_name, source_file)
+    logging.warning(f"No parser for JSON feed '{source_name}'")
+    return []
+
+IP_OR_CIDR = re.compile(r'^\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?$')
+
+def parse_txt(text, source_name, source_file):
+    """Parse plain-text indicator lists: IP/CIDR lists, URL lists, DShield block, URLhaus CSV"""
+    lines = [line.strip() for line in text.splitlines()
+             if line.strip() and not line.lstrip().startswith(("#", ";"))]
+    now = datetime.now(timezone.utc)
+    items = []
+    for line in lines[:20]:  # Indicator lists can have thousands of lines
+        ts = now
+        severity = "exploit"
+        if line.startswith('"'):
+            # URLhaus CSV: id, dateadded, url, url_status, last_online, threat, tags, urlhaus_link, reporter
+            cols = next(csv.reader([line]))
+            if len(cols) < 8:
+                continue
+            ts = _parse_iso(cols[1])
+            title = f"MALWARE URL: {cols[2]} ({cols[5]})"
+            summary = f"URLhaus: {cols[5]}, status {cols[3]}"
+            link = cols[7]
+        else:
+            parts = re.split(r'[\s;]+', line)
+            first = parts[0]
+            if first.startswith(("http://", "https://")):
+                title = f"PHISHING URL: {first}"
+                summary = f"Reported by {source_name}"
+                link = ""
+            elif IP_OR_CIDR.match(first):
+                # DShield block.txt: start, end, netblock, attacks, name, country, email
+                if len(parts) >= 4 and IP_OR_CIDR.match(parts[1]) and parts[2].isdigit():
+                    title = f"TOP MALICIOUS IP: {first}/{parts[2]} ({parts[3]} attacks)"
+                else:
+                    title = f"TOP MALICIOUS IP: {first}"
+                summary = f"Listed by {source_name}"
+                link = f"https://isc.sans.edu/ipinfo.html?ip={first.split('/')[0]}"
+            else:
+                continue
+        items.append({"title": title[:MAX_TITLE_LEN],
+                      "summary": summary[:MAX_SUMMARY_LEN],
+                      "published": ts.strftime("%a, %d %b"),
+                      "severity": severity,
+                      "source": source_name,
+                      "source_file": source_file,
+                      "url": link,
+                      "ts": ts})
     return items
 
 async def fetch_breaches():
@@ -598,12 +694,12 @@ class HelpScreen(Screen):
         help_text.append("│    Curated       - Hand-selected threat intelligence (premium quality)\n", style=color)
         help_text.append("│    Custom        - User-configured feeds\n", style=color)
         help_text.append("│    Community     - Open-source and community feeds\n", style=color)
-        help_text.append("│    All (default) - All sources combined (95 feeds total)\n", style=color)
+        help_text.append("│    All (default) - All sources combined\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [FEED MANAGEMENT] (Press 'E' to re-enable)\n", style=f"bold {accent}")
         help_text.append("│    Auto-Disable  - Feeds that fail 7 consecutive times are auto-disabled\n", style=color)
         help_text.append("│    Re-enable     - Press 'E' to re-enable all disabled feeds at once\n", style=color)
-        help_text.append("│    Feed Status   - View (7) then (2) to see failed/disabled feeds dashboard\n", style=color)
+        help_text.append("│    Feed Status   - Tab to dashboard, then V to reach the Feed Status panel\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -663,7 +759,7 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  [HOW TO ACCESS]\n", style=f"bold {accent}")
         help_text.append("│    1. Press Tab to switch to right panel (dashboard)\n", style=color)
-        help_text.append("│    2. Press number 7 to cycle dashboard panels to War Room (panel 1)\n", style=color)
+        help_text.append("│    2. Press V to cycle dashboard panels to War Room (panel 1)\n", style=color)
         help_text.append("│    Press G to refresh the AI analysis (updates from current alerts)\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [WHAT IT SHOWS]\n", style=f"bold {accent}")
@@ -692,7 +788,7 @@ class HelpScreen(Screen):
         help_text.append("│  [HOW TO USE]\n", style=f"bold {accent}")
         help_text.append("│    Press 'V' to switch to API Tools view\n", style=color)
         help_text.append("│    Type indicator: IP address, file hash (MD5/SHA1/SHA256), domain, or URL\n", style=color)
-        help_text.append("│    Press Ctrl+Shift+V to submit query\n", style=color)
+        help_text.append("│    Press Enter to submit query (Ctrl+Shift+V pastes)\n", style=color)
         help_text.append("│    Results show threat intel from configured providers\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [CONFIGURATION]\n", style=f"bold {accent}")
@@ -1152,6 +1248,7 @@ class CybrWireApp(App):
         self._initializing = True
         self.cold_war_mode = cold_war
         self.recency_hours = recency
+        self.data_age_index = {24: 0, 48: 1, 168: 2}.get(recency, 0)
         self.refresher_task = None
         self.alert_urls = []
         self.breach_urls = []
@@ -1801,46 +1898,44 @@ class CybrWireApp(App):
         new = []
         source_file_stats = {"curated": 0, "custom": 0, "community": 0}
         failed_feeds = {}
-        
-        all_sources = get_active_sources("all")
-        
-        async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as c:
-            for src in all_sources:
-                src_name = src['name']
-                
-                if src_name in disabled_feeds:
-                    continue
-                
-                try:
-                    currently_loading = src_name
-                    r = await c.get(src["url"])
-                    r.raise_for_status()
-                    
-                    source_file = src.get("source_file", "curated")
-                    if src["type"] == "json":
-                        parsed = parse_cisa(r.json(), src_name, source_file)
-                    elif src["type"] == "rss":
-                        parsed = parse_rss(r.text, src_name, source_file)
-                    elif src["type"] == "txt":
-                        parsed = parse_txt(r.text, src_name, source_file)
-                    
-                    new.extend(parsed)
-                    source_file_stats[source_file] = source_file_stats.get(source_file, 0) + len(parsed)
-                except Exception as e:
-                    error_msg = str(e)
-                    
-                    if src_name in self.feed_failure_counts:
-                        self.feed_failure_counts[src_name] += 1
-                    else:
-                        self.feed_failure_counts[src_name] = 1
-                    
-                    failure_count = self.feed_failure_counts[src_name]
-                    
-                    if failure_count >= 7:
-                        disabled_feeds[src_name] = (error_msg, f"Auto-disabled after {failure_count} consecutive failures")
-                        logging.warning(f"Feed '{src_name}' auto-disabled after {failure_count} failures")
-                    else:
-                        failed_feeds[src_name] = (error_msg, failure_count)
+
+        all_sources = [s for s in get_active_sources("all") if s['name'] not in disabled_feeds]
+        parsers = {"json": lambda r, n, f: parse_json(r.json(), n, f),
+                   "rss": lambda r, n, f: parse_rss(r.text, n, f),
+                   "txt": lambda r, n, f: parse_txt(r.text, n, f)}
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
+
+        async def fetch_one(c, src):
+            global currently_loading
+            async with semaphore:
+                currently_loading = src['name']
+                # Optional per-feed headers in YAML (e.g. API keys that must not go in the URL)
+                r = await c.get(src["url"], headers=src.get("headers"))
+                r.raise_for_status()
+                # Parse in a thread so large feeds don't freeze the UI
+                return await asyncio.to_thread(parsers[src["type"]], r, src['name'], src.get("source_file", "curated"))
+
+        async with httpx.AsyncClient(headers=HEADERS, timeout=FEED_TIMEOUT, follow_redirects=True) as c:
+            results = await asyncio.gather(*(fetch_one(c, src) for src in all_sources), return_exceptions=True)
+
+        for src, result in zip(all_sources, results):
+            src_name = src['name']
+            if not isinstance(result, BaseException):
+                self.feed_failure_counts.pop(src_name, None)  # Failures must be consecutive
+                new.extend(result)
+                source_file = src.get("source_file", "curated")
+                source_file_stats[source_file] = source_file_stats.get(source_file, 0) + len(result)
+                continue
+
+            error_msg = str(result) or type(result).__name__
+            self.feed_failure_counts[src_name] = self.feed_failure_counts.get(src_name, 0) + 1
+            failure_count = self.feed_failure_counts[src_name]
+
+            if failure_count >= 7:
+                disabled_feeds[src_name] = (error_msg, f"Auto-disabled after {failure_count} consecutive failures")
+                logging.warning(f"Feed '{src_name}' auto-disabled after {failure_count} failures")
+            else:
+                failed_feeds[src_name] = (error_msg, failure_count)
         
         # Limit items per source based on age to keep data fresh but allow older items for 7-day view
         # Most RSS feeds provide 10-50 items, so we'll take up to 50 per source
@@ -2962,7 +3057,7 @@ class CybrWireApp(App):
                 "name": "VirusTotal",
                 "accepts": "IPs, hashes, domains, URLs",
                 "icon": "🔍",
-                "tier_note": "(Free tier: IP lookups only - hashes/URLs need paid plan)"
+                "tier_note": "(Free tier: 4 lookups/min, 500/day)"
             },
             "pulsedive": {
                 "name": "Pulsedive",
@@ -2972,9 +3067,9 @@ class CybrWireApp(App):
             },
             "abusech": {
                 "name": "Abuse.ch",
-                "accepts": "Hashes, URLs",
+                "accepts": "Hashes, URLs, IPs, domains",
                 "icon": "⚠️",
-                "tier_note": "(Free/open: hash and URL lookups)"
+                "tier_note": "(Free Auth-Key: MalwareBazaar + URLhaus)"
             }
         }
         
@@ -3127,13 +3222,11 @@ class CybrWireApp(App):
                 # Add API tier limitation note
                 content.append("\n╭─ API TIER INFORMATION ─╮\n", style="dim #00ff00" if self.cold_war_mode else "dim #4499bb")
                 content.append("\nFree/limited API keys have restrictions on the indicator types they can query:\n\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
-                content.append("  VirusTotal Free:  IP lookups only (hashes need paid plan)\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
+                content.append("  VirusTotal Free:  All indicator types, 4 lookups/min, 500/day\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
                 content.append("  AbuseIPDB Free:   IP lookups only\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
                 content.append("  Pulsedive Free:   Limited indicator database\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
-                content.append("  Abuse.ch:         Open/free database (full hash + URL support)\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
-                content.append("\nIf you see 'CLEAN' results on indicators that should be malicious,\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
-                content.append("it likely means your API tier doesn't have access to that indicator type.\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
-                content.append("Consider upgrading to paid plans for comprehensive threat intelligence.\n", style="dim #00ff00" if self.cold_war_mode else "dim #666666")
+                content.append("  Abuse.ch:         Free Auth-Key (hashes via MalwareBazaar; URLs/IPs/domains via URLhaus)\n", style="dim #00ff00" if self.cold_war_mode else "dim #888888")
+                content.append("\nCLEAN means the provider has no record of the indicator, not that it is safe.\n", style="dim #00ff00" if self.cold_war_mode else "dim white")
             
             # Title with focus indicator
             if self.panel_focus == "main":
@@ -3777,7 +3870,7 @@ def main():
     
     # Condensed info section
     console.print(" [bold cyan]Quick Start:[/]")
-    console.print("   • Real-time threat intelligence dashboard with auto-refresh every 60 seconds")
+    console.print("   • Real-time threat intelligence dashboard with auto-refresh every 5 minutes")
     console.print("   • Use [bold]Tab[/] to switch panels, [bold]V[/] to switch views, [bold]↑↓←→[/] to navigate, and [bold]h[/] for full help")
     console.print()
     

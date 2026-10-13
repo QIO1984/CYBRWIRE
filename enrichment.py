@@ -4,6 +4,7 @@ Integrates with external threat intelligence APIs to enrich alerts with reputati
 """
 
 import asyncio
+import base64
 import logging
 import httpx
 import re
@@ -12,7 +13,6 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ThreatLevel(Enum):
@@ -231,11 +231,8 @@ class VirusTotalProvider(EnrichmentProvider):
     """
     VirusTotal multi-indicator provider
     
-    IMPORTANT - API TIER LIMITATIONS:
-    - Free tier (Limited): IP addresses only, 4 lookups/min, 500/day quota
-    - Hash/Domain/URL lookups require paid API tier
-    - Free tier hash queries return 404 "not found" responses
-    - If you see CLEAN results on hashes, upgrade to paid plan for full access
+    Free (public) API: IPs, hashes, domains and URLs; 4 lookups/min, 500/day quota.
+    A 404 means VirusTotal has no record of the indicator.
     """
     
     BASE_URL = "https://www.virustotal.com/api/v3"
@@ -243,10 +240,6 @@ class VirusTotalProvider(EnrichmentProvider):
     async def enrich(self, indicator: str, indicator_type: str = "ip") -> Optional[EnrichmentData]:
         """
         Check indicator via VirusTotal
-        
-        TIER LIMITATIONS: Free tier only supports IP addresses.
-        Hash, domain, and URL lookups require paid API tier and will return 404 on free accounts.
-        This is not a bug - it's an API access control feature.
         
         Args:
             indicator: IOC to check (IP, hash, domain, URL)
@@ -258,12 +251,14 @@ class VirusTotalProvider(EnrichmentProvider):
         
         logger.info(f"VirusTotal query started: indicator={indicator}, type={indicator_type}")
         
-        # Map indicator type to VT endpoint
+        # Map indicator type to VT endpoint. URLs are looked up by their
+        # unpadded base64url identifier, not the raw URL.
+        url_id = base64.urlsafe_b64encode(indicator.encode()).decode().rstrip("=")
         endpoint_map = {
             "ip": f"ip_addresses/{indicator}",
             "hash": f"files/{indicator}",
             "domain": f"domains/{indicator}",
-            "url": f"urls/{indicator}" if "/" in indicator else None
+            "url": f"urls/{url_id}",
         }
         
         endpoint = endpoint_map.get(indicator_type)
@@ -286,15 +281,10 @@ class VirusTotalProvider(EnrichmentProvider):
                 
                 logger.info(f"VirusTotal response status: {response.status_code}")
                 
-                # Handle 404 - indicator not in VirusTotal database (clean)
-                # NOTE: Free tier returns 404 for hash/domain/URL queries regardless of fame/ubiquity
-                # This is expected behavior with limited API access - upgrade for full support
+                # Handle 404 - indicator not in VirusTotal database
                 if response.status_code == 404:
                     logger.info(f"VirusTotal: {indicator_type} '{indicator}' not found in database (treating as CLEAN)")
-                    logger.debug(f"VirusTotal 404 response body: {response.text}")
                     status_note = "Indicator not in VirusTotal database"
-                    if indicator_type in ["hash", "domain", "url"]:
-                        status_note += " (Free tier does not support this indicator type)"
                     return EnrichmentData(
                         indicator=indicator,
                         indicator_type=indicator_type,
@@ -408,7 +398,10 @@ class VirusTotalProvider(EnrichmentProvider):
 class PulsediveProvider(EnrichmentProvider):
     """Pulsedive threat intelligence provider"""
     
-    BASE_URL = "https://pulsedive.com/api/explore.php"
+    BASE_URL = "https://pulsedive.com/api/info.php"
+    
+    # Pulsedive reports risk as a label rather than a number
+    RISK_SCORES = {"none": 0, "unknown": 0, "low": 10, "medium": 30, "high": 60, "critical": 90}
     
     async def enrich(self, indicator: str, indicator_type: str = "ip") -> Optional[EnrichmentData]:
         """
@@ -424,22 +417,12 @@ class PulsediveProvider(EnrichmentProvider):
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                params = {
-                    "query": f"indicator:{indicator}",
-                    "key": self.api_key,
-                    "limit": 1
-                }
-                
                 response = await client.get(
                     self.BASE_URL,
-                    params=params
+                    params={"indicator": indicator, "key": self.api_key}
                 )
-                response.raise_for_status()
                 
-                data = response.json()
-                
-                if not data or "results" not in data or not data["results"]:
-                    # Indicator not found, assume clean
+                if response.status_code == 404:
                     return EnrichmentData(
                         indicator=indicator,
                         indicator_type=indicator_type,
@@ -450,44 +433,35 @@ class PulsediveProvider(EnrichmentProvider):
                         details={"status": "not_found"},
                         timestamp=datetime.now()
                     )
+                response.raise_for_status()
                 
-                result = data["results"][0]
-                threat_score = result.get("risk", 0)
+                result = response.json()
+                risk = str(result.get("risk", "unknown")).lower()
+                threat_score = self.RISK_SCORES.get(risk, 0)
                 
-                # Extract comprehensive threat data from Pulsedive
-                # Pulsedive returns feeds, threatlist data, and more detailed risk info
-                threats = result.get("threats", [])
-                threat_feed_count = len(threats) if isinstance(threats, list) else 0
-                
-                # Calculate enhanced score based on threat feeds (more feeds = more credible)
-                # Base score + threat feed bonus
-                threat_feed_bonus = min(15, threat_feed_count * 5)  # Up to 15 points
-                enhanced_threat_score = threat_score + threat_feed_bonus
-                
-                # Pulsedive risk levels: treat any positive risk as suspicious
-                is_malicious = threat_score > 0
+                threats = [t.get("name", "?") for t in result.get("threats") or []]
+                feeds = [f.get("name", "?") for f in result.get("feeds") or []]
+                geo = (result.get("properties") or {}).get("geo") or {}
+                countries = geo.get("country") or []
                 
                 details = {
-                    "risk_score": threat_score,
-                    "enhanced_threat_score": enhanced_threat_score,
-                    "status": result.get("status", "unknown"),
-                    "threats": threats,
-                    "threat_feed_count": threat_feed_count,
-                    "risk_detail": result.get("risk_detail", "Unknown"),
-                    "feeds": result.get("feeds", [])[:10],  # Top 10 threat feeds
-                    "recent": result.get("recent", [])[:5],  # Recent activity
-                    "summary": result.get("summary", {}),
+                    "risk": risk,
+                    "threat": threats,
+                    "threat_feed_count": len(feeds),
+                    "feeds": feeds[:10],
+                    "risk_factors": [r.get("description", "") for r in result.get("riskfactors") or []],
+                    "country": countries[0] if isinstance(countries, list) and countries else countries or "Unknown",
+                    "asn": geo.get("asn", "Unknown"),
+                    "last_seen": result.get("stamp_seen", "Unknown"),
                 }
-                
-                threat_level = self._determine_threat_level(enhanced_threat_score)
                 
                 return EnrichmentData(
                     indicator=indicator,
                     indicator_type=indicator_type,
                     provider="Pulsedive",
-                    threat_level=threat_level,
+                    threat_level=self._determine_threat_level(threat_score),
                     reputation_score=threat_score,
-                    is_malicious=is_malicious,
+                    is_malicious=threat_score >= 60,  # high or critical
                     details=details,
                     timestamp=datetime.now()
                 )
@@ -500,163 +474,92 @@ class PulsediveProvider(EnrichmentProvider):
             return None
 
 class AbusechProvider(EnrichmentProvider):
-    """Abuse.ch threat database provider (MalwareBazaar, URLhaus, etc)"""
+    """Abuse.ch threat database provider (MalwareBazaar for hashes, URLhaus for URLs/hosts)"""
     
-    # MalwareBazaar API endpoint
     MALWARE_BAZAAR_URL = "https://mb-api.abuse.ch/api/v1/"
-    # URLhaus API endpoint  
-    URLHAUS_URL = "https://urlhaus-api.abuse.ch/v1/"
-    
-    def __init__(self, api_key: Optional[str] = None):
-        """Initialize Abuse.ch provider with optional API key"""
-        # Pass the key to parent (or empty string if None)
-        super().__init__(api_key or "")
-        # Store the original key (can be None)
-        self.api_key = api_key
+    URLHAUS_URL_LOOKUP = "https://urlhaus-api.abuse.ch/v1/url/"
+    URLHAUS_HOST_LOOKUP = "https://urlhaus-api.abuse.ch/v1/host/"
     
     async def enrich(self, indicator: str, indicator_type: str = "ip") -> Optional[EnrichmentData]:
         """
-        Check indicator via Abuse.ch services (MalwareBazaar for hashes, URLhaus for URLs)
+        Check indicator via Abuse.ch services
         
         Args:
             indicator: IOC to check
-            indicator_type: "ip", "hash", "url"
+            indicator_type: "ip", "hash", "domain", "url"
         
         Returns:
             EnrichmentData with Abuse.ch threat intel or None if error
         """
         
-        # Determine which Abuse.ch API to use
         if indicator_type == "hash":
-            endpoint = self.MALWARE_BAZAAR_URL
-            params = {"query": "get_info", "hash": indicator}
-            use_post = True
+            endpoint, data = self.MALWARE_BAZAAR_URL, {"query": "get_info", "hash": indicator}
         elif indicator_type == "url":
-            endpoint = self.URLHAUS_URL
-            params = {"url": indicator}
-            use_post = False
-        elif indicator_type == "ip":
-            # Abuse.ch doesn't have direct IP lookups, treat as not found
-            return EnrichmentData(
-                indicator=indicator,
-                indicator_type=indicator_type,
-                provider="Abuse.ch",
-                threat_level=ThreatLevel.CLEAN,
-                reputation_score=0,
-                is_malicious=False,
-                details={"status": "unsupported_type", "note": "Abuse.ch focuses on hashes and URLs"},
-                timestamp=datetime.now()
-            )
+            endpoint, data = self.URLHAUS_URL_LOOKUP, {"url": indicator}
+        elif indicator_type in ("ip", "domain"):
+            endpoint, data = self.URLHAUS_HOST_LOOKUP, {"host": indicator}
         else:
             return None
         
         try:
-            # Build headers with Auth-Key (required by Abuse.ch API)
-            headers = {}
-            if self.api_key:
-                headers["Auth-Key"] = self.api_key
-            
+            # Both APIs require a (free) Auth-Key and only accept POST
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                # Log API key presence (masked for security)
-                has_key = "yes" if self.api_key else "no"
-                key_preview = f"...{self.api_key[-8:]}" if self.api_key else "none"
-                logger.info(f"Abuse.ch request: {endpoint} for {indicator_type} (api_key: {has_key} {key_preview})")
-                logger.debug(f"Abuse.ch params: {params}")
-                
-                if use_post:
-                    response = await client.post(endpoint, data=params, headers=headers)
-                else:
-                    response = await client.get(endpoint, params=params, headers=headers)
-                
-                logger.info(f"Abuse.ch response status: {response.status_code}")
+                response = await client.post(endpoint, data=data, headers={"Auth-Key": self.api_key})
                 response.raise_for_status()
-                data = response.json()
-                
-                is_malicious = False
-                threat_score = 0
-                details = {}
-                
-                if indicator_type == "hash":
-                    if data.get("query_status") == "ok" and "results" in data:
-                        results = data["results"]
-                        if results:
-                            first_result = list(results.values())[0]
-                            is_malicious = True
-                            # Score based on number of signatures: more detections = higher threat
-                            signatures = first_result.get("signatures", [])
-                            num_signatures = len(signatures) if isinstance(signatures, list) else 1
-                            
-                            # Extract additional threat intel
-                            first_submission_timestamp = first_result.get("first_submission_timestamp", "Unknown")
-                            last_submission_timestamp = first_result.get("last_submission_timestamp", "Unknown")
-                            submission_count = first_result.get("submission_count", 1)
-                            
-                            # Calculation: base 80 + (signatures * 3), capped at 95
-                            # Bonus: multiple submissions increase confidence
-                            threat_score = min(95, 80 + (num_signatures * 3) + min(5, submission_count // 10))
-                            
-                            details = {
-                                "malware_family": first_result.get("type", "Unknown"),
-                                "signatures": signatures[:10],  # Top 10 signatures
-                                "signature_count": num_signatures,
-                                "tags": first_result.get("tags", []),
-                                "first_submission": first_submission_timestamp,
-                                "last_submission": last_submission_timestamp,
-                                "submission_count": submission_count,
-                                "file_type": first_result.get("file_type", "Unknown"),
-                                "file_size": first_result.get("file_size", "Unknown"),
-                            }
-                        else:
-                            details = {"status": "clean"}
-                    else:
-                        details = {"status": data.get("query_status", "unknown")}
-                
-                elif indicator_type == "url":
-                    if data.get("query_status") == "ok":
-                        if "results" in data and data["results"]:
-                            url_info = data["results"][0] if isinstance(data["results"], list) else data["results"]
-                            is_malicious = True
-                            # Score based on threat type severity
-                            threat_type = str(url_info.get("threat", "")).lower()
-                            if "phishing" in threat_type or "exploit" in threat_type:
-                                threat_score = 90
-                            elif "malware" in threat_type:
-                                threat_score = 85
-                            else:
-                                threat_score = 75
-                            
-                            # Extract submission history for confidence boost
-                            submission_count = url_info.get("submission_count", 1)
-                            # More submissions = higher confidence
-                            threat_score = min(95, threat_score + min(5, submission_count // 5))
-                            
-                            details = {
-                                "threat": url_info.get("threat", "Unknown"),
-                                "tags": url_info.get("tags", []),
-                                "date_added": url_info.get("date_added", "Unknown"),
-                                "url_status": url_info.get("url_status", "Unknown"),
-                                "submission_count": submission_count,
-                                "urlhaus_link": url_info.get("urlhaus_link", "Unknown"),
-                                "host": url_info.get("host", "Unknown"),
-                                "port": url_info.get("port", "Unknown"),
-                            }
-                        else:
-                            details = {"status": "clean"}
-                    else:
-                        details = {"status": data.get("query_status", "unknown")}
-                
-                threat_level = self._determine_threat_level(threat_score)
-                
-                return EnrichmentData(
-                    indicator=indicator,
-                    indicator_type=indicator_type,
-                    provider="Abuse.ch",
-                    threat_level=threat_level,
-                    reputation_score=threat_score,
-                    is_malicious=is_malicious,
-                    details=details,
-                    timestamp=datetime.now()
-                )
+                result = response.json()
+            
+            status = result.get("query_status", "unknown")
+            is_malicious = False
+            threat_score = 0
+            details = {"status": status}
+            
+            if status == "ok" and indicator_type == "hash":
+                sample = (result.get("data") or [{}])[0]
+                is_malicious = True
+                threat_score = 90
+                details = {
+                    "malware_family": sample.get("signature") or "Unknown",
+                    "file_type": sample.get("file_type", "Unknown"),
+                    "file_name": sample.get("file_name", "Unknown"),
+                    "tags": sample.get("tags") or [],
+                    "first_seen": sample.get("first_seen", "Unknown"),
+                    "last_seen": sample.get("last_seen", "Unknown"),
+                    "reporter": sample.get("reporter", "Unknown"),
+                }
+            elif status == "ok" and indicator_type == "url":
+                is_malicious = True
+                threat_score = 90 if result.get("url_status") == "online" else 75
+                details = {
+                    "threat": result.get("threat", "Unknown"),
+                    "url_status": result.get("url_status", "Unknown"),
+                    "tags": result.get("tags") or [],
+                    "date_added": result.get("date_added", "Unknown"),
+                    "host": result.get("host", "Unknown"),
+                    "urlhaus_link": result.get("urlhaus_reference", "Unknown"),
+                }
+            elif status == "ok":  # ip / domain host lookup
+                urls = result.get("urls") or []
+                online = sum(1 for u in urls if u.get("url_status") == "online")
+                is_malicious = bool(urls)
+                threat_score = 90 if online else 70 if urls else 0
+                details = {
+                    "malware_urls": result.get("url_count", len(urls)),
+                    "online_urls": online,
+                    "first_seen": result.get("firstseen", "Unknown"),
+                    "threat": sorted({u.get("threat", "") for u in urls if u.get("threat")}),
+                    "urlhaus_link": result.get("urlhaus_reference", "Unknown"),
+                }
+            
+            return EnrichmentData(
+                indicator=indicator,
+                indicator_type=indicator_type,
+                provider="Abuse.ch",
+                threat_level=self._determine_threat_level(threat_score),
+                reputation_score=threat_score,
+                is_malicious=is_malicious,
+                details=details,
+                timestamp=datetime.now()
+            )
                 
         except (httpx.ConnectError, OSError) as e:
             logger.warning(f"Abuse.ch network error (DNS/connectivity) for {indicator}: {e}")
@@ -673,7 +576,8 @@ class EnrichmentEngine:
     
     def __init__(self):
         self.providers: Dict[str, EnrichmentProvider] = {}
-        self.cache: Dict[str, EnrichmentData] = {}
+        self.cache: Dict[str, Dict[str, EnrichmentData]] = {}
+        self.cache_times: Dict[str, datetime] = {}
         self.cache_ttl = timedelta(hours=24)
         
     def register_provider(self, name: str, provider: EnrichmentProvider):
@@ -686,9 +590,7 @@ class EnrichmentEngine:
         if indicator not in self.cache:
             return False
         
-        cached = self.cache[indicator]
-        age = datetime.now() - cached.timestamp
-        return age < self.cache_ttl
+        return datetime.now() - self.cache_times[indicator] < self.cache_ttl
     
     async def enrich(self, indicator: str, indicator_type: str = None) -> Dict[str, EnrichmentData]:
         """
@@ -710,7 +612,7 @@ class EnrichmentEngine:
         # Check cache first
         if self._is_cached(indicator):
             logger.debug(f"Using cached enrichment for {indicator}")
-            return {indicator: self.cache[indicator]}
+            return self.cache[indicator]
         
         results = {}
         
@@ -727,9 +629,10 @@ class EnrichmentEngine:
                 provider_name, enrichment = response
                 if enrichment:
                     results[provider_name] = enrichment
-                    # Cache the result
-                    self.cache[indicator] = enrichment
         
+        if results:
+            self.cache[indicator] = results
+            self.cache_times[indicator] = datetime.now()
         return results
     
     async def _enrich_with_provider(self, name: str, provider: EnrichmentProvider, 
