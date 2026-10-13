@@ -8,7 +8,8 @@ Design rules the panels follow:
   - strong color is reserved for severity, shown as a tag rather than a painted row
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict
 
 
@@ -32,23 +33,43 @@ class Palette:
     good: str
     warn: str
     bad: str
-    monochrome: bool = False  # Cold War: no colored badges, everything one hue
+    monochrome: bool = False  # Cold War: one hue; urgency shown by brightness and reverse video
+    # Optional flavor: panel names, severity names and a timestamp style for this palette
+    titles: Dict[str, str] = field(default_factory=dict)
+    severity_names: Dict[str, str] = field(default_factory=dict)
+    military_time: bool = False
+    banner: str = ""
 
     def severity(self, sev: str) -> str:
         return getattr(self, sev, self.info) if sev in SEVERITIES else self.info
+
+    def severity_name(self, sev: str) -> str:
+        return self.severity_names.get(sev, sev.upper())
+
+    def title(self, text: str) -> str:
+        """Panel title in this palette's vocabulary"""
+        for plain, flavored in self.titles.items():
+            if text.startswith(plain):
+                return flavored + text[len(plain):]
+        return text
+
+    def stamp(self, ts: datetime, long: bool = False) -> str:
+        """Short date for tables, or a full timestamp for the preview"""
+        if self.military_time:
+            # Date-time group: day, hour, minute in Zulu (UTC), e.g. 130614Z OCT 26
+            return f"{ts:%d%H%MZ %b %y}".upper() if long else f"{ts:%d%H%MZ}"
+        return f"{ts:%a %d %b %H:%M} UTC" if long else f"{ts:%a %d %b}"
 
     def level(self, pct: float) -> str:
         """Color for a 0-100 'how bad is it' value"""
         return self.good if pct < 20 else self.warn if pct < 50 else self.bad
 
     def badge(self, sev: str) -> str:
-        """Style for a severity tag: filled for the two most urgent levels"""
+        """Style for a severity tag: filled (reverse video) for the two most urgent levels"""
         color = self.severity(sev)
-        if self.monochrome:
-            return f"bold {color}"
         if sev in ("critical", "zeroday"):
             return f"bold {self.bg} on {color}"
-        return f"bold {color}"
+        return f"bold {color}" if sev != "info" else color
 
 
 SEVERITIES = ("critical", "zeroday", "ransomware", "apt", "exploit", "info")
@@ -83,15 +104,32 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     ),
 ]}
 
-# Cold War: the original all-green terminal, unchanged
+# Cold War: a green phosphor terminal. One hue, with hierarchy from brightness
+# levels and reverse video, plus period message-traffic conventions.
 COLD_WAR = Palette(
     key="cold_war", name="Cold War",
-    bg="#000000", surface="#004400", border="#00ff00", focus="#00ff00",
-    text="#00ff00", muted="#00aa00", accent="#00ff00",
-    critical="#00ff00", zeroday="#00ff00", ransomware="#00ff00",
-    apt="#00ff00", exploit="#00ff00", info="#00ff00",
-    good="#00ff00", warn="#00ff00", bad="#00ff00",
+    bg="#020904", surface="#0c3418", border="#0f5a22", focus="#5cff6e",
+    text="#29d94a", muted="#1a8f33", accent="#5cff6e",
+    critical="#5cff6e", zeroday="#5cff6e", ransomware="#5cff6e",
+    apt="#5cff6e", exploit="#5cff6e", info="#1a8f33",
+    good="#29d94a", warn="#5cff6e", bad="#5cff6e",
     monochrome=True,
+    titles={
+        "GLOBAL THREAT FEED": "SIGINT INTERCEPTS",
+        "WAR ROOM DASHBOARD": "SITUATION ROOM",
+        "WAR ROOM": "INTELLIGENCE BRIEFING",
+        "CORRELATED INCIDENTS": "CASE FILES",
+        "FEED STATUS": "STATION STATUS",
+        "API TOOLS": "TRACE REQUEST",
+        "LIVE THREAT TAPE": "TELETYPE",
+    },
+    # Military message precedence, most to least urgent
+    severity_names={
+        "critical": "FLASH", "zeroday": "FLASH", "ransomware": "IMMEDIATE",
+        "apt": "IMMEDIATE", "exploit": "PRIORITY", "info": "ROUTINE",
+    },
+    military_time=True,
+    banner="TOP SECRET // CYBRWIRE // EYES ONLY",
 )
 
 DEFAULT_PALETTE = "retro_warm"

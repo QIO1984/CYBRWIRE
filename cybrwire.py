@@ -371,6 +371,14 @@ class LoadingScreen(Screen):
         self.loading_step = 0
         self.feed_animation_step = 0
         self.messages = [
+            "ESTABLISHING SECURE LINE...",
+            "AUTHENTICATING STATION...",
+            "CHECKING CRYPTO KEYS...",
+            "HANDSHAKE COMPLETE...",
+            "DECRYPTING TRAFFIC...",
+            "COLLATING INTERCEPTS...",
+            "STAND BY FOR TRAFFIC...",
+        ] if self.cold_war_mode else [
             "INITIALIZING...",
             "TAPPING WIRES...",
             "CHECKING APIS...",
@@ -435,11 +443,10 @@ class LoadingScreen(Screen):
                 ("                            By: GitHub/QIO1984 // The Hacker known as MADNOTE", "#00ffff"),
             ]
         
-        if not self.cold_war_mode:
-            # Soft gradient from the palette instead of the original neon colors
-            gradient = [p.focus, p.accent, p.text, p.accent]
-            ascii_art = [(line, gradient[i % len(gradient)] if i < len(ascii_art) - 1 else p.muted)
-                         for i, (line, _) in enumerate(ascii_art)]
+        # Soft gradient from the palette (Cold War: phosphor brightness levels)
+        gradient = [p.text] if self.cold_war_mode else [p.focus, p.accent, p.text, p.accent]
+        ascii_art = [(line, gradient[i % len(gradient)] if i < len(ascii_art) - 1 else p.muted)
+                     for i, (line, _) in enumerate(ascii_art)]
         art_text = "\n".join([f"[bold {color}]{line}[/]" for line, color in ascii_art])
         
         # Build stacked messages - completed messages stay static, current message blinks
@@ -448,7 +455,7 @@ class LoadingScreen(Screen):
         for i, msg in enumerate(self.messages[:self.loading_step]):
             message_lines.append(f"[bold {p.accent}]  {msg}[/]")
             # If this is the "CHECKING APIS..." message and we have APIs, show them on the next line
-            if i == 2 and self.configured_apis:  # Index 2 is "CHECKING APIS..."
+            if i == 2 and self.configured_apis:  # Index 2 is the API-check step
                 apis_str = " • ".join(self.configured_apis)
                 message_lines.append(f"[bold {p.accent}]    → {apis_str}[/]")
         
@@ -467,7 +474,7 @@ class LoadingScreen(Screen):
                     message_lines.append(f"[bold {p.accent}]{current_msg}[/]")
                 else:
                     message_lines.append(f"[{p.muted}]{current_msg}[/]")
-                if current_msg == "CHECKING APIS..." and self.configured_apis:
+                if self.loading_step == 2 and self.configured_apis:  # The API-check step
                     apis_str = " • ".join(self.configured_apis)
                     message_lines.append(f"[bold {p.accent}]    → {apis_str}[/]")
         
@@ -1027,7 +1034,17 @@ class CybrWireApp(App):
     
     def apply_theme(self):
         """Activate the Textual theme for the current palette (header, footer, backgrounds, scrollbars)"""
-        self.theme = f"cybrwire-{self.palette.key}"
+        p = self.palette
+        self.theme = f"cybrwire-{p.key}"
+        self.title = f" {p.banner} " if p.banner else self.TITLE
+        try:
+            header = self.query_one(StyledHeader)
+            # A palette banner shows as a reverse-video bar, like a classification marking
+            header.styles.background = p.focus if p.banner else None
+            header.styles.color = p.bg if p.banner else None
+            header.styles.text_style = "bold" if p.banner else None
+        except Exception:
+            pass  # Not mounted yet; on_mount applies the theme again
         self.mark_dirty()
     
     def on_mount(self) -> None:
@@ -1281,7 +1298,7 @@ class CybrWireApp(App):
         visible_text = (loop * 3)[offset:offset + max(self.size.width - 4, 10)]
         p = self.palette
         return Panel(Text(visible_text, style=f"bold {p.accent}"),
-                     title=Text(" LIVE THREAT TAPE ", style=f"bold {p.muted}"),
+                     title=Text(f" {p.title('LIVE THREAT TAPE')} ", style=f"bold {p.muted}"),
                      border_style=p.border, box=box.ROUNDED, padding=0)
     
     def is_alert(self, item):
@@ -1317,8 +1334,12 @@ class CybrWireApp(App):
             return text
         
         text.append(alert["title"] + "\n", style=f"bold {p.text}")
-        when = "no publish date in feed" if alert.get("undated") else f"{alert['ts']:%a %d %b %H:%M} UTC ({age(alert['ts'])} ago)"
-        text.append(alert["severity"].upper(), style=p.badge(alert["severity"]))
+        when = "no publish date in feed" if alert.get("undated") else f"{p.stamp(alert['ts'], long=True)} ({age(alert['ts'])} ago)"
+        sev = alert["severity"]
+        label = p.severity_name(sev)
+        if label != sev.upper():
+            label += f" · {sev.upper()}"  # e.g. FLASH · ZERODAY
+        text.append(f" {label} " if sev in ("critical", "zeroday") else label, style=p.badge(sev))
         text.append(f"  {alert['source']}  •  {when}", style=p.muted)
         if STATE.is_new(alert):
             text.append("  ")
@@ -1366,7 +1387,7 @@ class CybrWireApp(App):
         
         table = Table(box=None, show_header=False, padding=(0, 1), expand=True)
         narrow = self.size.width < 120
-        date_width = 6 if narrow else 10
+        date_width = 7 if p.military_time else 6 if narrow else 10
         table.add_column(width=date_width, min_width=date_width, no_wrap=True)  # published date
         table.add_column(width=3, min_width=3, no_wrap=True, justify="right")   # age
         table.add_column(width=12, min_width=12, no_wrap=True)                  # severity tag
@@ -1387,11 +1408,15 @@ class CybrWireApp(App):
                 title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
                 title.append(" ")
             urgent = sev in ("critical", "zeroday")
-            title.append(a["title"], style=f"bold {p.text}" if urgent or selected else p.text)
+            title_style = f"bold {p.focus}" if selected and p.monochrome else f"bold {p.text}" if urgent or selected else p.text
+            title.append(a["title"], style=title_style)
+            if selected and p.monochrome:
+                title.append(" █", style=f"blink {p.focus}")  # teletype cursor
+            short_date = f"{a['ts']:%d %b}" if narrow and not p.military_time else p.stamp(a["ts"])
             table.add_row(
-                Text(f"{a['ts']:%d %b}" if narrow else f"{a['ts']:%a %d %b}", style=p.muted),
+                Text(short_date, style=p.muted),
                 Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
-                Text(f" {sev.upper()} " if urgent and not p.monochrome else sev.upper(), style=p.badge(sev)),
+                Text(f" {p.severity_name(sev)} " if urgent else p.severity_name(sev), style=p.badge(sev)),
                 title,
                 style=f"on {p.surface}" if selected else None,
             )
@@ -1410,9 +1435,8 @@ class CybrWireApp(App):
         status.append_text(self.hint_bar(hints))
         status.append(" ")
         
-        cw = " // *COLD*WAR*MODE*" if self.cold_war_mode else ""
         page = f" · page {current_page}/{total_pages}" if total_pages > 1 else ""
-        title_text, border = self.frame(f"GLOBAL THREAT FEED ({len(filtered_alerts)}){page}{cw}", self.panel_focus == "main")
+        title_text, border = self.frame(f"GLOBAL THREAT FEED ({len(filtered_alerts)}){page}", self.panel_focus == "main")
         
         preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=p.border, box=box.ROUNDED,
                         padding=(0, 1), height=self.PREVIEW_LINES)
@@ -1423,6 +1447,7 @@ class CybrWireApp(App):
     def frame(self, title, focused):
         """Title and border style for a panel; only the focused panel is highlighted"""
         p = self.palette
+        title = p.title(title)
         if focused:
             return Text(f" {title} ", style=f"bold {p.bg} on {p.focus}"), p.focus
         return Text(f" {title} ", style=f"bold {p.muted}"), p.border
@@ -1654,9 +1679,9 @@ class CybrWireApp(App):
         lines = []
         header = Text()
         header.append("▶ " if selected else "  ", style=f"bold {p.accent}")
-        # Incident headers always get a filled badge (Cold War keeps plain green text)
-        badge_style = f"bold {p.text}" if p.monochrome else f"bold {p.bg} on {p.severity(inc.severity)}"
-        header.append(f" {inc.severity.upper()} ", style=badge_style)
+        # Incident headers get a filled badge; Cold War keeps reverse video for FLASH only
+        badge_style = p.badge(inc.severity) if p.monochrome else f"bold {p.bg} on {p.severity(inc.severity)}"
+        header.append(f" {p.severity_name(inc.severity)} ", style=badge_style)
         header.append(f"  {KIND_LABELS[inc.kind]} ", style=p.muted)
         header.append(inc.value, style=f"bold {p.accent if selected else p.text}" + (" underline" if selected else ""))
         if inc.kev:
