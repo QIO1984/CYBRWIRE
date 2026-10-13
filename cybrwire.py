@@ -748,8 +748,10 @@ class CybrWireApp(App):
         # AI analysis (any configured provider)
         self.ai_settings = CONFIG.ai
         self.ai_problem = ai.configuration_problem(self.ai_settings)
-        self.ai_briefing = None
-        self.ai_briefing_time = None
+        # Restore the last briefing so launching the app doesn't cost an AI call
+        saved_briefing = STATE.briefing
+        self.ai_briefing = saved_briefing.get("text")
+        self.ai_briefing_time = datetime.fromisoformat(saved_briefing["time"]) if saved_briefing.get("time") else None
         self.ai_briefing_error = None
         self.ai_briefing_loading = False
         self.alert_explanations = {}  # alert key -> AI explanation text (or error)
@@ -1145,7 +1147,7 @@ class CybrWireApp(App):
             self.is_loading = False
             
             asyncio.create_task(self._load_threat_summary_async())
-            if not self.ai_problem:
+            if not self.ai_problem and self.ai_settings.get("auto_briefing"):
                 asyncio.create_task(self.generate_ai_briefing())
             asyncio.create_task(self.refresher())
             
@@ -2360,6 +2362,8 @@ class CybrWireApp(App):
             self.ai_briefing = text.replace("**", "").replace("## ", "").strip()
             self.ai_briefing_time = datetime.now(timezone.utc)
             self.threat_summary_page = 0
+            STATE.briefing = {"text": self.ai_briefing, "time": self.ai_briefing_time.isoformat()}
+            STATE.save()
         except ai.AIError as e:
             self.ai_briefing_error = str(e)
         except Exception as e:
@@ -2423,7 +2427,7 @@ class CybrWireApp(App):
             if self.ai_problem:
                 lines.append(Text("Configure the ai: section in cybrwire_local.yaml (see readme), then restart.", style=dim))
         if self.ai_briefing:
-            lines.append(Text(f"Generated {age(self.ai_briefing_time)} ago • press g to refresh", style=dim))
+            lines.append(Text(f"Generated {age(self.ai_briefing_time)} ago ({self.ai_briefing_time:%a %d %b %H:%M} UTC) • press g to refresh", style=dim))
             for line in self.ai_briefing.split("\n"):
                 stripped = line.strip()
                 if stripped.endswith(":") and stripped[:-1].replace(" ", "").isupper():
@@ -2433,7 +2437,7 @@ class CybrWireApp(App):
                 elif stripped or (lines and lines[-1].plain):
                     lines.append(Text(line, style=body))
         elif not self.ai_briefing_loading and not self.ai_briefing_error:
-            lines.append(Text("Press g to generate a briefing.", style=dim))
+            lines.append(Text("Press g to generate a briefing (one AI call).", style=dim))
         
         lines.append(Text(""))
         if self.threat_summary:

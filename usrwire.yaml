@@ -39,6 +39,7 @@ ai:
   api_key: ""
   model: ""
   base_url: ""
+  auto_briefing: false   # true = generate a new briefing every launch (one AI call each time)
 
 enrichment:
   # AbuseIPDB - IP reputation and abuse history lookups

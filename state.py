@@ -27,6 +27,7 @@ class AppState:
         self.first_seen: Dict[str, str] = {}   # alert key -> ISO timestamp
         self.read: Dict[str, str] = {}         # alert key -> ISO timestamp opened
         self.doomsday: Dict[str, Any] = {}
+        self.briefing: Dict[str, Any] = {}     # last AI briefing: {"text", "time"}
         self.previous_launch: Optional[datetime] = None
         self._load()
         self.launch_time = datetime.now(timezone.utc)
@@ -44,6 +45,7 @@ class AppState:
         self.first_seen = data.get("first_seen", {})
         self.read = data.get("read", {})
         self.doomsday = data.get("doomsday", {})
+        self.briefing = data.get("briefing", {})
         if data.get("last_launch"):
             self.previous_launch = datetime.fromisoformat(data["last_launch"])
 
@@ -57,6 +59,7 @@ class AppState:
             "first_seen": self.first_seen,
             "read": self.read,
             "doomsday": self.doomsday,
+            "briefing": self.briefing,
         }
         tmp = STATE_PATH + ".tmp"
         try:
