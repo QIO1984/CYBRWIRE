@@ -1,6 +1,6 @@
 feedparser
 httpx
+PyYAML
 rich
 textual
-python-dotenv
 google-genai
