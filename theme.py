@@ -132,4 +132,4 @@ COLD_WAR = Palette(
     banner="TOP SECRET // CYBRWIRE // EYES ONLY",
 )
 
-DEFAULT_PALETTE = "retro_warm"
+DEFAULT_PALETTE = "synthwave"
