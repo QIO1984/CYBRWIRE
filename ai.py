@@ -9,6 +9,7 @@ configures under the `ai:` section of cybrwire_local.yaml / usrwire.yaml:
       api_key: "..."          # not needed for ollama
       model: ""               # blank = provider default below
       base_url: ""            # only for ollama / openai_compatible overrides
+      auto_briefing: false    # true = generate a briefing at every launch (costs one call)
 """
 
 import asyncio
@@ -34,6 +35,15 @@ PROVIDERS = {
 
 # Claude models that accept server-side refusal fallbacks
 ANTHROPIC_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
+
+
+# Token usage is logged so paid usage can be checked in cybrwire.log
+usage_log = logging.getLogger("cybrwire.ai")
+usage_log.setLevel(logging.INFO)
+
+
+def _log_usage(provider: str, model: str, input_tokens, output_tokens):
+    usage_log.info(f"AI usage: {provider} {model} input_tokens={input_tokens} output_tokens={output_tokens}")
 
 
 class AIError(Exception):
@@ -138,6 +148,7 @@ async def _anthropic(api_key: str, model: str, system: str, prompt: str) -> str:
     finally:
         await client.close()
 
+    _log_usage("anthropic", response.model, response.usage.input_tokens, response.usage.output_tokens)
     if response.stop_reason == "refusal":
         raise AIError("The model declined to produce this analysis")
     text = "".join(block.text for block in response.content if block.type == "text")
@@ -159,6 +170,8 @@ async def _gemini(base_url: str, api_key: str, model: str, system: str, prompt: 
         r.raise_for_status()
         data = r.json()
 
+    usage = data.get("usageMetadata") or {}
+    _log_usage("gemini", model, usage.get("promptTokenCount"), usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0))
     candidates = data.get("candidates") or []
     if not candidates:
         reason = (data.get("promptFeedback") or {}).get("blockReason", "no candidates")
@@ -187,6 +200,8 @@ async def _openai_compatible(provider: str, base_url: str, api_key: str, model: 
         r.raise_for_status()
         data = r.json()
 
+    usage = data.get("usage") or {}
+    _log_usage(provider, model, usage.get("prompt_tokens"), usage.get("completion_tokens"))
     choices = data.get("choices") or []
     text = ((choices[0].get("message") or {}).get("content") if choices else "") or ""
     if not text.strip():
