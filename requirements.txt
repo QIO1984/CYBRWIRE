@@ -3,4 +3,4 @@ httpx
 PyYAML
 rich
 textual
-google-genai
+anthropic

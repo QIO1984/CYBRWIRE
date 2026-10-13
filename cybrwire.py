@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
+import argparse
 import asyncio
-import csv
-import feedparser
+import time
 import httpx
-import json
 import logging
 import re
-import time
 import os
 import sys
-import yaml
+import textwrap
 import webbrowser
-import google.genai as genai
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 from rich.console import Console, Group
@@ -20,8 +17,13 @@ from rich.text import Text
 from rich.theme import Theme
 from rich.panel import Panel
 from rich import box
-from collections import deque
+from collections import Counter
 from enrichment import enrichment_engine, initialize_enrichment
+import ai
+from config import load_config
+from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_txt, fetch_doomsday_seconds
+from incidents import build_incidents, age, KIND_LABELS, SEVERITY_RANK
+from state import AppState, alert_key
 from textual.app import App, Screen, ComposeResult
 from textual.widgets import Static, Header
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -49,300 +51,20 @@ console = Console(color_system="truecolor", theme=Theme({
 }))
 
 HEADERS = {"User-Agent": "C Y B R W I R E // v1.0 LEGENDARY EDITION"}
-MAX_TITLE_LEN = 90
-MAX_SUMMARY_LEN = 140
 HEAT_BAR_WIDTH = 33
 REFRESH_INTERVAL = 300
+DOOMSDAY_DEFAULT_SECONDS = 85  # Setting announced January 2026; refreshed from thebulletin.org at runtime
+DOOMSDAY_CHECK_INTERVAL = timedelta(days=1)
 FEED_TIMEOUT = 15          # Seconds before giving up on a single feed
 MAX_CONCURRENT_FEEDS = 8   # Higher values can overwhelm local DNS resolvers
 
-# Fallback sources if YAML files can't be loaded
-FALLBACK_SOURCES = [
-    {"name": "CISA KEV", "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", "type": "json", "source_file": "curated"},
-    {"name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/", "type": "rss", "source_file": "curated"},
-    {"name": "TheHackerNews", "url": "https://feeds.feedburner.com/TheHackersNews", "type": "rss", "source_file": "curated"},
-    {"name": "Krebs", "url": "https://krebsonsecurity.com/feed/", "type": "rss", "source_file": "curated"},
-    {"name": "VulDB", "url": "https://vuldb.com/?rss.recent", "type": "rss", "source_file": "curated"},
-    {"name": "ZDI Published", "url": "https://www.zerodayinitiative.com/rss/published/", "type": "rss", "source_file": "curated"},
-    {"name": "ZDI Upcoming", "url": "https://www.zerodayinitiative.com/rss/upcoming/", "type": "rss", "source_file": "curated"},
-    {"name": "Sophos Threat", "url": "https://news.sophos.com/en-us/category/threat-research/feed/", "type": "rss", "source_file": "curated"},
-    {"name": "DShield Attackers", "url": "https://feeds.dshield.org/top10.txt", "type": "txt", "source_file": "curated"},
-    {"name": "DShield Block", "url": "https://feeds.dshield.org/block.txt", "type": "txt", "source_file": "curated"},
-    {"name": "Kaspersky Securelist", "url": "https://securelist.com/feed/", "type": "rss", "source_file": "curated"},
-    {"name": "Dark Reading", "url": "https://www.darkreading.com/rss.xml", "type": "rss", "source_file": "curated"},
-    {"name": "SANS ISC Diary", "url": "https://isc.sans.edu/rssfeed.xml", "type": "rss", "source_file": "curated"},
-    {"name": "Microsoft MSRC", "url": "https://msrc.microsoft.com/blog/rss", "type": "rss", "source_file": "curated"},
-    {"name": "Cisco Talos", "url": "https://blog.talosintelligence.com/feed/", "type": "rss", "source_file": "curated"},
-]
+CONFIG = load_config()
+STATE = AppState()
 
-def check_configured_apis():
-    """Check which APIs are configured in cybrwire_local.yaml and usrwire.yaml (enrichment section)"""
-    configured_apis = []
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # API key field mappings: config_field -> display_name
-    api_key_mappings = {
-        'gemini_api_key': 'GEMINI',
-        'abuseipdb_api_key': 'ABUSEIPDB',
-        'virustotal_api_key': 'VIRUSTOTAL',
-        'pulsedive_api_key': 'PULSEDIVE',
-        'abuse_ch_api_key': 'ABUSE.CH'
-    }
-    
-    # Check cybrwire_local.yaml first (local testing keys)
-    local_secrets_path = os.path.join(script_dir, "cybrwire_local.yaml")
-    try:
-        if os.path.exists(local_secrets_path):
-            with open(local_secrets_path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-                enrichment = data.get('enrichment', {})
-                for config_key, display_name in api_key_mappings.items():
-                    if enrichment.get(config_key):
-                        configured_apis.append(display_name)
-    except Exception as e:
-        pass
-    
-    # Check usrwire.yaml for production keys
-    usrwire_path = os.path.join(script_dir, "usrwire.yaml")
-    try:
-        if os.path.exists(usrwire_path):
-            with open(usrwire_path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-                enrichment = data.get('enrichment', {})
-                for config_key, display_name in api_key_mappings.items():
-                    if enrichment.get(config_key) and display_name not in configured_apis:
-                        configured_apis.append(display_name)
-    except Exception as e:
-        pass
-    
-    return configured_apis
-
-def load_sources():
-    """Load sources from YAML files (curated, custom, community, local secrets)"""
-    sources = []
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    yaml_files = [
-        (os.path.join(script_dir, "cybrwire.yaml"), "curated"),
-        (os.path.join(script_dir, "usrwire.yaml"), "custom"),
-        (os.path.join(script_dir, "comwire.yaml"), "community"),
-    ]
-    
-    for yaml_path, category in yaml_files:
-        try:
-            if os.path.exists(yaml_path):
-                with open(yaml_path, 'r') as f:
-                    data = yaml.safe_load(f) or {}
-                    for src_key, src_list in data.items():
-                        if isinstance(src_list, list):
-                            for src in src_list:
-                                src["source_file"] = src_key  # Tag with source category
-                                sources.append(src)
-        except Exception as e:
-            logging.error(f"Failed to load {yaml_path}: {e}")
-    
-    local_secrets_path = os.path.join(script_dir, "cybrwire_local.yaml")
-    try:
-        if os.path.exists(local_secrets_path):
-            with open(local_secrets_path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-                for src_key, src_list in data.items():
-                    if isinstance(src_list, list):
-                        for src in src_list:
-                            src["source_file"] = src_key  # Tag with source category
-                            sources.append(src)
-    except Exception as e:
-        logging.warning(f"Local secrets file not found or error loading {local_secrets_path}: {e}")
-    
-    # Use fallback if no sources loaded
-    if not sources:
-        logging.warning("No YAML sources loaded, using fallback sources")
-        sources = FALLBACK_SOURCES
-    
-    return sources
-
-def get_active_sources(feed_source="all"):
-    """Filter sources based on active feed source type"""
-    all_sources = load_sources()
-    if feed_source == "all":
-        return all_sources
-    else:
-        return [s for s in all_sources if s.get("source_file") == feed_source]
-
-SOURCES = load_sources()
-
-# ========== INCIDENT CORRELATION ENGINE ==========
-class Incident:
-    """Represents a correlated group of related alerts (an incident)"""
-    _incident_id_counter = 1000
-    
-    def __init__(self, name, severity, ioc_type, ioc_value):
-        self.incident_id = Incident._incident_id_counter
-        Incident._incident_id_counter += 1
-        self.name = name  # Human-readable incident name
-        self.severity = severity  # critical, high, medium, low
-        self.status = "open"  # open, investigating, resolved
-        self.created_at = datetime.now(timezone.utc)
-        self.updated_at = datetime.now(timezone.utc)
-        self.related_alerts = []  # List of alert dicts
-        self.related_iocs = []  # List of IOCs (IPs, hashes, URLs)
-        self.attack_chain = []  # Timeline of events
-        self.tags = []  # Tags for categorization
-        self.notes = ""  # Investigation notes
-        self.ioc_type = ioc_type  # "cve", "ip", "hash", "url", "actor", "domain"
-        self.ioc_value = ioc_value  # The actual value (CVE-2024-..., 192.168.1.1, etc.)
-    
-    def add_alert(self, alert):
-        """Add an alert to this incident"""
-        if alert not in self.related_alerts:
-            self.related_alerts.append(alert)
-            self.updated_at = datetime.now(timezone.utc)
-    
-    def add_ioc(self, ioc_type, ioc_value):
-        """Add an IOC to this incident's list"""
-        ioc = {"type": ioc_type, "value": ioc_value}
-        if ioc not in self.related_iocs:
-            self.related_iocs.append(ioc)
-    
-    def update_severity(self):
-        """Auto-update severity based on related alerts"""
-        if not self.related_alerts:
-            return
-        severities = ["critical", "zeroday", "ransomware", "apt", "exploit", "info"]
-        severity_ranks = {"critical": 0, "zeroday": 1, "ransomware": 2, "apt": 3, "exploit": 4, "info": 5}
-        
-        alert_severities = [a.get("severity", "info") for a in self.related_alerts]
-        worst_severity = min(alert_severities, key=lambda s: severity_ranks.get(s, 99))
-        self.severity = worst_severity
-    
-    def get_timeline(self):
-        """Get timeline of alerts sorted by date"""
-        sorted_alerts = sorted(self.related_alerts, key=lambda a: a.get("ts", datetime.now(timezone.utc)))
-        return sorted_alerts
-
-
-def extract_iocs_from_alert(alert):
-    """Extract IOCs (IP, hash, URL, CVE) from an alert"""
-    iocs = []
-    title = alert.get("title", "").upper()
-    summary = alert.get("summary", "").upper()
-    text = f"{title} {summary}"
-    
-    cve_matches = re.findall(r'CVE-\d{4}-\d{4,5}', text)
-    for cve in cve_matches:
-        iocs.append(("cve", cve))
-    
-    ip_matches = re.findall(r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b', text)
-    for ip in ip_matches:
-        if not ip.startswith("255"):
-            iocs.append(("ip", ip))
-    
-    md5_matches = re.findall(r'\b[a-fA-F0-9]{32}\b', text)
-    for md5 in md5_matches:
-        iocs.append(("hash", md5))
-    
-    sha1_matches = re.findall(r'\b[a-fA-F0-9]{40}\b', text)
-    for sha1 in sha1_matches:
-        iocs.append(("hash", sha1))
-    
-    sha256_matches = re.findall(r'\b[a-fA-F0-9]{64}\b', text)
-    for sha256 in sha256_matches:
-        iocs.append(("hash", sha256))
-    
-    domain_matches = re.findall(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b', text.lower())
-    for domain in domain_matches:
-        if domain not in iocs and not domain.startswith("www"):
-            iocs.append(("domain", domain))
-    
-    return iocs
-
-
-def generate_incidents_from_alerts(alert_list, active_source="all"):
-    """
-    Correlate alerts into incidents by CVE, IP, hash, domain, and attack patterns
-    Returns list of Incident objects
-    """
-    incidents = []
-    cve_incidents = {}
-    ip_incidents = {}
-    hash_incidents = {}
-    domain_incidents = {}
-    
-    if active_source != "all":
-        filtered_alerts = [a for a in alert_list if a.get("source_file") == active_source]
-    else:
-        filtered_alerts = alert_list
-    
-    for alert in filtered_alerts:
-        iocs = extract_iocs_from_alert(alert)
-        
-        for ioc_type, ioc_value in iocs:
-            if ioc_type == "cve":
-                if ioc_value not in cve_incidents:
-                    # Create new CVE incident
-                    incident = Incident(
-                        name=f"CVE Incident: {ioc_value}",
-                        severity=alert.get("severity", "info"),
-                        ioc_type="cve",
-                        ioc_value=ioc_value
-                    )
-                    cve_incidents[ioc_value] = incident
-                    incidents.append(incident)
-                
-                cve_incidents[ioc_value].add_alert(alert)
-    
-    for alert in filtered_alerts:
-        iocs = extract_iocs_from_alert(alert)
-        
-        for ioc_type, ioc_value in iocs:
-            if ioc_type == "ip":
-                if ioc_value not in ip_incidents:
-                    incident = Incident(
-                        name=f"IP Activity: {ioc_value}",
-                        severity=alert.get("severity", "info"),
-                        ioc_type="ip",
-                        ioc_value=ioc_value
-                    )
-                    ip_incidents[ioc_value] = incident
-                    incidents.append(incident)
-                
-                ip_incidents[ioc_value].add_alert(alert)
-    
-    for alert in filtered_alerts:
-        iocs = extract_iocs_from_alert(alert)
-        
-        for ioc_type, ioc_value in iocs:
-            if ioc_type == "hash":
-                if ioc_value not in hash_incidents:
-                    incident = Incident(
-                        name=f"Hash Match: {ioc_value[:16]}...",
-                        severity=alert.get("severity", "info"),
-                        ioc_type="hash",
-                        ioc_value=ioc_value
-                    )
-                    hash_incidents[ioc_value] = incident
-                    incidents.append(incident)
-                
-                hash_incidents[ioc_value].add_alert(alert)
-    
-    for incident in incidents:
-        incident.update_severity()
-    
-    # Sort by severity (critical first) and then by most recent
-    severity_rank = {"critical": 0, "zeroday": 1, "ransomware": 2, "apt": 3, "exploit": 4, "info": 5}
-    incidents.sort(key=lambda x: (
-        severity_rank.get(x.severity, 99),
-        -x.updated_at.timestamp()
-    ))
-    
-    return incidents
-# ========== END INCIDENT CORRELATION ENGINE ==========
 
 # Global state
 alert_queue = []
-alert_history = deque(maxlen=100)
 breach_list = []
-source_cache = {}
 source_file_stats = {"curated": 0, "custom": 0, "community": 0}
 failed_feeds = {}  # Tracks current cycle failures: {feed_name: (error_msg, failure_count)}
 disabled_feeds = {}  # Tracks disabled feeds: {feed_name: (error_msg, disable_reason)}
@@ -350,266 +72,18 @@ currently_loading = None
 incidents_cache = []
 start_time = datetime.now(timezone.utc)
 ticker_offset = 0
-ticker_counter = 0
-border_color = "bright_magenta"
-last_critical = None
+
+IOC_TITLE_PREFIXES = ("TOP MALICIOUS IP", "MALWARE URL", "PHISHING URL")
+RANSOM_VICTIM_RE = re.compile(r"^RANSOMWARE VICTIM: .* \(([^)]+)\)(?: \[([A-Z]{2})\])?")
+COUNTRY_NAMES = {
+    "US": "United States", "CA": "Canada", "GB": "United Kingdom", "DE": "Germany", "FR": "France",
+    "IT": "Italy", "ES": "Spain", "NL": "Netherlands", "BE": "Belgium", "CH": "Switzerland", "AT": "Austria",
+    "AU": "Australia", "BR": "Brazil", "MX": "Mexico", "IN": "India", "JP": "Japan", "KR": "South Korea",
+    "TW": "Taiwan", "CN": "China", "SG": "Singapore", "ZA": "South Africa", "SE": "Sweden", "PL": "Poland",
+}
 force_event = asyncio.Event()
 active_feed_source = "all"
 
-def is_blog_post_content(title: str, summary: str, source_name: str) -> bool:
-    """
-    Detect if content is a blog post/educational material rather than threat intelligence.
-    Returns True if it's a blog post, False if it's actual threat intelligence.
-    """
-    combined_text = (title + " " + summary).lower()
-    
-    # Strong indicators it's NOT threat intelligence (blog/educational content)
-    blog_keywords = [
-        # Tutorial/educational
-        "tutorial", "guide", "how to", "how-to", "getting started", "quick start",
-        "introduction to", "beginners", "learn", "step by step", "step-by-step",
-        "advanced guide", "advanced tips", "best practices", "tips and tricks",
-        
-        # General news/announcements
-        "announces", "announced", "launches", "launched", "releases", "released",
-        "celebrates", "celebrates", "wins award", "awarded", "named one of",
-        "interview", "podcast", "webinar", "conference", "summit", "newsletter",
-        
-        # Product reviews/comparisons
-        "review", "comparison", "benchmark", "testing", "hands-on",
-        "first look", "unboxing", "impressions", "pros and cons",
-        
-        # Opinion pieces
-        "opinion", "perspective", "why we", "why i", "my thoughts", "i think",
-        "controversial", "debate", "discussion forum", "poll", "tips", "tricks",
-        
-        # Marketing/PR/News
-        "case study", "success story", "customer story", "white paper",
-        "infographic", "report", "ebook", "free download",
-        "news", "news brief", "this week in", "roundup", "wrap-up", "highlights",
-        "state of", "best of", "top ", "trends", "insights",
-        
-        # Open source / general tech topics (usually not threat intel)
-        "open source", "collaboration", "community", "ecosystem",
-        
-        # General company/tech news (not threat-related)
-        "meta", "google", "facebook", "microsoft", "amazon", "apple"
-    ]
-    
-    # Strong indicators it IS threat intelligence (keep it)
-    threat_keywords = [
-        # CVE/Vulnerability
-        "cve-", "vulnerability", "vuln", "patch", "critical flaw",
-        "zero-day", "0-day", "zeroday", "n-day",
-        
-        # Active threats
-        "exploit", "poc", "proof of concept", "actively exploited",
-        "in the wild", "wild", "actively being exploited",
-        
-        # Malware/APT
-        "malware", "ransomware", "trojan", "worm", "botnet", "rootkit",
-        "apt", "threat actor", "threat group", "cybercriminal",
-        "lockbit", "conti", "blackcat", "akira", "clop", "lazarus",
-        
-        # Attack/Incident
-        "breach", "attack", "compromised", "hacked", "incident",
-        "data leak", "leaked", "stolen data", "ransomware gang",
-        
-        # Indicators
-        "ioc", "indicator", "iocs", "malicious ip", "malicious domain",
-        "c2", "c&c", "command and control", "payload",
-        
-        # Security research/analysis in threat context (specific phrases)
-        "vulnerability research", "threat analysis", "malware analysis", "reverse engineering",
-        
-        # Advisories/Warnings
-        "advisory", "alert", "warning", "urgent", "immediate action",
-        "critical patch", "security update", "hotfix"
-    ]
-    
-    # Count keyword matches
-    threat_score = sum(1 for kw in threat_keywords if kw in combined_text)
-    blog_score = sum(1 for kw in blog_keywords if kw in combined_text)
-    
-    # If it has threat keywords, it's threat intel (don't filter)
-    if threat_score >= 1:
-        return False  # It's threat intel, not a blog post
-    
-    # If it has 2+ blog keywords or specific blog indicators, it's a blog post
-    if blog_score >= 2:
-        return True  # It's a blog post
-    
-    # Single strong blog keyword might still be a blog post
-    if blog_score == 1:
-        # These keywords are strong enough on their own
-        strong_blog_keywords = ["tutorial", "guide", "how to", "how-to", "getting started",
-                               "interview", "podcast", "review", "white paper", "case study",
-                               "newsletter", "state of", "best of", "open source", "collaboration",
-                               "community", "ecosystem"]
-        if any(kw in combined_text for kw in strong_blog_keywords):
-            return True
-    
-    # Default: if ambiguous, assume it's threat intel (don't filter out)
-    return False
-
-def parse_cisa(data, source_name, source_file):
-    items = []
-    for v in data.get("vulnerabilities", []):
-        date_added = v.get("dateAdded", "")
-        try:
-            ts = datetime.fromisoformat(date_added + "T00:00:00+00:00") if date_added else datetime.now(timezone.utc)
-        except Exception:
-            ts = datetime.now(timezone.utc)
-        items.append({
-            "title": f"KEV ACTIVE → {v['cveID']}",
-            "summary": v.get("shortDescription", "")[:MAX_SUMMARY_LEN],
-            "published": ts.strftime("%a, %d %b"),
-            "severity": "critical",
-            "source": source_name,
-            "source_file": source_file,
-            "url": f"https://nvd.nist.gov/vuln/detail/{v['cveID']}",
-            "ts": ts
-        })
-    return items
-
-def parse_rss(text, source_name, source_file):
-    f = feedparser.parse(text)
-    items = []
-    for e in f.entries[:100]:  # Some feeds (e.g. MSRC) return thousands of entries
-        pub = e.get("published") or e.get("updated") or ""
-        try:
-            if "Z" in pub:
-                ts = datetime.fromisoformat(pub.replace("Z", "+00:00"))
-            else:
-                p = feedparser._parse_date(pub)
-                ts = datetime(*p[:6], tzinfo=timezone.utc) if p else datetime.now(timezone.utc)
-        except Exception:
-            ts = datetime.now(timezone.utc)
-        title = e.title[:MAX_TITLE_LEN]
-        raw_summary = e.get("summary") or e.get("description") or ""
-        summary = re.sub(r'<[^>]*>', '', raw_summary)[:MAX_SUMMARY_LEN]
-        link = e.get("link", "")
-        
-        # Filter out blog posts and non-threat content
-        if is_blog_post_content(title, summary, source_name):
-            continue  # Skip this item - it's a blog post, not threat intel
-        
-        lower = (title + summary).lower()
-        sev = ("ransomware" if any(k in lower for k in ["ransom","lockbit","conti","blackcat","akira","clop"])
-               else "apt" if any(k in lower for k in ["apt41","apt28","lazarus","iran","china","russia","dprk"])
-               else "zeroday" if any(k in lower for k in ["wormable","0day","zero-day","in the wild","rce","actively exploited"])
-               else "exploit" if any(k in lower for k in ["exploit","poc"])
-               else "info")
-        items.append({"title": title, "summary": summary, "published": ts.strftime("%a, %d %b"), 
-                      "severity": sev, "source": source_name, "source_file": source_file, "url": link, "ts": ts})
-    return items
-
-def _parse_iso(value):
-    """Parse an ISO-8601 timestamp, assuming UTC when no offset is given"""
-    try:
-        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00").replace(" UTC", "+00:00"))
-        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        return datetime.now(timezone.utc)
-
-def parse_ransomware_live(data, source_name, source_file):
-    """Parse ransomware.live /v2/recentvictims (a list of victim posts)"""
-    items = []
-    for v in data:
-        ts = _parse_iso(v.get("discovered") or v.get("attackdate"))
-        group = v.get("group", "unknown")
-        country = f" [{v['country']}]" if v.get("country") else ""
-        items.append({
-            "title": f"RANSOMWARE VICTIM: {v.get('victim', 'Unknown')} ({group}){country}"[:MAX_TITLE_LEN],
-            "summary": f"{group} ransomware claim. Sector: {v.get('activity') or 'Unknown'}"[:MAX_SUMMARY_LEN],
-            "published": ts.strftime("%a, %d %b"),
-            "severity": "ransomware",
-            "source": source_name,
-            "source_file": source_file,
-            "url": v.get("url", ""),
-            "ts": ts,
-        })
-    return items
-
-def parse_otx(data, source_name, source_file):
-    """Parse AlienVault OTX pulse listings ({"results": [pulse, ...]})"""
-    items = []
-    for p in data.get("results", []):
-        ts = _parse_iso(p.get("modified") or p.get("created"))
-        text = f"{p.get('name', '')} {p.get('description', '')}".lower()
-        sev = ("ransomware" if "ransom" in text
-               else "apt" if p.get("adversary") or "apt" in text
-               else "exploit" if "exploit" in text or "cve-" in text
-               else "info")
-        items.append({
-            "title": f"OTX: {p.get('name', 'Untitled pulse')}"[:MAX_TITLE_LEN],
-            "summary": (p.get("description") or "")[:MAX_SUMMARY_LEN],
-            "published": ts.strftime("%a, %d %b"),
-            "severity": sev,
-            "source": source_name,
-            "source_file": source_file,
-            "url": f"https://otx.alienvault.com/pulse/{p.get('id', '')}",
-            "ts": ts,
-        })
-    return items
-
-def parse_json(data, source_name, source_file):
-    """Pick a JSON parser based on the shape of the response"""
-    if isinstance(data, dict) and "vulnerabilities" in data:
-        return parse_cisa(data, source_name, source_file)
-    if isinstance(data, dict) and "results" in data:
-        return parse_otx(data, source_name, source_file)
-    if isinstance(data, list) and data and isinstance(data[0], dict) and "victim" in data[0]:
-        return parse_ransomware_live(data, source_name, source_file)
-    logging.warning(f"No parser for JSON feed '{source_name}'")
-    return []
-
-IP_OR_CIDR = re.compile(r'^\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?$')
-
-def parse_txt(text, source_name, source_file):
-    """Parse plain-text indicator lists: IP/CIDR lists, URL lists, DShield block, URLhaus CSV"""
-    lines = [line.strip() for line in text.splitlines()
-             if line.strip() and not line.lstrip().startswith(("#", ";"))]
-    now = datetime.now(timezone.utc)
-    items = []
-    for line in lines[:20]:  # Indicator lists can have thousands of lines
-        ts = now
-        severity = "exploit"
-        if line.startswith('"'):
-            # URLhaus CSV: id, dateadded, url, url_status, last_online, threat, tags, urlhaus_link, reporter
-            cols = next(csv.reader([line]))
-            if len(cols) < 8:
-                continue
-            ts = _parse_iso(cols[1])
-            title = f"MALWARE URL: {cols[2]} ({cols[5]})"
-            summary = f"URLhaus: {cols[5]}, status {cols[3]}"
-            link = cols[7]
-        else:
-            parts = re.split(r'[\s;]+', line)
-            first = parts[0]
-            if first.startswith(("http://", "https://")):
-                title = f"PHISHING URL: {first}"
-                summary = f"Reported by {source_name}"
-                link = ""
-            elif IP_OR_CIDR.match(first):
-                # DShield block.txt: start, end, netblock, attacks, name, country, email
-                if len(parts) >= 4 and IP_OR_CIDR.match(parts[1]) and parts[2].isdigit():
-                    title = f"TOP MALICIOUS IP: {first}/{parts[2]} ({parts[3]} attacks)"
-                else:
-                    title = f"TOP MALICIOUS IP: {first}"
-                summary = f"Listed by {source_name}"
-                link = f"https://isc.sans.edu/ipinfo.html?ip={first.split('/')[0]}"
-            else:
-                continue
-        items.append({"title": title[:MAX_TITLE_LEN],
-                      "summary": summary[:MAX_SUMMARY_LEN],
-                      "published": ts.strftime("%a, %d %b"),
-                      "severity": severity,
-                      "source": source_name,
-                      "source_file": source_file,
-                      "url": link,
-                      "ts": ts})
-    return items
 
 async def fetch_breaches():
     """Fetch recent breaches from HaveIBeenPwned"""
@@ -663,16 +137,18 @@ class HelpScreen(Screen):
         help_text.append("┌─ NAVIGATION & CONTROLS " + "─" * 72 + "┐\n", style=accent)
         help_text.append("│\n", style=accent)
         help_text.append("│  [GENERAL]\n", style=f"bold {accent}")
-        help_text.append("│    ↑/↓           Select alerts in current view\n", style=color)
+        help_text.append("│    ↑/↓           Select an alert or incident (the alert preview shows its summary)\n", style=color)
+        help_text.append("│    Click         Select a row; click it again to open it\n", style=color)
         help_text.append("│    ← →           Change pages in paginated views (Feed, Incidents, War Room)\n", style=color)
-        help_text.append("│    Enter         Open selected alert in browser\n", style=color)
+        help_text.append("│    Enter         Open the selected alert (or an incident's latest report) in your browser\n", style=color)
+        help_text.append("│    A             Explain the selected alert with AI (shown in the preview pane)\n", style=color)
         help_text.append("│    Tab           Switch between left panel (alerts) and right panel (dashboard)\n", style=color)
         help_text.append("│    V             Toggle between Alerts, Incidents, and API Tools views\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [VIEW PANELS]\n", style=f"bold {accent}")
         help_text.append("│    V             Cycle through focused dashboard panels:\n", style=color)
-        help_text.append("│                  0 = War Room Dashboard\n", style=color)
-        help_text.append("│                  1 = Gemini Analysis (AI Threat Analysis)\n", style=color)
+        help_text.append("│                  0 = Dashboard metrics\n", style=color)
+        help_text.append("│                  1 = War Room (AI briefing + local keyword analysis)\n", style=color)
         help_text.append("│                  2 = Feed Status (Failed/Disabled Feeds)\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
@@ -715,7 +191,7 @@ class HelpScreen(Screen):
         help_text.append("│    Exploits/POC      - Public exploits or proof-of-concept code released\n", style=color)
         help_text.append("│    IOCs Detected     - IP addresses, file hashes, or suspicious domains\n", style=color)
         help_text.append("│    Incoming (1h)     - New alerts arriving in the last 60 minutes\n", style=color)
-        help_text.append("│    Alerts/Hour       - Velocity (rate of new alerts per hour)\n", style=color)
+        help_text.append("│    Avg/Hour          - Average alerts per hour across the data window\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [HEAT LEVELS]\n", style=f"bold {accent}")
         help_text.append("│    Heat Level        - % of total alerts that are high-threat (critical+severe)\n", style=color)
@@ -727,7 +203,7 @@ class HelpScreen(Screen):
         help_text.append("│  [THREAT SCORING]\n", style=f"bold {accent}")
         help_text.append("│    Cyber DEFCON      - Overall threat level (1=CRITICAL, 5=SAFE)\n", style=color)
         help_text.append("│                        Weighted: Zero-days(5x) + Critical(4x) + Ransomware/APT(3x) + Exploits(2x)\n", style=color)
-        help_text.append("│    Doomsday Clock    - Fictional 89-second countdown (always shows max threat)\n", style=color)
+        help_text.append("│    Doomsday Clock    - Bulletin of the Atomic Scientists setting, checked daily\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -751,28 +227,20 @@ class HelpScreen(Screen):
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
         # THREAT ANALYSIS (WAR ROOM)
-        help_text.append("┌─ WAR ROOM: AI-POWERED THREAT ANALYSIS " + "─" * 54 + "┐\n", style=accent)
+        help_text.append("┌─ WAR ROOM: AI THREAT BRIEFING " + "─" * 62 + "┐\n", style=accent)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [WHAT IS WAR ROOM?]\n", style=f"bold {accent}")
-        help_text.append("│    AI-powered threat intelligence using Google Gemini API\n", style=color)
-        help_text.append("│    Analyzes current alerts to identify patterns, priorities, and threats\n", style=color)
+        help_text.append("│  [WHAT IT IS]\n", style=f"bold {accent}")
+        help_text.append("│    A briefing written by your chosen AI provider from the alerts in the current window:\n", style=color)
+        help_text.append("│    bottom line, priority actions, active threats, notable vulnerabilities, watch list\n", style=color)
+        help_text.append("│    Below it, a local keyword analysis (top CVEs, software, actors, sectors) that needs no AI\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [HOW TO ACCESS]\n", style=f"bold {accent}")
-        help_text.append("│    1. Press Tab to switch to right panel (dashboard)\n", style=color)
-        help_text.append("│    2. Press V to cycle dashboard panels to War Room (panel 1)\n", style=color)
-        help_text.append("│    Press G to refresh the AI analysis (updates from current alerts)\n", style=color)
+        help_text.append("│  [HOW TO USE]\n", style=f"bold {accent}")
+        help_text.append("│    G             Generate or refresh the briefing (also jumps to the War Room panel)\n", style=color)
+        help_text.append("│    Tab, then V   Reach the War Room panel manually; ← → to page through it\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [WHAT IT SHOWS]\n", style=f"bold {accent}")
-        help_text.append("│    Top CVEs          - Most frequently appearing vulnerabilities\n", style=color)
-        help_text.append("│    Affected Software - Which products/services are most at risk\n", style=color)
-        help_text.append("│    Exploit Maturity  - What exploits are in-the-wild vs POC vs under development\n", style=color)
-        help_text.append("│    Threat Actors     - Known APT/ransomware groups detected in alerts\n", style=color)
-        help_text.append("│    Industry Targeting- Which sectors are being targeted (Healthcare, Finance, etc)\n", style=color)
-        help_text.append("│    Vuln Chains       - Multiple CVEs being exploited in coordinated attacks\n", style=color)
-        help_text.append("│\n", style=accent)
-        help_text.append("│  [REQUIREMENTS]\n", style=f"bold {accent}")
-        help_text.append("│    GEMINI_API_KEY set in usrwire.yaml (enrichment: section)\n", style=color)
-        help_text.append("│    If not configured, War Room shows notification\n", style=color)
+        help_text.append("│  [PROVIDERS] (ai: section of cybrwire_local.yaml)\n", style=f"bold {accent}")
+        help_text.append("│    anthropic, gemini, openai, openrouter, ollama (local), openai_compatible\n", style=color)
+        help_text.append("│    Older configs with only enrichment.gemini_api_key keep working\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -803,28 +271,18 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  Press 'V' to toggle between Alerts, Incidents, and API Tools views\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [INCIDENT DETAIL ELEMENTS]\n", style=f"bold {accent}")
-        help_text.append("│    [INC-####]           Incident ID (unique identifier for threat group)\n", style=color)
-        help_text.append("│    SEVERITY             Alert severity level (INFO, CRITICAL, HIGH, etc)\n", style=color)
-        help_text.append("│    [INDICATOR_TYPE]     Type in brackets: [HASH], [IP], [DOMAIN], [CVE], [URL]\n", style=color)
-        help_text.append("│    VALUE                Actual indicator value (IOC - Indicator of Compromise)\n", style=color)
-        help_text.append("│    Updated X ago        How recently this threat was last seen/updated\n", style=color)
-        help_text.append("│    N alerts             Number of alerts associated with this incident\n", style=color)
+        help_text.append("│  [WHEN AN INCIDENT IS CREATED]\n", style=f"bold {accent}")
+        help_text.append("│    The same CVE, IP or file hash is reported by two or more different sources,\n", style=color)
+        help_text.append("│    or a named threat actor / ransomware group appears in two or more alerts\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [STAT] Statistics Section:\n", style=f"bold {accent}")
-        help_text.append("│    ⊕HH:MM:SS           First occurrence timestamp (⊕ = start time)\n", style=color)
-        help_text.append("│    Last:XX              Last confirmed activity time\n", style=color)
-        help_text.append("│    Peak:LEVEL           Peak intensity (INF = ongoing/infinite)\n", style=color)
-        help_text.append("│    Age:HH:MM:SS         Total age/lifespan of this threat\n", style=color)
-        help_text.append("│    Summary:TEXT         Intelligence summary from analysis\n", style=color)
-        help_text.append("│\n", style=accent)
-        help_text.append("│  [CHAIN] Correlation Section:\n", style=f"bold {accent}")
-        help_text.append("│    Topics:CVE-XXXX      Associated CVE vulnerabilities\n", style=color)
-        help_text.append("│    Feeds:SOURCE         Which intelligence feed(s) reported it\n", style=color)
-        help_text.append("│\n", style=accent)
-        help_text.append("│  [STATUS] Indicator:\n", style=f"bold {accent}")
-        help_text.append("│    ⊚ OPEN               Threat is active/unresolved\n", style=color)
-        help_text.append("│    ◉ CLOSED             Threat resolved/mitigated\n", style=color)
+        help_text.append("│  [WHAT EACH INCIDENT SHOWS]\n", style=f"bold {accent}")
+        help_text.append("│    Header           Severity, indicator, CISA KEV status, source and alert counts\n", style=color)
+        help_text.append("│    Headline         The most descriptive alert title\n", style=color)
+        help_text.append("│    What             KEV description or the most detailed summary available\n", style=color)
+        help_text.append("│    Why grouped      Which sources reported the indicator\n", style=color)
+        help_text.append("│    Timeline         When it was first and most recently reported, and by whom\n", style=color)
+        help_text.append("│    Related          Other incidents that share alerts with this one\n", style=color)
+        help_text.append("│    • lines          The two most recent alerts\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -853,7 +311,8 @@ class HelpScreen(Screen):
         help_text.append("│  V              Toggle View in Focused Panel - Switch between Alerts / Incidents / API Tools\n", style=color)
         help_text.append("│  E              Re-enable Feeds - Re-enable all auto-disabled feeds\n", style=color)
         help_text.append("│  C              Toggle Cold War Mode - Switch between colorful and green-only\n", style=color)
-        help_text.append("│  G              Refresh War Room - Re-analyze current alerts with Gemini AI\n", style=color)
+        help_text.append("│  G              AI Briefing - Generate a fresh briefing in the War Room\n", style=color)
+        help_text.append("│  A              Explain Alert - AI explanation of the selected alert\n", style=color)
         help_text.append("│  T              Cycle Theme - Switch color themes (normal mode only)\n", style=color)
         help_text.append("│  H              Show This Help - Display help screen\n", style=color)
         help_text.append("│  Q / Esc        Quit / Close Help - Exit application or close help screen\n", style=color)
@@ -864,12 +323,14 @@ class HelpScreen(Screen):
         help_text.append("┌─ TIPS & FEATURES " + "─" * 77 + "┐\n", style=accent)
         help_text.append("│\n", style=accent)
         help_text.append("│  PAGINATION        - Most views support pagination with ← → arrow keys\n", style=color)
-        help_text.append("│  INCIDENTS VIEW    - Auto-correlates alerts by CVE, IP, hash, and domain\n", style=color)
+        help_text.append("│  INCIDENTS VIEW    - Correlates alerts by CVE, IP, hash and threat actor\n", style=color)
         help_text.append("│  LIVE TICKER       - Shows critical threats scrolling at the top (updates live)\n", style=color)
         help_text.append("│  BREACH DATABASE   - Shows latest data breaches from Have I Been Pwned (HIBP)\n", style=color)
-        help_text.append("│  VELOCITY TRACKING - Monitors alert rate changes and forecasts trends\n", style=color)
+        help_text.append("│  VELOCITY TRACKING - Compares alerts in the last 24h with the 24h before\n", style=color)
         help_text.append("│  ATTACK VECTORS    - Identifies most common attack methods in current data\n", style=color)
-        help_text.append("│  GEO HOTSPOTS      - Infers likely geographic sources of threats\n", style=color)
+        help_text.append("│  RANSOMWARE HOTSPOT- Most-hit victim country and group (Ransomware.live)\n", style=color)
+        help_text.append("│  NEW BADGES        - Alerts first seen since your last launch, until you open them\n", style=color)
+        help_text.append("│  SAVED SETTINGS    - Theme, filters and modes persist; run with --setup to re-pick\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  PRO TIP: Use keyboard shortcuts to quickly switch between filters and views\n", style="bold yellow")
         help_text.append("│           Example: D (switch time) → F (filter) → V (view) → Tab (Switch Panel Focus)\n", style="dim yellow")
@@ -918,7 +379,7 @@ class LoadingScreen(Screen):
         ]
         self.feed_spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self.completed_messages = []  # Track completed messages for stacking
-        self.configured_apis = check_configured_apis()  # Check which APIs are available
+        self.configured_apis = CONFIG.configured_api_names  # Shown under "CHECKING APIS..."
     
     def compose(self) -> ComposeResult:
         yield Static(id="loading-content")
@@ -1220,7 +681,7 @@ class CybrWireApp(App):
         ("v", "toggle_view", "Toggle View"),
         ("e", "re_enable_feeds", "Re-enable Feeds"),
         ("c", "toggle_cold_war", "Cold War Mode"),
-        ("g", "gemini_refresh", "Gemini Refresh"),
+        ("g", "ai_refresh", "AI Briefing"),
         ("t", "cycle_theme", "Cycle Theme"),
         ("h", "show_help", "Help"),
         ("q", "quit", "Quit"),
@@ -1246,35 +707,56 @@ class CybrWireApp(App):
     def __init__(self, cold_war=False, recency=24):
         super().__init__()
         self._initializing = True
+        saved = STATE.settings
         self.cold_war_mode = cold_war
         self.recency_hours = recency
         self.data_age_index = {24: 0, 48: 1, 168: 2}.get(recency, 0)
         self.refresher_task = None
         self.alert_urls = []
+        self.page_alerts = []  # Alerts shown on the current feed page, in row order
         self.breach_urls = []
-        self.incident_source_urls = []
         self.feed_page_offset = 0
         self.incident_page_offset = 0
         self.hover_row = -1
         self.rows_per_page = 20
-        self.filter_mode = "all"
-        self.theme_mode = "textual-ansi"
+        self.theme_mode = saved.get("theme", "textual-ansi")
+        self.filter_type_index = saved.get("filter_type_index", 0)
+        self.filter_mode = ["all", "alerts", "posts"][self.filter_type_index]
+        self.feed_source_index = saved.get("feed_source_index", 0)
+        global active_feed_source
+        active_feed_source = ["all", "curated", "custom", "community"][self.feed_source_index]
         
         self.feed_failure_counts = {}  # Track consecutive failures per feed
         
-        # Initialize threat summary cache
+        # Redraw only when something changed (data, keys, mouse, timers)
+        self.dirty = True
+        self.last_full_render = 0.0
+        
+        # Incidents for the current data window, rebuilt only when inputs change
+        self.incidents = []
+        self.incidents_key = None
+        self.incident_rows = []  # (incident, first line, last line) for the current page
+        
+        # Threat summary (local keyword analysis) shown under the AI briefing
         self.threat_summary = None
+        self.threat_summary_full = ""
         self.threat_summary_timestamp = None
         self.threat_summary_loading = False
         self.threat_summary_pages = []  # Paginated content
         self.threat_summary_page = 0  # Current page
         
-        # Initialize AbuseIPDB lookup cache
-        self.abuseipdb_last_query = ""  # Last queried IP
-        self.abuseipdb_last_result = None  # Last AbuseIPDB result
-        self.abuseipdb_loading = False  # Is AbuseIPDB query in progress
-        self.abuseipdb_input_mode = False  # Waiting for user IP input
-        self.abuseipdb_input_buffer = ""  # Accumulate IP input
+        # AI analysis (any configured provider)
+        self.ai_settings = CONFIG.ai
+        self.ai_problem = ai.configuration_problem(self.ai_settings)
+        self.ai_briefing = None
+        self.ai_briefing_time = None
+        self.ai_briefing_error = None
+        self.ai_briefing_loading = False
+        self.alert_explanations = {}  # alert key -> AI explanation text (or error)
+        self.explaining = set()       # alert keys with a request in flight
+        
+        # Doomsday Clock (seconds to midnight), refreshed from thebulletin.org daily
+        self.doomsday_seconds = STATE.doomsday.get("seconds", DOOMSDAY_DEFAULT_SECONDS)
         
         # Initialize API Tools panel state
         self.api_tools_input_buffer = ""  # User input for IOC query
@@ -1282,46 +764,6 @@ class CybrWireApp(App):
         self.api_tools_last_results = {}  # Results from all providers {provider: EnrichmentData}
         self.api_tools_loading = False  # Is query in progress
         self.api_tools_input_mode = True  # Always in input mode in this panel
-        
-        # Initialize Gemini API - check cybrwire_local.yaml and usrwire.yaml (enrichment section)
-        gemini_key = None
-        
-        # Try cybrwire_local.yaml first (local testing keys)
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            local_secrets_path = os.path.join(script_dir, "cybrwire_local.yaml")
-            if os.path.exists(local_secrets_path):
-                with open(local_secrets_path, 'r') as f:
-                    data = yaml.safe_load(f) or {}
-                    enrichment = data.get('enrichment', {})
-                    if enrichment.get('gemini_api_key'):
-                        gemini_key = enrichment['gemini_api_key']
-        except Exception as e:
-            pass
-        
-        # Try usrwire.yaml if not found in local config
-        if not gemini_key:
-            try:
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                usrwire_path = os.path.join(script_dir, "usrwire.yaml")
-                if os.path.exists(usrwire_path):
-                    with open(usrwire_path, 'r') as f:
-                        data = yaml.safe_load(f) or {}
-                        enrichment = data.get('enrichment', {})
-                        if enrichment.get('gemini_api_key'):
-                            gemini_key = enrichment['gemini_api_key']
-            except Exception as e:
-                pass
-        
-        if gemini_key:
-            self.gemini_client = genai.Client(api_key=gemini_key)
-            self.gemini_model = "gemini-2.5-flash"  # Model name as string
-            self.ai_cache = {}  # Cache AI responses
-        else:
-            self.gemini_client = None
-            self.gemini_model = None
-            self.ai_cache = {}
-            logging.warning("GEMINI_API_KEY not found in cybrwire_local.yaml or usrwire.yaml (enrichment section)")
         
         # Set footer color based on cold war mode
         self.footer_color = "#00FF00" if self.cold_war_mode else "#55bbdd"
@@ -1334,21 +776,20 @@ class CybrWireApp(App):
         
         self._initializing = False  # Allow watchers to work now
     
-    def refresh_threat_summary(self):
-        """Refresh threat summary (wrapper for async loading)"""
-        asyncio.create_task(self._load_threat_summary_async())
+    def save_settings(self):
+        """Persist UI choices so the next launch starts the same way"""
+        STATE.settings = {
+            "recency_hours": self.recency_hours,
+            "cold_war": self.cold_war_mode,
+            "theme": self.theme_mode,
+            "filter_type_index": self.filter_type_index,
+            "feed_source_index": self.feed_source_index,
+        }
+        STATE.save()
     
-    def _should_refresh_gemini_data(self, timestamp):
-        """Check if Gemini data is older than 1 hour and needs refresh"""
-        if timestamp is None:
-            return True  # Never loaded
-        elapsed = datetime.now(timezone.utc) - timestamp
-        return elapsed.total_seconds() > 3600  # 1 hour in seconds
-    
-    def action_gemini_refresh(self):
-        """Refresh current Gemini analysis panel (g key)"""
-        if self.dashboard_panel_index == 1:  # War room (threat summary)
-            asyncio.create_task(self._load_threat_summary_async())
+    def mark_dirty(self):
+        """Schedule a redraw on the next render tick"""
+        self.dirty = True
     
     def analyze_top_cves(self, alerts):
         """Extract and rank top 10 CVEs by frequency"""
@@ -1505,26 +946,28 @@ class CybrWireApp(App):
         return sorted(targeted.items(), key=lambda x: x[1], reverse=True) if targeted else [("General Targeting", len(alerts))]
     
     async def _load_threat_summary_async(self):
-        """Load AI-powered threat summary asynchronously"""
+        """Build the local keyword analysis for the current data window"""
         if self.threat_summary_loading:
             return
         
         self.threat_summary_loading = True
         try:
-            top_alerts = [a for a in alert_queue if a.get('severity') in ['critical', 'zeroday', 'ransomware', 'apt', 'exploit', 'high', 'medium']][:10]
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
+            window = [a for a in alert_queue if a['ts'] >= cutoff_time]
+            top_alerts = [a for a in window if a.get('severity') in ['critical', 'zeroday', 'ransomware', 'apt', 'exploit', 'high', 'medium']][:10]
             
             if top_alerts:
                 # Run all analysis methods to get comprehensive intelligence
-                top_cves = self.analyze_top_cves(alert_queue)
-                threat_actors = self.analyze_threat_actors(alert_queue)
-                attack_surface = self.analyze_attack_surface(alert_queue)
-                vuln_chains = self.analyze_vulnerability_chains(alert_queue)
-                exploit_maturity = self.analyze_exploit_maturity(alert_queue)
-                industry_targeting = self.analyze_industry_targeting(alert_queue)
+                top_cves = self.analyze_top_cves(window)
+                threat_actors = self.analyze_threat_actors(window)
+                attack_surface = self.analyze_attack_surface(window)
+                vuln_chains = self.analyze_vulnerability_chains(window)
+                exploit_maturity = self.analyze_exploit_maturity(window)
+                industry_targeting = self.analyze_industry_targeting(window)
                 
                 # Build combined analysis text - ordered for optimal pagination
                 analysis_text = []
-                analysis_text.append("THREAT INTELLIGENCE ANALYSIS")
+                analysis_text.append("LOCAL KEYWORD ANALYSIS")
                 analysis_text.append("─" * 70)
                 analysis_text.append("")
                 
@@ -1569,40 +1012,25 @@ class CybrWireApp(App):
                     analysis_text.append("  No known threat actors detected in current alerts")
                 
                 analysis_text.append("")
-                analysis_text.append(f"Total Alerts Analyzed: {len(alert_queue)} | High Priority: {len(top_alerts)}")
+                analysis_text.append(f"Total Alerts Analyzed: {len(window)} | High Priority: {len(top_alerts)}")
                 analysis_text.append("─" * 70)
                 
-                # For now: show everything on one page to verify all content is generated
-                full_text = "\n".join(analysis_text)
-                
-                # Split into pages - 40 lines per page
-                pages = []
-                lines = analysis_text
-                lines_per_page = 40
-                
-                for i in range(0, len(lines), lines_per_page):
-                    page_lines = lines[i:i + lines_per_page]
-                    pages.append("\n".join(page_lines))
-                
-                self.threat_summary_pages = pages if pages else [full_text]
-                self.threat_summary_page = 0  # Reset to first page
-                self.threat_summary = self.threat_summary_pages[0] if self.threat_summary_pages else "No data"
+                self.threat_summary_full = "\n".join(analysis_text)
+                self.threat_summary = "LOCAL KEYWORD ANALYSIS"
                 self.threat_summary_timestamp = datetime.now(timezone.utc)
             else:
-                self.threat_summary_pages = []
-                self.threat_summary_page = 0
-                self.threat_summary = "Waiting for threat data to arrive..."
+                self.threat_summary_full = "Waiting for threat data to arrive..."
+                self.threat_summary = self.threat_summary_full
                 self.threat_summary_timestamp = datetime.now(timezone.utc)
         except Exception as e:
             import traceback
             error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
             logging.error(error_msg)
-            self.threat_summary = f"Error loading summary: {str(e)[:100]}"
+            self.threat_summary = self.threat_summary_full = f"Error loading summary: {str(e)[:100]}"
             self.threat_summary_timestamp = datetime.now(timezone.utc)
         finally:
             self.threat_summary_loading = False
-            # Schedule the UI refresh on the main event loop
-            self.call_later(lambda: self.query_one("#dashboard").refresh(recompose=True))
+            self.mark_dirty()
     
 
     def watch_cold_war_mode(self, old_value, new_value):
@@ -1699,184 +1127,52 @@ class CybrWireApp(App):
             # Widgets might not exist yet on first call
             pass
     
-    def _initialize_enrichment(self):
-        """Initialize enrichment engine with API keys from local config, fallback to usrwire.yaml"""
-        try:
-            enrichment_config = {}
-            script_dir = os.path.dirname(__file__)
-            
-            # Try to load from cybrwire_local.yaml first (local secrets with testing keys)
-            local_config_path = os.path.join(script_dir, "cybrwire_local.yaml")
-            enrichment_config = self._load_enrichment_keys(local_config_path)
-            
-            # If not found or incomplete, fall back to usrwire.yaml (production keys)
-            if not enrichment_config:
-                usrwire_path = os.path.join(script_dir, "usrwire.yaml")
-                enrichment_config = self._load_enrichment_keys(usrwire_path)
-                if enrichment_config:
-                    pass
-            else:
-                pass
-            
-            # Initialize enrichment engine
-            if enrichment_config:
-                initialize_enrichment(enrichment_config)
-            else:
-                pass
-        
-        except Exception as e:
-            logging.error(f"Failed to initialize enrichment: {e}")
-    
-    def _load_enrichment_keys(self, config_path: str) -> dict:
-        """
-        Load and transform enrichment API keys from YAML file.
-        
-        Transforms from YAML format:
-            enrichment:
-              abuseipdb_api_key: "value"
-              virustotal_api_key: "value"
-        
-        To internal format expected by initialize_enrichment():
-            {"abuseipdb": {"api_key": "value"}, ...}
-        """
-        enrichment_config = {}
-        
-        if not os.path.exists(config_path):
-            return enrichment_config
-        
-        try:
-            with open(config_path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-            
-            enrichment_section = data.get("enrichment", {})
-            if not enrichment_section:
-                return enrichment_config
-            
-            # Map YAML key names to provider names and extract API keys
-            key_mappings = {
-                'abuseipdb_api_key': 'abuseipdb',
-                'virustotal_api_key': 'virustotal',
-                'pulsedive_api_key': 'pulsedive',
-                'abuse_ch_api_key': 'abusech',
-            }
-            
-            for yaml_key, provider_name in key_mappings.items():
-                api_key = enrichment_section.get(yaml_key)
-                if api_key:  # Only add if key is not empty
-                    enrichment_config[provider_name] = {"api_key": api_key}
-            
-        except Exception as e:
-            logging.warning(f"Error loading enrichment keys from {config_path}: {e}")
-        
-        return enrichment_config
-    
-    async def enrich_indicator(self, indicator: str, indicator_type: str = "ip") -> Dict[str, Any]:
-        """
-        Enrich an indicator (IP, hash, domain, etc) using configured providers
-        
-        Args:
-            indicator: The IOC to enrich
-            indicator_type: Type of indicator ("ip", "hash", "domain", "url")
-        
-        Returns:
-            Dict with enrichment results from all providers
-        """
-        try:
-            # Check if we have any providers configured
-            if not enrichment_engine.providers:
-                return {}
-            
-            # Query enrichment engine (async)
-            results = await enrichment_engine.enrich(indicator, indicator_type)
-            
-            return results
-        except Exception as e:
-            logging.error(f"Error enriching {indicator}: {e}")
-            return {}
-        
     def on_mount(self) -> None:
         """Show loading screen then start app"""
-        # Apply initial theme
         self.apply_theme()
-        
-        # Show loading screen
         self.push_screen(LoadingScreen(self.cold_war_mode))
-        
-        # Start background refresh
         self.refresher_task = asyncio.create_task(self.initial_load())
-        
-        # Schedule threat summary load after UI is ready
     
     async def initial_load(self):
-        """Initial data load with loading screen"""
-        global alert_queue, alert_history
-        
-        # Suppress any stdout/stderr output during loading to keep loading screen clean
-        import io
-        import contextlib
-        
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        output_buffer = io.StringIO()
-        
+        """Initial data load behind the loading screen"""
         try:
-            # Redirect all output to buffer
-            sys.stdout = output_buffer
-            sys.stderr = output_buffer
+            initialize_enrichment(CONFIG.enrichment)
+            await asyncio.gather(self.fetch_feeds(), fetch_breaches(), self.refresh_doomsday())
             
-            try:
-                # Wait for first data fetch
-                await self.fetch_feeds()
-                
-                # Initialize enrichment engine with local config
-                self._initialize_enrichment()
-                
-                await fetch_breaches()
-                
-                # Populate initial history for last 5 hours with current count
-                # This gives immediate velocity data instead of waiting 5 hours
-                now = datetime.now(timezone.utc)
-                current_count = len(alert_queue)
-                for i in range(5, 0, -1):
-                    timestamp = now - timedelta(hours=i)
-                    alert_history.append((timestamp, current_count))
-                
-                # Wait minimum time for loading screen effect
-                await asyncio.sleep(3)
-                
-                # Still suppressed - pop screen with output suppressed
-                self.pop_screen()
-                self.is_loading = False
-            finally:
-                # Restore stdout/stderr AFTER screen pop and all data loading
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                
-                # Discard any buffered output that tried to escape
-                output_buffer.close()
+            # Let the loading animation finish its sequence
+            await asyncio.sleep(3)
+            self.pop_screen()
+            self.is_loading = False
             
-            # Now that output is restored, do remaining operations WITHOUT logging
-            # Force an immediate update
-            self.call_later(self.update_display)
-            
-            # Load threat summary at startup (main dashboard needs it)
-            # Correlation and ranking load on-demand when user navigates to those panels
             asyncio.create_task(self._load_threat_summary_async())
-            
-            # Start refresh loop
+            if not self.ai_problem:
+                asyncio.create_task(self.generate_ai_briefing())
             asyncio.create_task(self.refresher())
             
-            # Start UI updates
-            self.set_interval(0.5, self.update_display)
+            self.update_display()
+            self.set_interval(1.0, self.render_tick)
             self.set_interval(0.7, self.animate_ticker)
         except Exception as e:
-            # Make sure output is restored even on error
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
             logging.error(f"Error in initial_load: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
             raise
+    
+    async def refresh_doomsday(self):
+        """Update the Doomsday Clock from thebulletin.org, at most once a day"""
+        checked = STATE.doomsday.get("checked")
+        now = datetime.now(timezone.utc)
+        if checked and now - datetime.fromisoformat(checked) < DOOMSDAY_CHECK_INTERVAL:
+            return
+        try:
+            self.doomsday_seconds = await fetch_doomsday_seconds()
+            STATE.doomsday = {"seconds": self.doomsday_seconds, "checked": now.isoformat()}
+            STATE.save()
+        except Exception as e:
+            logging.warning(f"Could not refresh Doomsday Clock, keeping {self.doomsday_seconds}s: {e}")
+    
+    def render_tick(self):
+        """Redraw when something changed, and every 30s for the refresh countdown"""
+        if self.dirty or time.monotonic() - self.last_full_render >= 30:
+            self.update_display()
         
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -1893,13 +1189,13 @@ class CybrWireApp(App):
     
     async def fetch_feeds(self):
         """Fetch data from all sources once"""
-        global alert_queue, alert_history, source_cache, source_file_stats, active_feed_source, failed_feeds, disabled_feeds, currently_loading
+        global alert_queue, source_file_stats, failed_feeds, currently_loading
         
         new = []
         source_file_stats = {"curated": 0, "custom": 0, "community": 0}
         failed_feeds = {}
 
-        all_sources = [s for s in get_active_sources("all") if s['name'] not in disabled_feeds]
+        all_sources = [s for s in CONFIG.sources if s['name'] not in disabled_feeds]
         parsers = {"json": lambda r, n, f: parse_json(r.json(), n, f),
                    "rss": lambda r, n, f: parse_rss(r.text, n, f),
                    "txt": lambda r, n, f: parse_txt(r.text, n, f)}
@@ -1955,42 +1251,34 @@ class CybrWireApp(App):
         
         currently_loading = None  # Clear loading indicator
         
-        # Generate incidents from alerts (correlation engine)
-        global incidents_cache
-        incidents_cache = generate_incidents_from_alerts(alert_queue, "all")
+        STATE.record_alerts(alert_queue)
+        STATE.save()
+        self.incidents_key = None  # Rebuild incidents for the new data
+        self.mark_dirty()
     
     async def refresher(self):
         """Background task to fetch feeds periodically"""
         while True:
-            # Wait for timeout or force event
+            # Wait for the interval, or wake early when 'r' sets force_event
             try:
                 await asyncio.wait_for(force_event.wait(), timeout=REFRESH_INTERVAL)
-                # Force refresh triggered - don't track in history
                 force_event.clear()
-                await self.fetch_feeds()
-                await fetch_breaches()
-                self.is_loading = False  # Clear loading flag after fetch
-#                logging.info("Force refresh completed")
             except asyncio.TimeoutError:
-                # Normal automatic refresh - track in history
-                await self.fetch_feeds()
-                await fetch_breaches()
-                alert_history.append((datetime.now(timezone.utc), len(alert_queue)))
-                self.is_loading = False  # Clear loading flag after fetch
-#                logging.info("Automatic refresh completed")
+                pass
+            await asyncio.gather(self.fetch_feeds(), fetch_breaches(), self.refresh_doomsday())
             self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
+            self.mark_dirty()
     
     def update_display(self):
         """Update the UI display"""
         if self.is_loading:
             return
         
+        self.dirty = False
+        self.last_full_render = time.monotonic()
         try:
-            
-            # Update ticker
-            ticker_widget = self.query_one("#ticker", Static)
-            ticker_content = self.make_ticker()
-            ticker_widget.update(ticker_content)
+            self.ticker_core = self.make_ticker_core()
+            self.animate_ticker(advance=False)
             
             # Update feeds table, incidents panel, or API tools (toggled with key v)
             feeds_widget = self.query_one("#feeds", Static)
@@ -2116,14 +1404,18 @@ class CybrWireApp(App):
             import traceback
             logging.error(traceback.format_exc())
     
-    def animate_ticker(self):
-        """Animate the ticker"""
-        global ticker_offset, ticker_counter
-        ticker_counter = (ticker_counter + 1) % 1000
-        ticker_offset = ticker_counter % 100
+    def animate_ticker(self, advance=True):
+        """Scroll the ticker one step (only the ticker widget is redrawn)"""
+        global ticker_offset
+        if advance:
+            ticker_offset += 1
+        try:
+            self.query_one("#ticker", Static).update(self.make_ticker())
+        except Exception:
+            pass
     
-    def make_ticker(self):
-        """Create ticker display"""
+    def make_ticker_core(self):
+        """Build the ticker text from current alerts (recomputed on redraw only)"""
         now = datetime.now(timezone.utc)
         cutoff_time = now - timedelta(hours=self.recency_hours)
         
@@ -2154,192 +1446,156 @@ class CybrWireApp(App):
         else:
             ticker_parts.append("Ransomware: No alerts")
         
+        new_count = sum(1 for a in alert_queue if STATE.is_new(a))
+        if new_count:
+            ticker_parts.insert(0, f"{new_count} NEW since last visit")
+        
         ticker_core = "  //  ".join(ticker_parts)
-        if not ticker_core.strip():
-            ticker_core = "--- NO CRITICAL THREATS DETECTED ---"
-        
-        # Make seamless wrap
-        visible_width = self.size.width
-        ticker_str = (ticker_core + "   ") * 3
-        offset = ticker_offset % len(ticker_core + "   ")
-        
-        # Apply solid green color to ticker text
-        visible_text = ticker_str[offset:offset + visible_width]
-        
-        # Build text with color - respecting cold war mode
-        # Use curated metric green (#66cc66) in normal mode, pure green (#00ff00) in cold war
+        return ticker_core or "--- NO CRITICAL THREATS DETECTED ---"
+    
+    def make_ticker(self):
+        """Render the visible slice of the ticker at the current scroll offset"""
+        core = getattr(self, "ticker_core", "") or "--- LOADING ---"
+        loop = core + "   //   "
+        offset = ticker_offset % len(loop)
+        visible_text = (loop * 3)[offset:offset + max(self.size.width - 4, 10)]
         color = "#00ff00" if self.cold_war_mode else "#66cc66"
-        ticker_text = Text(visible_text, style=f"bold {color} on black")
-        
-        return Panel(ticker_text, title="LIVE THREAT TAPE", 
-                    border_style="#00ff00" if self.cold_war_mode else "#66cc66", padding=0)
+        return Panel(Text(visible_text, style=f"bold {color} on black"), title="LIVE THREAT TAPE",
+                     border_style=color, padding=0)
     
     def is_alert(self, item):
         """Classify item as alert vs blog post"""
         # Simple rule: INFO = blog post, everything else = alert
         return item["severity"] != "info"
     
-    def make_feeds_table(self):
-        """Create feeds table with pagination"""
-        now = datetime.now(timezone.utc)
-        cutoff_time = now - timedelta(hours=self.recency_hours)
-        
-        # Calculate available height for feeds based on actual container size
-        # Get the feeds container widget to determine actual available space
-        try:
-            feeds_widget = self.query_one("#feeds-container")
-            # Container height minus panel borders (top+bottom=2), title (1), subtitle (1), padding (2)
-            available_height = max(10, feeds_widget.size.height - 6)
-        except Exception:
-            # Fallback if widget not yet sized
-            available_height = max(10, self.size.height - 12)
-        
-        self.rows_per_page = max(10, available_height)
-        
-        # Debug: check first few alerts
-        if alert_queue:
-            for i, a in enumerate(list(alert_queue)[:3]):
-                alert_ts = a.get("ts", now)
-        
-        table = Table(box=box.DOUBLE, show_header=False, padding=(0,1), expand=True, border_style="#4499bb" if not self.cold_war_mode else "#00FF00")
-        
-        # Responsive column widths
-        if self.size.width < 100:
-            table.add_column(width=7, justify="right")
-            table.add_column(width=8)
-        else:
-            table.add_column(width=9, justify="right")
-            table.add_column(width=10)
-        table.add_column()
-        
-        # Filter alerts within time window
-        time_filtered = [a for a in alert_queue if a.get("ts", now) >= cutoff_time]
-        
-        # Apply feed source filter (only show data from selected sources)
-        global active_feed_source
-        if active_feed_source == "all":
-            source_filtered = time_filtered
-        else:
-            source_filtered = [a for a in time_filtered if a.get("source_file") == active_feed_source]
-        
-        # Apply content filter
+    PREVIEW_LINES = 8  # Lines reserved under the alert table for the selected-alert preview
+    
+    def filtered_alerts(self):
+        """Alerts in the current time window, feed source and alert-type filter"""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
+        alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
+        if active_feed_source != "all":
+            alerts = [a for a in alerts if a.get("source_file") == active_feed_source]
         if self.filter_mode == "alerts":
-            filtered_alerts = [a for a in source_filtered if self.is_alert(a)]
+            alerts = [a for a in alerts if self.is_alert(a)]
         elif self.filter_mode == "posts":
-            filtered_alerts = [a for a in source_filtered if not self.is_alert(a)]
-        else:  # "all"
-            filtered_alerts = source_filtered
+            alerts = [a for a in alerts if not self.is_alert(a)]
+        return alerts
+    
+    def selected_alert(self):
+        if 0 <= self.hover_row < len(self.page_alerts):
+            return self.page_alerts[self.hover_row]
+        return None
+    
+    def make_alert_preview(self, alert):
+        """Detail pane for the highlighted alert"""
+        accent = "#00ff00" if self.cold_war_mode else "#44ccaa"
+        body = "#00ff00" if self.cold_war_mode else "#ccddee"
+        dim = "#00aa00" if self.cold_war_mode else "#778899"
+        text = Text()
+        if not alert:
+            text.append("Select an alert with ↑/↓ to see its summary here.", style=dim)
+            return text
         
-        total_pages = max(1, (len(filtered_alerts) + self.rows_per_page - 1) // self.rows_per_page)
+        text.append(alert["title"] + "\n", style=f"bold {accent}")
+        text.append(f"{alert['source']}  •  {alert['ts']:%a %d %b %H:%M} UTC ({age(alert['ts'])} ago)  •  {alert['severity'].upper()}", style=dim)
+        if STATE.is_new(alert):
+            text.append("  •  NEW", style="bold #00ff00")
+        text.append("\n")
         
-        # Clamp page offset
-        max_offset = (total_pages - 1) * self.rows_per_page
-        self.feed_page_offset = max(0, min(self.feed_page_offset, max_offset))
-        
-        # Get current page of alerts
-        start_idx = self.feed_page_offset
-        end_idx = start_idx + self.rows_per_page
-        page_alerts = filtered_alerts[start_idx:end_idx]
-        
-        rows_added = 0
-        self.alert_urls = []  # Reset URLs list
-        self.alert_row_mapping = {}  # Map row index to alert URL
-        
-        for row_idx, a in enumerate(page_alerts):
-            # Muted cybrwire.py theme colors (increased saturation)
-            severity_colors = {
-                "critical": "bold white on #dd4444" if not self.cold_war_mode else "bold white on #00FF00",         
-                "zeroday": "bold black on #e6d144" if not self.cold_war_mode else "bold white on #00FF00",        
-                "ransomware": "bold black on #dd4488" if not self.cold_war_mode else "bold white on #00FF00",     
-                "apt": "bold black on #b866cc" if not self.cold_war_mode else "bold white on #00FF00",            
-                "exploit": "bold #dd5555" if not self.cold_war_mode else "bold #00FF00",                   
-                "info": "#55bbdd" if not self.cold_war_mode else "#00FF00"                            
-            }
-            
-            sev = a["severity"]
-            
-            # Check if this row is hovered
-            is_hovered = (row_idx == self.hover_row)
-            
-            if self.cold_war_mode:
-                if is_hovered:
-                    title_style = "bold white on #004400"  # Green hover background
-                    severity_style = "bold white on #004400"
-                    date_style = "bold white on #004400"
-                else:
-                    title_style = "#00FF00"
-                    severity_style = "#00FF00"
-                    date_style = "#00FF00"
-            else:
-                # Apply hover effect - make text white and add background
-                if is_hovered:
-                    title_style = "bold white on #333333"
-                    severity_style = "bold white on #333333"
-                    date_style = "bold white on #333333"
-                else:
-                    title_style = severity_colors.get(sev, "white")
-                    severity_style = severity_colors.get(sev, "white")
-                    date_style = "#55bbdd"  # Muted cyan for dates
-            
-            # Create colored text
-            title_text = Text(a["title"][:MAX_TITLE_LEN], style=title_style)
-            
-            # Store URL for this row - both in list and in mapping
-            url = a.get("url", "")
-            self.alert_urls.append(url)
-            self.alert_row_mapping[rows_added] = url
-            
-            table.add_row(
-                Text(a["published"], style=date_style),
-                Text(a["severity"].upper(), style=severity_style), 
-                title_text
-            )
-            rows_added += 1
-        
-        
-        if rows_added == 0:
-            table.add_row("", Text("NO ALERTS", style="yellow"), Text("Loading feeds...", style="dim"))
-        
-        filtered_count = len(filtered_alerts)
-        rem = int((self.next_refresh - datetime.now(timezone.utc)).total_seconds())
-        m, s = divmod(max(rem, 0), 60)
-        uptime = str(datetime.now(timezone.utc) - start_time).split('.')[0]
-        
-        # Add pagination info to status
-        current_page = self.feed_page_offset // self.rows_per_page + 1
-        
-        # Filter mode indicator
-        filter_text = {"all": "All", "alerts": "Alerts", "posts": "Posts"}[self.filter_mode]
-        filter_color = "bold green" if self.cold_war_mode else ("bold cyan" if self.filter_mode == "all" else "bold yellow")
-        
-        status = Text()
-        status.append(f"{datetime.now(timezone.utc):%H:%M:%S} UTC", "bold green" if self.cold_war_mode else "bold white")
-        status.append(f" — Next: {m:02d}:{s:02d}", "bold green" if self.cold_war_mode else "bold bright_red")
-        status.append(f" — Uptime: {uptime}", "bold green" if self.cold_war_mode else "bold white")
-        status.append(f" — ↑/↓ to select  |  Enter to open", "bold green" if self.cold_war_mode else "bold magenta")
-        
-        if total_pages > 1:
-            status.append(f"  |  ← → to change pages", "bold green" if self.cold_war_mode else "bold cyan")
-        
-        # Add focus indicator with highlighted style when focused
-        if self.panel_focus == "main":
-            # Show colored background when focused
-            bg_color = "#00ff00" if self.cold_war_mode else "#44ccaa"
-            # Show page number in title when focused and paginated
-            if total_pages > 1:
-                title_str = f"C Y B R W I R E 1.0 // Global Threat Feed - Page {current_page}/{total_pages}{' // *COLD*WAR*MODE*' if self.cold_war_mode else ''}"
-            else:
-                title_str = f"C Y B R W I R E 1.0 // Global Threat Feed{' // *COLD*WAR*MODE*' if self.cold_war_mode else ''}"
-            title_text = Text(title_str, style=f"bold black on {bg_color}")
+        key = alert_key(alert)
+        if key in self.alert_explanations:
+            text.append("AI: " + self.alert_explanations[key].strip() + "\n", style="#ffcc66" if not self.cold_war_mode else body)
+        elif key in self.explaining:
+            text.append("AI: analyzing...\n", style="italic #ffcc66" if not self.cold_war_mode else body)
         else:
-            # No background when not focused
-            title_text = f"C Y B R W I R E 1.0 // Global Threat Feed{' // *COLD*WAR*MODE*' if self.cold_war_mode else ''}"
+            text.append((alert.get("summary") or "No summary provided by this feed.") + "\n", style=body)
         
-        return Panel(table, 
-                    title=title_text,
-                    subtitle=status,
-                    border_style="#00ff00" if self.cold_war_mode else "#44ccaa",
-                    padding=(1,2))
+        if alert.get("url"):
+            text.append(alert["url"] + "\n", style=f"underline {dim}")
+        hint = "Enter open in browser"
+        if not self.ai_problem and key not in self.alert_explanations:
+            hint += "  •  a explain with AI"
+        text.append(hint, style=f"italic {dim}")
+        text.truncate(max(self.size.width, 40) * self.PREVIEW_LINES)
+        return text
+    
+    def make_feeds_table(self):
+        """Create feeds table with pagination and a preview of the selected alert"""
+        try:
+            available_height = max(10, self.query_one("#feeds-container").size.height - 6)
+        except Exception:
+            available_height = max(10, self.size.height - 12)
+        self.rows_per_page = max(5, available_height - self.PREVIEW_LINES - 1)
+        
+        border = "#00FF00" if self.cold_war_mode else "#4499bb"
+        table = Table(box=box.DOUBLE, show_header=False, padding=(0, 1), expand=True, border_style=border)
+        narrow = self.size.width < 100
+        table.add_column(width=3)                                    # NEW badge
+        table.add_column(width=7 if narrow else 11, justify="right")  # published
+        table.add_column(width=8 if narrow else 10)                   # severity
+        table.add_column()                                            # title
+        
+        filtered_alerts = self.filtered_alerts()
+        total_pages = max(1, (len(filtered_alerts) + self.rows_per_page - 1) // self.rows_per_page)
+        self.feed_page_offset = max(0, min(self.feed_page_offset, (total_pages - 1) * self.rows_per_page))
+        self.page_alerts = filtered_alerts[self.feed_page_offset:self.feed_page_offset + self.rows_per_page]
+        self.alert_urls = [a.get("url", "") for a in self.page_alerts]
+        self.hover_row = min(self.hover_row, len(self.page_alerts) - 1)
+        
+        severity_colors = {
+            "critical": "bold white on #dd4444",
+            "zeroday": "bold black on #e6d144",
+            "ransomware": "bold black on #dd4488",
+            "apt": "bold black on #b866cc",
+            "exploit": "bold #dd5555",
+            "info": "#55bbdd",
+        }
+        for row_idx, a in enumerate(self.page_alerts):
+            if row_idx == self.hover_row:
+                title_style = severity_style = date_style = "bold white on #004400" if self.cold_war_mode else "bold white on #333333"
+            elif self.cold_war_mode:
+                title_style = severity_style = date_style = "#00FF00"
+            else:
+                title_style = severity_style = severity_colors.get(a["severity"], "white")
+                date_style = "#55bbdd"
+            is_new = STATE.is_new(a)
+            table.add_row(
+                Text("NEW", style="bold black on #00ff00") if is_new else Text(""),
+                Text(a["published"] if narrow else f"{a['published']} {age(a['ts']):>3}", style=date_style),
+                Text(a["severity"].upper(), style=severity_style),
+                Text(a["title"][:MAX_TITLE_LEN], style=title_style + (" bold" if is_new and row_idx != self.hover_row else "")),
+            )
+        
+        if not self.page_alerts:
+            table.add_row("", "", Text("NO ALERTS", style="yellow"), Text("Nothing matches the current filters", style="dim"))
+        
+        rem = int((self.next_refresh - datetime.now(timezone.utc)).total_seconds())
+        uptime = datetime.now(timezone.utc) - start_time
+        current_page = self.feed_page_offset // self.rows_per_page + 1
+        green = "bold green"
+        status = Text()
+        status.append(f"Next refresh {max(rem, 0) // 60 + 1}m", green if self.cold_war_mode else "bold bright_red")
+        status.append(f" — Up {int(uptime.total_seconds() // 3600)}h{int(uptime.total_seconds() % 3600 // 60):02d}m", green if self.cold_war_mode else "bold white")
+        status.append(" — ↑/↓ select  |  Enter open  |  a explain", green if self.cold_war_mode else "bold magenta")
+        if total_pages > 1:
+            status.append("  |  ← → pages", green if self.cold_war_mode else "bold cyan")
+        
+        cw = " // *COLD*WAR*MODE*" if self.cold_war_mode else ""
+        page = f" - Page {current_page}/{total_pages}" if total_pages > 1 else ""
+        title_str = f"C Y B R W I R E 1.0 // Global Threat Feed ({len(filtered_alerts)}){page}{cw}"
+        if self.panel_focus == "main":
+            title_text = Text(title_str, style=f"bold black on {'#00ff00' if self.cold_war_mode else '#44ccaa'}")
+        else:
+            title_text = title_str
+        
+        preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=border, box=box.ROUNDED,
+                        padding=(0, 1), height=self.PREVIEW_LINES)
+        return Panel(Group(table, preview),
+                     title=title_text,
+                     subtitle=status,
+                     border_style="#00ff00" if self.cold_war_mode else "#44ccaa",
+                     padding=(1, 2))
     
     def make_dashboard(self):
         """Create dashboard panel with all metrics"""
@@ -2361,11 +1617,12 @@ class CybrWireApp(App):
         exploit_count = len([a for a in source_filtered_queue if a["severity"] == "exploit" and a.get("ts", now) >= cutoff_time])
         filtered_count = len([a for a in source_filtered_queue if a.get("ts", now) >= cutoff_time])
         new_count = len([a for a in source_filtered_queue if (now - a.get("ts", now)).total_seconds() < 3600 and a.get("ts", now) >= cutoff_time])
-        ioc_count = len([a for a in source_filtered_queue if ("IP" in a["title"] or "Hash" in a["title"] or "URL" in a["title"]) and a.get("ts", now) >= cutoff_time])
+        window_alerts = [a for a in source_filtered_queue if a["ts"] >= cutoff_time]
+        ioc_count = sum(1 for a in window_alerts if a["title"].startswith(IOC_TITLE_PREFIXES))
         
         # Rate calculation
         hour_ago = now - timedelta(hours=1)
-        rate = sum(1 for ts, _ in alert_history if ts > hour_ago)
+        rate = filtered_count / max(self.recency_hours, 1)
         
         # Build metrics table
         metrics_table = Table(show_header=False, box=None, expand=True)
@@ -2381,7 +1638,7 @@ class CybrWireApp(App):
             ("Exploits/POC", exploit_count, "#dd5555"),
             ("IOCs Detected", ioc_count, "#dd5555"),
             ("Incoming (1h)", new_count, "#66dd66"),
-            ("Alerts/Hour", f"{rate}/hr", "#66dd66"),
+            ("Avg/Hour", f"{rate:.1f}/hr", "#66dd66"),
         ]
         
         # Right column - TOP SOURCES with feed selection indicators
@@ -2505,8 +1762,8 @@ class CybrWireApp(App):
             defcon_style = "bold reverse #dd4444"
         
         # Get time since last zero-day
-        last_zeroday_time = min((a.get("ts", now) for a in alert_queue if a["severity"] == "zeroday" and a.get("ts", now) >= cutoff_time), default=now)
-        time_since_zeroday = str(now - last_zeroday_time).split('.')[0]
+        last_zeroday_time = max((a["ts"] for a in window_alerts if a["severity"] == "zeroday"), default=None)
+        time_since_zeroday = f"{age(last_zeroday_time)} ago" if last_zeroday_time else "none in window"
         
         # Build heat bars (already capped above)
         indent = " " * 2
@@ -2516,16 +1773,17 @@ class CybrWireApp(App):
         zeroday_bar = "█" * int(capped_zeroday / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_zeroday / 3))
         exploit_bar = "█" * int(capped_exploit / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_exploit / 3))
         defcon_bar = "█" * int(capped_master / 3) + "░" * (HEAT_BAR_WIDTH - int(capped_master / 3))
-        doomsday_pct = 90
+        # 0% at the farthest setting ever (17 minutes, 1991), 100% at midnight
+        doomsday_pct = max(0, min(100, (1 - self.doomsday_seconds / 1020) * 100))
         doomsday_bar = "█" * int(doomsday_pct / 3) + "░" * (HEAT_BAR_WIDTH - int(doomsday_pct / 3))
         
         heat_info = ""
         heat_info += f"\n[{'#00ff00' if self.cold_war_mode else heat_style}]{indent}[bold]Heat Level (High-Threat %)[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else heat_style}]{heat_bar}[/] {int(capped_heat)}%[/]\n"
         heat_info += f"[{'#00ff00' if self.cold_war_mode else '#dd4488'}]{indent}[bold]Ransomware Heat[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#dd4488'}]{ransomware_bar}[/] {int(capped_ransomware)}%[/]\n"
         heat_info += f"[{'#00ff00' if self.cold_war_mode else '#b866cc'}]{indent}[bold]APT Heat[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#b866cc'}]{apt_bar}[/] {int(capped_apt)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#e6d144'}]{indent}[bold]Zero-Day Heat (Last: {time_since_zeroday} ago)[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#e6d144'}]{zeroday_bar}[/] {int(capped_zeroday)}%[/]\n"
+        heat_info += f"[{'#00ff00' if self.cold_war_mode else '#e6d144'}]{indent}[bold]Zero-Day Heat (Last: {time_since_zeroday})[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#e6d144'}]{zeroday_bar}[/] {int(capped_zeroday)}%[/]\n"
         heat_info += f"[{'#00ff00' if self.cold_war_mode else '#dd5555'}]{indent}[bold]Exploit Heat[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else '#dd5555'}]{exploit_bar}[/] {int(capped_exploit)}%[/]\n"
-        heat_info += f"[{'#00ff00' if self.cold_war_mode else 'bold #dd4444'}]{indent}[bold]Doomsday Clock (89s to Midnight)[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else 'bold #dd4444'}]{doomsday_bar}[/][/]\n"
+        heat_info += f"[{'#00ff00' if self.cold_war_mode else 'bold #dd4444'}]{indent}[bold]Doomsday Clock ({self.doomsday_seconds}s to Midnight)[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else 'bold #dd4444'}]{doomsday_bar}[/][/]\n"
         heat_info += f"[{'#00ff00' if self.cold_war_mode else defcon_style}]{indent}[bold]Cyber DEFCON Level (DEFCON {defcon})[/bold]:\n{indent}[{'#00ff00' if self.cold_war_mode else defcon_style}]{defcon_bar}[/] {int(capped_master)}%[/]\n\n"
         
         # PwnList section with padding
@@ -2593,30 +1851,27 @@ class CybrWireApp(App):
             threat_label = f"DOMINANT THREAT: {dominant_name.upper()} WAVE"
             heat_info += f"\n[{threat_color}]{indent}[bold]{threat_label}[/bold][/]\n"
         
-        # Alert Velocity - forecast based on trend
+        # Alert Velocity - alerts published in the last 24h vs the 24h before
         now = datetime.now(timezone.utc)
-        last_hour = now - timedelta(hours=1)
-        last_2hrs = now - timedelta(hours=2)
+        last_day = sum(1 for a in source_filtered_queue if a["ts"] > now - timedelta(hours=24))
+        prev_day = sum(1 for a in source_filtered_queue if now - timedelta(hours=48) < a["ts"] <= now - timedelta(hours=24))
         
-        alerts_last_hour = sum(1 for ts, _ in alert_history if ts > last_hour)
-        alerts_prev_hour = sum(1 for ts, _ in alert_history if last_2hrs < ts <= last_hour)
-        
-        if alerts_last_hour > 0 and alerts_prev_hour > 0:
-            velocity = alerts_last_hour / alerts_prev_hour
+        if prev_day > 0:
+            velocity = last_day / prev_day
             if velocity > 1.5:
-                velocity_status = "SPIKING"
+                velocity_status = f"SPIKING ({last_day} vs {prev_day} prior day)"
                 velocity_color = "bold #dd4444" if not self.cold_war_mode else "bold #00ff00"
             elif velocity > 1.2:
-                velocity_status = "INCREASING"
+                velocity_status = f"INCREASING ({last_day} vs {prev_day})"
                 velocity_color = "#dd5555" if not self.cold_war_mode else "#00ff00"
             elif velocity < 0.7:
-                velocity_status = "COOLING"
+                velocity_status = f"COOLING ({last_day} vs {prev_day})"
                 velocity_color = "#66cc66" if not self.cold_war_mode else "#00ff00"
             else:
-                velocity_status = "STEADY"
+                velocity_status = f"STEADY ({last_day} vs {prev_day})"
                 velocity_color = "#e6d144" if not self.cold_war_mode else "#00ff00"
         else:
-            velocity_status = "CALIBRATING"
+            velocity_status = "NOT ENOUGH HISTORY"
             velocity_color = "dim white" if not self.cold_war_mode else "#00ff00"
         
         velocity_label = f"ALERT VELOCITY: {velocity_status}"
@@ -2631,7 +1886,7 @@ class CybrWireApp(App):
             "Phishing": 0,
             "Email": 0,
         }
-        for alert in alert_queue:
+        for alert in window_alerts:
             title_lower = alert.get("title", "").lower()
             for vector in vector_keywords:
                 if vector.lower() in title_lower:
@@ -2644,21 +1899,18 @@ class CybrWireApp(App):
             vector_color = "#66ccff" if not self.cold_war_mode else "#00ff00"
             heat_info += f"[{vector_color}]{indent}[bold]PRIMARY VECTOR: {vector_name.upper()} ({int(vector_pct)}%)[/bold][/]\n"
         
-        # Geographic Hotspot - infer from threat types and sources
-        # Simplified: infer from dominant threat types which regions are likely active
-        geo_map = {
-            "Ransomware": ("Eastern Europe", "#ff0066"),
-            "APT": ("China/Russia", "#800080"),
-            "Zero-Day": ("Global", "#e6d144"),
-            "Exploitation": ("Global", "#dd5555"),
-            "Phishing": ("Global", "#66ccff"),
-        }
-        
-        if total_threats > 0:
-            dominant_type = max(threat_types.items(), key=lambda x: x[1])
-            geo_region, geo_color = geo_map.get(dominant_type[0], ("Unknown", "#555555"))
-            geo_color = "#00ff00" if self.cold_war_mode else geo_color
-            heat_info += f"[{geo_color}]{indent}[bold]HOTSPOT: {geo_region}[/bold][/]\n"
+        # Ransomware hotspot - victim countries and groups from Ransomware.live in the window
+        victims = [RANSOM_VICTIM_RE.match(a["title"]) for a in window_alerts if a["title"].startswith("RANSOMWARE VICTIM")]
+        victims = [m for m in victims if m]
+        if victims:
+            geo_color = "#00ff00" if self.cold_war_mode else "#ff0066"
+            countries = Counter(m.group(2) for m in victims if m.group(2))
+            groups = Counter(m.group(1) for m in victims)
+            if countries:
+                code, n = countries.most_common(1)[0]
+                heat_info += f"[{geo_color}]{indent}[bold]RANSOMWARE HOTSPOT: {COUNTRY_NAMES.get(code, code)} ({n} of {len(victims)} victims)[/bold][/]\n"
+            group, n = groups.most_common(1)[0]
+            heat_info += f"[{geo_color}]{indent}[bold]MOST ACTIVE GROUP: {group.upper()} ({n} victims)[/bold][/]\n"
         
         # Add focus indicator with highlighted style when focused
         if self.panel_focus == "dashboard":
@@ -2673,365 +1925,95 @@ class CybrWireApp(App):
                     border_style="#00ff00" if self.cold_war_mode else "#5588dd",
                     padding=(0,1))
     
+    def current_incidents(self):
+        """Incidents for the current window and feed source, rebuilt only when those change"""
+        key = (id(alert_queue), self.recency_hours, active_feed_source)
+        if key != self.incidents_key:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
+            alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
+            if active_feed_source != "all":
+                alerts = [a for a in alerts if a.get("source_file") == active_feed_source]
+            self.incidents = build_incidents(alerts, KEV_CATALOG)
+            self.incidents_key = key
+        return self.incidents
+    
     def make_incidents_panel(self):
-        """Create incidents panel showing correlated incidents with rich details"""
-        global incidents_cache, active_feed_source
+        """Correlated incidents with the context needed to act on them"""
         now = datetime.now(timezone.utc)
+        incidents = self.current_incidents()
+        cw = self.cold_war_mode
+        green = "#00ff00"
+        severity_colors = {"critical": "#dd4444", "zeroday": "#e6d144", "ransomware": "#dd4488",
+                           "apt": "#b866cc", "exploit": "#dd5555", "info": "#55bbdd"}
         
-        # Filter incidents by active feed source
-        if active_feed_source == "all":
-            filtered_incidents = incidents_cache
-        else:
-            filtered_incidents = [inc for inc in incidents_cache 
-                                if any(a.get("source_file") == active_feed_source for a in inc.related_alerts)]
-        
-        # Sort by most recent first (by updated_at)
-        filtered_incidents = sorted(filtered_incidents, key=lambda x: x.updated_at, reverse=True)
-        
-        # Pagination - 7 incidents per page for compact display
-        incidents_per_page = 7
-        total_pages = max(1, (len(filtered_incidents) + incidents_per_page - 1) // incidents_per_page)
-        
-        # Clamp page offset
+        try:
+            available = max(12, self.query_one("#feeds-container").size.height - 6)
+        except Exception:
+            available = 30
+        lines_per_incident = 11
+        per_page = max(1, available // lines_per_incident)
+        total_pages = max(1, (len(incidents) + per_page - 1) // per_page)
         self.incident_page_offset = max(0, min(self.incident_page_offset, total_pages - 1))
+        page = incidents[self.incident_page_offset * per_page:(self.incident_page_offset + 1) * per_page]
+        self.hover_row = min(self.hover_row, len(page) - 1)
         
-        start_idx = self.incident_page_offset * incidents_per_page
-        end_idx = start_idx + incidents_per_page
-        page_incidents = filtered_incidents[start_idx:end_idx]
+        width = max(40, self.size.width * 3 // 4 - 10)
+        lines = []
+        self.incident_rows = []
+        for idx, inc in enumerate(page):
+            selected = idx == self.hover_row
+            start = len(lines)
+            sev_color = green if cw else severity_colors.get(inc.severity, "#888888")
+            body = green if cw else "#ccddee"
+            dim = "#00aa00" if cw else "#778899"
+            
+            header = Text()
+            header.append("▶ " if selected else "  ", style=f"bold {sev_color}")
+            header.append(f" {inc.severity.upper()} ", style=f"bold black on {sev_color}")
+            header.append(f"  {KIND_LABELS[inc.kind]} ", style=f"bold {dim}")
+            header.append(inc.value, style=f"bold {green if cw else '#55bbdd'}")
+            if inc.kev:
+                header.append("  KNOWN EXPLOITED (CISA KEV)", style=f"bold {green if cw else '#ff6666'}")
+            header.append(f"   {len(inc.sources)} sources • {len(inc.alerts)} alerts • latest {age(inc.last_seen, now)} ago",
+                          style=dim)
+            if selected:
+                header.stylize("on #1a2a2a" if not cw else "on #002200")
+            lines.append(header)
+            
+            lines.append(Text(f"    {inc.headline}"[:width], style=f"bold {body}"))
+            what_lines = textwrap.wrap(f"What: {inc.what}", width=width - 4, max_lines=3, placeholder=" ...")
+            lines.extend(Text(f"    {line}", style=body) for line in what_lines)
+            lines.append(Text(f"    Why grouped: {inc.why}"[:width], style=dim))
+            first = min(inc.alerts, key=lambda a: a["ts"])
+            lines.append(Text(f"    Timeline: first seen {age(inc.first_seen, now)} ago ({first['source']}) → "
+                              f"latest {age(inc.last_seen, now)} ago ({inc.timeline[0]['source']})"[:width], style=dim))
+            related = inc.related(incidents)
+            if related:
+                lines.append(Text(f"    Related: {', '.join(related)}"[:width], style=green if cw else "#bb88dd"))
+            for a in inc.timeline[:2]:
+                lines.append(Text(f"      • {age(a['ts'], now):>3}  {a['source'][:22]:22}  {a['title']}"[:width], style=dim))
+            lines.append(Text(""))
+            self.incident_rows.append((inc, start, len(lines) - 1))
         
-        # Build incident source URL mapping for click handling
-        self.incident_source_urls = []
+        if not page:
+            lines.append(Text("No correlated incidents in this window.", style="dim yellow"))
+            lines.append(Text("An incident needs the same CVE, IP or hash reported by two or more sources,", style="dim"))
+            lines.append(Text("or a named threat actor appearing in several alerts. Try a longer data age (d).", style="dim"))
         
-        severity_colors = {
-            "critical": "#dd4444",
-            "zeroday": "#e6d144",
-            "ransomware": "#dd4488",
-            "apt": "#b866cc",
-            "exploit": "#dd5555",
-            "info": "#55bbdd"
-        }
-        
-        incident_details = []
-        
-        if not page_incidents:
-            incident_details.append(Text("No incidents to display", style="dim yellow"))
-        else:
-            for inc in page_incidents:
-                # Build source URL map for this incident
-                source_urls = {}
-                for alert in inc.related_alerts:
-                    source = alert.get("source", "Unknown")
-                    url = alert.get("url", "")
-                    if source not in source_urls and url:
-                        source_urls[source] = url
-                
-                # Store incident with its source URLs for click handling
-                self.incident_source_urls.append((inc.incident_id, source_urls))
-                
-                detail_group = []
-                
-                # ===== MAIN HEADER: ID, Severity, IOC + Right: Age & Count =====
-                header = Text()
-                header.append(f"[INC-{inc.incident_id}]", style="bold #00ff00" if self.cold_war_mode else "bold #55bbdd")
-                header.append(" • ", style="dim")
-                
-                sev_color = severity_colors.get(inc.severity, "#555555")
-                if self.cold_war_mode:
-                    sev_color = "#00ff00"
-                header.append(inc.severity.upper(), style="bold " + sev_color)
-                header.append(" • ", style="dim")
-                
-                # Primary IOC
-                ioc_icon = {
-                    "cve": "[CVE]",
-                    "ip": "[IP]",
-                    "hash": "[HASH]",
-                    "url": "[URL]",
-                    "domain": "[DOM]",
-                    "actor": "[ACT]"
-                }.get(inc.ioc_type, "●")
-                
-                header.append(f"{ioc_icon} ", style=sev_color)
-                header.append(inc.ioc_value[:50], style="bold #00FF00" if self.cold_war_mode else "bold #55bbdd")
-                
-                # Right side: Age and alert count
-                age_str = str(now - inc.updated_at).split('.')[0]
-                header.append("  |  ", style="dim")
-                header.append(f"Updated {age_str} ago", style="dim #00ff00" if self.cold_war_mode else "dim #88cc88")
-                header.append(f"  •  {len(inc.related_alerts)} alerts", style="dim #00ff00" if self.cold_war_mode else "dim #ddaa66")
-                
-                detail_group.append(header)
-                
-                # ===== METRICS LINE: Rich context info =====
-                metrics_line = Text()
-                
-                # LEFT SIDE: Alert severity breakdown
-                severity_counts = {}
-                for alert in inc.related_alerts:
-                    sev = alert.get("severity", "info")
-                    severity_counts[sev] = severity_counts.get(sev, 0) + 1
-                
-                metrics_line.append("  [STAT] ", style="dim")
-                sev_order = ["critical", "zeroday", "ransomware", "apt", "exploit"]
-                sev_display = []
-                for sev in sev_order:
-                    if sev in severity_counts:
-                        count = severity_counts[sev]
-                        color = severity_colors.get(sev, "#555555")
-                        if self.cold_war_mode:
-                            color = "#00ff00"
-                        sev_display.append((f"{count}×{sev[:3]}", color))
-                
-                for i, (part, color) in enumerate(sev_display):
-                    metrics_line.append(part, style=color)
-                    if i < len(sev_display) - 1:
-                        metrics_line.append(" ", style="dim")
-                
-                # MIDDLE: Timeline and sources
-                if inc.related_alerts:
-                    sorted_alerts = sorted(inc.related_alerts, key=lambda a: a.get("ts", now))
-                    oldest = sorted_alerts[0].get("ts", now)
-                    newest = sorted_alerts[-1].get("ts", now)
-                    span = newest - oldest
-                    span_str = str(span).split('.')[0]
-                    
-                    metrics_line.append("  |  ", style="dim")
-                    metrics_line.append("⏱ ", style="dim")
-                    metrics_line.append(f"{span_str}", style="#55bbdd" if not self.cold_war_mode else "#00ff00")
-                    
-                    # Source count
-                    sources = sorted(set(a.get("source", "Unknown") for a in inc.related_alerts))
-                    metrics_line.append(" • ", style="dim")
-                    metrics_line.append(f"{len(sources)}src", style="#66ccff" if not self.cold_war_mode else "#00ff00")
-                    
-                    # Last alert time
-                    last_alert_time = newest
-                    time_diff = now - last_alert_time
-                    if time_diff.total_seconds() < 60:
-                        last_str = "now"
-                    elif time_diff.total_seconds() < 3600:
-                        last_str = f"{int(time_diff.total_seconds()//60)}m"
-                    else:
-                        last_str = f"{int(time_diff.total_seconds()//3600)}h"
-                    metrics_line.append(" • ", style="dim")
-                    metrics_line.append(f"Last:{last_str}", style="#00ff00" if self.cold_war_mode else "#ffaa00")
-                    
-                    # Most critical severity
-                    alert_severities = [a.get("severity", "info") for a in inc.related_alerts]
-                    sev_order_check = ["critical", "zeroday", "ransomware", "apt", "exploit"]
-                    most_critical = next((s for s in sev_order_check if s in alert_severities), "info")
-                    crit_color = severity_colors.get(most_critical, "#555555")
-                    if self.cold_war_mode:
-                        crit_color = "#00ff00"
-                    metrics_line.append(" • ", style="dim")
-                    metrics_line.append(f"Peak:{most_critical[:3].upper()}", style=crit_color)
-                    
-                    # Incident age (created vs updated)
-                    creation_age = now - inc.created_at
-                    creation_str = str(creation_age).split('.')[0]
-                    metrics_line.append(" • ", style="dim")
-                    metrics_line.append(f"Age:{creation_str}", style="#88aa88" if not self.cold_war_mode else "#00ff00")
-                    
-                    # Summary from most critical alert
-                    metrics_line.append("  •  ", style="dim")
-                    metrics_line.append("Summary: ", style="dim")
-                    # Find the most critical alert
-                    critical_alert = None
-                    for sev in sev_order_check:
-                        critical_alert = next((a for a in inc.related_alerts if a.get("severity") == sev), None)
-                        if critical_alert:
-                            break
-                    if critical_alert:
-                        summary = critical_alert.get("summary", critical_alert.get("title", ""))[:160]
-                        metrics_line.append(summary, style="#00ff00" if self.cold_war_mode else "#ccddee")
-                        
-                        # Extract exploit status and CVSS if available
-                        alert_text = f"{critical_alert.get('title', '')} {critical_alert.get('summary', '')}".upper()
-                        exploit_indicators = []
-                        if "ZERO-DAY" in alert_text or "0-DAY" in alert_text:
-                            exploit_indicators.append("0-day")
-                        if "EXPLOITED" in alert_text or "IN THE WILD" in alert_text or "ACTIVE EXPLOITATION" in alert_text:
-                            exploit_indicators.append("InTheWild")
-                        if "CVSS" in alert_text:
-                            import re as regex_module
-                            cvss_match = regex_module.search(r'CVSS[:\s]+([0-9.]+)', alert_text)
-                            if cvss_match:
-                                exploit_indicators.append(f"CVSS:{cvss_match.group(1)}")
-                        
-                        if exploit_indicators:
-                            metrics_line.append("  [", style="dim")
-                            metrics_line.append(", ".join(exploit_indicators), style="#00ff00" if self.cold_war_mode else "#ff6666")
-                            metrics_line.append("]", style="dim")
-                    else:
-                        metrics_line.append("No summary", style="dim")
-                
-                detail_group.append(metrics_line)
-                
-                # ===== IOC & ATTACK CHAIN LINE: Indicators and context =====
-                ioc_chain_line = Text()
-                
-                # IOC type breakdown
-                ioc_by_type = {}
-                for ioc in inc.related_iocs:
-                    ioc_type = ioc.get("type", "unknown")
-                    if ioc_type not in ioc_by_type:
-                        ioc_by_type[ioc_type] = 0
-                    ioc_by_type[ioc_type] += 1
-                
-                ioc_chain_line.append("  [CHAIN] ", style="dim")
-                ioc_parts = []
-                for ioc_type in ["cve", "ip", "hash", "domain", "url"]:
-                    if ioc_type in ioc_by_type:
-                        count = ioc_by_type[ioc_type]
-                        ioc_color = "#dd8866" if not self.cold_war_mode else "#00ff00"
-                        ioc_parts.append((f"{count} {ioc_type.upper()}", ioc_color))
-                
-                for i, (part, color) in enumerate(ioc_parts):
-                    ioc_chain_line.append(part, style=color)
-                    if i < len(ioc_parts) - 1:
-                        ioc_chain_line.append(" | ", style="dim")
-                
-                # Attack chain / purpose if available
-                if inc.attack_chain:
-                    ioc_chain_line.append("  •  ", style="dim")
-                    ioc_chain_line.append("Purpose: ", style="dim")
-                    chain_str = " → ".join(inc.attack_chain[:3])  # Show first 3 steps
-                    ioc_chain_line.append(chain_str[:60], style="#00ff00" if self.cold_war_mode else "#bb88dd")
-                elif inc.notes:
-                    ioc_chain_line.append("  •  ", style="dim")
-                    ioc_chain_line.append("Note: ", style="dim")
-                    ioc_chain_line.append(inc.notes[:60], style="#00ff00" if self.cold_war_mode else "#aabbcc")
-                else:
-                    # Show most common alert topics
-                    alert_titles = [a.get("title", "").split()[0] for a in inc.related_alerts if a.get("title")]
-                    from collections import Counter
-                    if alert_titles:
-                        title_counter = Counter(alert_titles)
-                        top_topics = [topic for topic, _ in title_counter.most_common(3)]
-                        ioc_chain_line.append("  •  ", style="dim")
-                        ioc_chain_line.append("Topics: ", style="dim")
-                        ioc_chain_line.append(" • ".join(top_topics), style="#00ff00" if self.cold_war_mode else "#99ccee")
-                
-                # Add source feed names on the right side
-                if inc.related_alerts:
-                    sources = sorted(set(a.get("source", "Unknown") for a in inc.related_alerts))
-                    ioc_chain_line.append("  |  ", style="dim")
-                    ioc_chain_line.append("Feeds: ", style="dim")
-                    source_display = []
-                    for src in sources[:4]:  # Show first 4 sources
-                        # Clean up source name (remove file extensions)
-                        clean_src = src.replace(".yaml", "").replace(".json", "")
-                        source_display.append(clean_src)
-                    ioc_chain_line.append(", ".join(source_display), style="#88ccdd" if not self.cold_war_mode else "#00ff00")
-                    if len(sources) > 4:
-                        ioc_chain_line.append(f" +{len(sources)-4}", style="dim")
-                    
-                    # Extract affected systems/products from alert titles
-                    systems = set()
-                    for alert in inc.related_alerts:
-                        title = alert.get("title", "")
-                        # Look for common OS/software patterns
-                        import re as regex_module
-                        patterns = [
-                            r'(Windows\s+(?:Server\s+)?(?:\d{4}|XP|7|10|11|Vista|8))',
-                            r'(Linux|Ubuntu|CentOS|Debian|RHEL|Red\s+Hat)',
-                            r'(Apache|Nginx|IIS|Tomcat|Node\.js)',
-                            r'(Microsoft\s+\w+)',
-                            r'(OpenSSL|OpenSSH|Log4j|Spring|Struts)'
-                        ]
-                        for pattern in patterns:
-                            matches = regex_module.findall(pattern, title, regex_module.IGNORECASE)
-                            for match in matches:
-                                systems.add(match)
-                    
-                    if systems:
-                        ioc_chain_line.append("  •  ", style="dim")
-                        ioc_chain_line.append("Affected: ", style="dim")
-                        affected_list = list(systems)[:3]
-                        ioc_chain_line.append(", ".join(affected_list), style="#ddaa88" if not self.cold_war_mode else "#00ff00")
-                    
-                    # Extract threat actor if mentioned in tags or incident name
-                    actor_tags = [tag for tag in inc.tags if any(x in tag.lower() for x in ["apt", "actor", "group", "lazarus", "apt-", "wizard", "dragon"])]
-                    if actor_tags:
-                        ioc_chain_line.append("  •  ", style="dim")
-                        ioc_chain_line.append("Actors: ", style="dim")
-                        ioc_chain_line.append(", ".join(actor_tags[:2]), style="#cc88dd" if not self.cold_war_mode else "#00ff00")
-                    
-                    # Extract geography if IP-based incidents
-                    if inc.ioc_type == "ip":
-                        # Check alerts for country mentions
-                        countries = set()
-                        for alert in inc.related_alerts:
-                            text = f"{alert.get('title', '')} {alert.get('summary', '')}".upper()
-                            # Common country patterns with emoji flags
-                            country_patterns = {
-                                "🇷🇺": ["RUSSIA", "RUSSIAN", "RU ", "AS12389"],
-                                "🇨🇳": ["CHINA", "CHINESE", "CN "],
-                                "🇰🇵": ["NORTH KOREA", "NK ", "DPRK"],
-                                "🇮🇷": ["IRAN", "IRANIAN", "IR "],
-                                "🇰🇷": ["SOUTH KOREA", "SK "],
-                            }
-                            for emoji, keywords in country_patterns.items():
-                                if any(kw in text for kw in keywords):
-                                    countries.add(emoji)
-                        
-                        if countries:
-                            ioc_chain_line.append("  •  ", style="dim")
-                            ioc_chain_line.append("Origin: ", style="dim")
-                            ioc_chain_line.append(" ".join(countries), style="#88ddcc" if not self.cold_war_mode else "#00ff00")
-                
-                detail_group.append(ioc_chain_line)
-                
-                # ===== STATUS LINE (compact) =====
-                status_line = Text()
-                status_color = "#66ff66" if inc.status == "open" else "#00ff00" if inc.status == "investigating" else "#00ff00" if self.cold_war_mode else "#55bbdd"
-                if self.cold_war_mode:
-                    status_color = "#00ff00"
-                
-                status_line.append("  ⚙ ", style="dim")
-                status_line.append(inc.status.upper(), style=status_color)
-                
-                if inc.tags:
-                    status_line.append("  •  Tags: ", style="dim")
-                    status_line.append(", ".join(inc.tags[:2]), style="#00ff00" if self.cold_war_mode else "#aabbcc")
-                
-                detail_group.append(status_line)
-                
-                # Add all lines to output
-                for line in detail_group:
-                    incident_details.append(line)
-                incident_details.append(Text("", style="dim"))  # Blank line separator
-        
-        # Convert to Group for display
-        content = Group(*incident_details) if incident_details else Text("No incidents to display", style="dim yellow")
-        
-        # Build status line
         status = Text()
-        status.append(f"{datetime.now(timezone.utc):%H:%M:%S} UTC", "bold green" if self.cold_war_mode else "bold white")
-        status.append(f" — {len(filtered_incidents)} incidents", "bold green" if self.cold_war_mode else "bold cyan")
+        status.append(f"{len(incidents)} incidents from {len(self.filtered_alerts())} alerts",
+                      "bold green" if cw else "bold cyan")
         if total_pages > 1:
-            status.append(f" — Page {self.incident_page_offset + 1}/{total_pages}", "bold green" if self.cold_war_mode else "bold yellow")
-            status.append(f"  |  ← → to change pages", "bold green" if self.cold_war_mode else "bold cyan")
-        status.append(f" — ↑/↓ to select  |  Enter to open", "bold green" if self.cold_war_mode else "bold magenta")
+            status.append(f" — Page {self.incident_page_offset + 1}/{total_pages}  |  ← → pages", "bold green" if cw else "bold yellow")
+        status.append(" — ↑/↓ select  |  Enter open latest report", "bold green" if cw else "bold magenta")
         
-        # Add focus indicator with highlighted style when focused
+        title_str = "CORRELATED INCIDENTS"
         if self.panel_focus == "main":
-            # Use green in cold war mode, otherwise use orange
-            bg_color = "#00ff00" if self.cold_war_mode else "#dd8866"
-            # Show page number in title when focused and paginated
-            if total_pages > 1:
-                title_text_str = f"CORRELATED INCIDENTS (Reduced Noise by ~80%) - Page {self.incident_page_offset + 1}/{total_pages}"
-            else:
-                title_text_str = "CORRELATED INCIDENTS (Reduced Noise by ~80%)"
-            title_text = Text(title_text_str, style=f"bold black on {bg_color}")
+            title_text = Text(title_str, style=f"bold black on {green if cw else '#dd8866'}")
         else:
-            title_text = "CORRELATED INCIDENTS (Reduced Noise by ~80%)"
-        
-        return Panel(content,
-                    title=title_text,
-                    subtitle=status,
-                    border_style="#00FF00" if self.cold_war_mode else "#dd8866",
-                    padding=(1,2))
+            title_text = title_str
+        return Panel(Group(*lines), title=title_text, subtitle=status,
+                     border_style=green if cw else "#dd8866", padding=(1, 2))
     
     def action_refresh(self):
         """Force refresh feeds"""
@@ -3247,6 +2229,8 @@ class CybrWireApp(App):
         self.data_age_index = (self.data_age_index + 1) % len(time_windows)
         self.recency_hours = time_windows[self.data_age_index]
         self.feed_page_offset = 0  # Reset to first page
+        self.hover_row = -1
+        self.save_settings()
         self.call_later(self.update_display)
     
     def action_cycle_filter_type(self):
@@ -3255,22 +2239,14 @@ class CybrWireApp(App):
         self.filter_type_index = (self.filter_type_index + 1) % len(filter_modes)
         self.filter_mode = filter_modes[self.filter_type_index]
         self.feed_page_offset = 0  # Reset to first page
+        self.hover_row = -1
+        self.save_settings()
         self.call_later(self.update_display)
-    
-    def action_open_browser(self):
-        """Open top alert in browser"""
-        if alert_queue:
-            webbrowser.open(alert_queue[0]['url'])
-    
-    def action_open_breach(self):
-        """Open top breach in browser"""
-        if breach_list:
-            breach_url = f"https://haveibeenpwned.com/api/v3/breaches?breach={breach_list[0]['Name']}"
-            webbrowser.open(f"https://haveibeenpwned.com/?q={breach_list[0]['Title'].replace(' ', '+')}")
     
     def action_toggle_cold_war(self):
         """Toggle cold war mode"""
         self.cold_war_mode = not self.cold_war_mode
+        self.save_settings()
         self.call_later(self.update_display)
     
     def action_cycle_feeds(self):
@@ -3280,6 +2256,8 @@ class CybrWireApp(App):
         self.feed_source_index = (self.feed_source_index + 1) % len(sources)
         active_feed_source = sources[self.feed_source_index]
         self.feed_page_offset = 0
+        self.hover_row = -1
+        self.save_settings()
         self.call_later(self.update_display)
     
     def action_re_enable_feeds(self):
@@ -3304,199 +2282,173 @@ class CybrWireApp(App):
         # Don't reset offsets, preserve position in each view
         self.call_later(self.update_display)
     
-    def get_ai_summary(self, alert_text: str) -> str:
-        """Get Gemini AI summary of an alert with caching and retry logic for rate limiting"""
-        if not self.gemini_client:
-            return "AI unavailable - Gemini key not configured"
-        
-        cache_key = hash(alert_text)
-        if cache_key in self.ai_cache:
-            return self.ai_cache[cache_key]
-        
-        max_retries = 3
-        retry_delay = 1
-        
-        for attempt in range(max_retries):
-            try:
-                prompt = f"""Analyze this security alert CONCISELY in 3 lines max:
-1. What is the threat?
-2. Risk level (Low/Medium/High/Critical)
-3. Key action
-
-Alert: {alert_text[:300]}"""
-                
-                response = self.gemini_client.models.generate_content(
-                    model=self.gemini_model,
-                    contents=prompt
-                )
-                summary = response.text if response and response.text else "Analysis failed - no response"
-                self.ai_cache[cache_key] = summary
-                return summary
-            except Exception as e:
-                error_str = str(e)
-                # Check for rate limit error (429)
-                if "429" in error_str or "rate" in error_str.lower():
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
-                        continue
-                    else:
-                        error_detail = "API rate limited - please try again later"
-                else:
-                    error_detail = str(e)[:60]
-                    error_msg = f"API Error: {error_detail}"
-                    self.ai_cache[cache_key] = error_msg
-                    return error_msg
-        
-        # Fallback if all retries exhausted
-        error_msg = "API rate limited - please try again later"
-        self.ai_cache[cache_key] = error_msg
-        return error_msg
+    BRIEFING_SYSTEM = (
+        "You are a senior threat intelligence analyst writing a short briefing for a security team, "
+        "based only on the alerts provided. Write plain text with no markdown. Use exactly these section "
+        "headings, each in capitals followed by a colon on its own line: BOTTOM LINE, PRIORITY ACTIONS, "
+        "ACTIVE THREATS, NOTABLE VULNERABILITIES, WATCH LIST. Under BOTTOM LINE write two or three sentences. "
+        "Under the other headings write short lines starting with '- '. Name specific CVE IDs, products, "
+        "threat actors and ransomware groups from the alerts, and say which items are confirmed exploited. "
+        "Do not invent facts that are not in the alerts. Keep the whole briefing under 400 words."
+    )
+    EXPLAIN_SYSTEM = (
+        "You explain a single security alert to a busy security analyst. Using only the alert text, "
+        "write two or three plain sentences with no markdown: what happened, who or what is affected, "
+        "and the most useful next step. If the alert text is too thin to say, say so briefly."
+    )
     
-    async def get_ai_summary_async(self, alert_text: str) -> str:
-        """Async wrapper for Gemini AI summary to avoid blocking event loop"""
-        import concurrent.futures
-        loop = asyncio.get_event_loop()
-        
-        # Run the blocking Gemini call in a thread executor
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            return await loop.run_in_executor(executor, self.get_ai_summary, alert_text)
+    def briefing_prompt(self):
+        """Compact digest of the current window for the AI briefing"""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
+        window = [a for a in alert_queue if a["ts"] >= cutoff_time]
+        ranked = sorted(window, key=lambda a: (SEVERITY_RANK.get(a["severity"], 9), -a["ts"].timestamp()))
+        # Indicator lists (IPs, URLs) add little to a briefing; keep them out of the digest
+        ranked = [a for a in ranked if not a["title"].startswith(IOC_TITLE_PREFIXES)][:60]
+        lines = [f"Data window: last {self.recency_hours} hours. {len(window)} alerts from {len({a['source'] for a in window})} sources.", ""]
+        incidents = self.current_incidents()[:10]
+        if incidents:
+            lines.append("Correlated incidents (same indicator reported by several sources):")
+            for inc in incidents:
+                lines.append(f"- {KIND_LABELS[inc.kind]} {inc.value}: {len(inc.sources)} sources"
+                             f"{', CISA KEV' if inc.kev else ''}. {inc.headline}")
+            lines.append("")
+        lines.append("Alerts (most severe first):")
+        for a in ranked:
+            summary = f" - {a['summary'][:220]}" if a.get("summary") else ""
+            lines.append(f"- [{a['severity'].upper()}] {a['title']} ({a['source']}, {age(a['ts'])} ago){summary}")
+        return "\n".join(lines)
+    
+    async def generate_ai_briefing(self):
+        """Ask the configured AI provider for a briefing on the current alerts"""
+        if self.ai_briefing_loading:
+            return
+        if self.ai_problem:
+            self.ai_briefing_error = self.ai_problem
+            self.mark_dirty()
+            return
+        self.ai_briefing_loading = True
+        self.ai_briefing_error = None
+        self.mark_dirty()
+        try:
+            text = await ai.generate(self.ai_settings, self.BRIEFING_SYSTEM, self.briefing_prompt())
+            self.ai_briefing = text.replace("**", "").replace("## ", "").strip()
+            self.ai_briefing_time = datetime.now(timezone.utc)
+            self.threat_summary_page = 0
+        except ai.AIError as e:
+            self.ai_briefing_error = str(e)
+        except Exception as e:
+            logging.error(f"AI briefing failed: {e}", exc_info=True)
+            self.ai_briefing_error = f"Unexpected error: {type(e).__name__} - see cybrwire.log"
+        finally:
+            self.ai_briefing_loading = False
+            self.mark_dirty()
+    
+    async def explain_alert(self, alert):
+        """Ask the AI provider to explain one alert; shown in the preview pane"""
+        key = alert_key(alert)
+        if key in self.explaining:
+            return
+        self.explaining.add(key)
+        self.mark_dirty()
+        prompt = (f"Title: {alert['title']}\nSource: {alert['source']}\nPublished: {alert['ts']:%Y-%m-%d %H:%M} UTC\n"
+                  f"Severity tag: {alert['severity']}\nSummary: {alert.get('summary') or '(none)'}\nURL: {alert.get('url') or '(none)'}")
+        try:
+            text = await ai.generate(self.ai_settings, self.EXPLAIN_SYSTEM, prompt)
+            self.alert_explanations[key] = text.replace("**", "").strip()
+        except ai.AIError as e:
+            self.alert_explanations[key] = f"(AI unavailable: {e})"
+        except Exception as e:
+            logging.error(f"AI explanation failed: {e}", exc_info=True)
+            self.alert_explanations[key] = f"(AI error: {type(e).__name__})"
+        finally:
+            self.explaining.discard(key)
+            self.mark_dirty()
+    
+    def action_explain_alert(self):
+        alert = self.selected_alert() if self.main_view_mode == "alerts" else None
+        if not alert:
+            self.notify("Select an alert with ↑/↓ first", timeout=2)
+        elif self.ai_problem:
+            self.notify(self.ai_problem, timeout=4)
+        else:
+            asyncio.create_task(self.explain_alert(alert))
+    
+    def action_ai_refresh(self):
+        """Regenerate the AI briefing and show the War Room panel (g key)"""
+        self.dashboard_panel_index = 1
+        asyncio.create_task(self.generate_ai_briefing())
+        asyncio.create_task(self._load_threat_summary_async())
+        self.mark_dirty()
     
     def make_war_room_panel(self) -> Panel:
-        """Display AI-powered war room executive threat summary with scrolling"""
+        """AI briefing followed by the local keyword analysis, paginated"""
+        cw = self.cold_war_mode
+        heading = "bold #00ff00" if cw else "bold cyan"
+        body = "#00ff00" if cw else "#dde6ee"
+        dim = "#00aa00" if cw else "#778899"
         
-        # Rainbow gradient colors
-        if self.cold_war_mode:
-            rainbow_colors = ["#00ff00"] * 7
-            heading_color = "bold #00ff00"
-            bar_style = "bold #00ff00"
-            cve_style = "bold #00ff00"
-        else:
-            rainbow_colors = ["#ff6666", "#ff9966", "#ffcc66", "#66ff66", "#66ccff", "#cc99ff", "#99ffff"]
-            heading_color = "bold cyan"
-            bar_style = "bold #9933ff"
-            cve_style = "bold #ff0000"
+        lines = []
+        label = ai.describe(self.ai_settings) if self.ai_settings.get("provider") else "no provider"
+        lines.append(Text(f"AI BRIEFING ({label})", style=heading))
+        if self.ai_briefing_loading:
+            lines.append(Text("⏳ Analyzing current alerts...", style="bold yellow"))
+        if self.ai_briefing_error:
+            lines.append(Text(self.ai_briefing_error, style="bold #ff6666" if not cw else body))
+            if self.ai_problem:
+                lines.append(Text("Configure the ai: section in cybrwire_local.yaml (see readme), then restart.", style=dim))
+        if self.ai_briefing:
+            lines.append(Text(f"Generated {age(self.ai_briefing_time)} ago • press g to refresh", style=dim))
+            for line in self.ai_briefing.split("\n"):
+                stripped = line.strip()
+                if stripped.endswith(":") and stripped[:-1].replace(" ", "").isupper():
+                    if lines and lines[-1].plain:
+                        lines.append(Text(""))
+                    lines.append(Text(stripped, style=heading))
+                elif stripped or (lines and lines[-1].plain):
+                    lines.append(Text(line, style=body))
+        elif not self.ai_briefing_loading and not self.ai_briefing_error:
+            lines.append(Text("Press g to generate a briefing.", style=dim))
         
-        content_lines = []
-        
-        if self.threat_summary_loading:
-            content_lines.append(Text("⏳ Loading threat analysis...", style="bold yellow"))
-            content_lines.append(Text("This takes a moment as Gemini analyzes your alerts", style="dim cyan"))
-        elif not self.threat_summary:
-            content_lines.append(Text("⏳ Initializing threat summary...", style="dim yellow"))
-            content_lines.append(Text("Waiting for alerts to arrive", style="dim cyan"))
-        else:
-            # Get full content from current page
-            if self.threat_summary_pages and 0 <= self.threat_summary_page < len(self.threat_summary_pages):
-                summary_text = self.threat_summary_pages[self.threat_summary_page]
-            else:
-                summary_text = self.threat_summary
-            
-            rainbow_idx = 0
-            
-            # Format the threat summary with colors
-            for line in summary_text.split('\n'):
-                if not line.strip():
-                    content_lines.append(Text(""))
-                elif line.startswith('─'):
-                    content_lines.append(Text(line, style=bar_style))
-                elif ':' in line and all(c.isupper() or c.isspace() or c in '()/' for c in line):
-                    content_lines.append(Text(line, style=heading_color))
-                elif 'CVE-' in line and '[' in line:
-                    content_lines.append(Text(line, style=cve_style))
+        lines.append(Text(""))
+        if self.threat_summary:
+            for line in self.threat_summary_full.split("\n"):
+                if line.startswith("─"):
+                    lines.append(Text("─" * 30, style=dim))
+                elif line.endswith(":") or line == "LOCAL KEYWORD ANALYSIS":
+                    lines.append(Text(line, style=heading))
                 else:
-                    if line.strip():
-                        color = rainbow_colors[rainbow_idx % len(rainbow_colors)]
-                        content_lines.append(Text(line, style=f"bold {color}"))
-                        rainbow_idx += 1
-                    else:
-                        content_lines.append(Text(""))
-        
-        border_color = "#00ff00" if self.cold_war_mode else "#9933ff"
-        
-        # Show page number if paginated and create title with focus styling
-        if self.threat_summary_pages and len(self.threat_summary_pages) > 1:
-            page_num = self.threat_summary_page + 1
-            total = len(self.threat_summary_pages)
-            title_str = f"GEMINI ANALYSIS - Page {page_num}/{total}"
-        else:
-            title_str = "GEMINI ANALYSIS"
-        
-        # Highlight title background when focused
-        if self.panel_focus == "dashboard" and self.dashboard_panel_index == 1:
-            bg_color = "#00ff00" if self.cold_war_mode else "#9933ff"
-            title_text = Text(title_str, style=f"bold black on {bg_color}")
-        else:
-            title_text = title_str
-        
-        # Create content as a Text object combining all lines
-        full_text = Text()
-        for i, text_obj in enumerate(content_lines):
-            full_text.append_text(text_obj)
-            if i < len(content_lines) - 1:
-                full_text.append("\n")
-        
-        content = full_text if content_lines else Text("Initializing threat analysis...", style="dim yellow")
-        
-        # Add pagination subtitle if multiple pages
-        subtitle = None
-        if self.threat_summary_pages and len(self.threat_summary_pages) > 1:
-            subtitle_text = f"← → to change pages"
-            subtitle = Text(subtitle_text, style="bold #00ff00" if self.cold_war_mode else "bold #9933ff")
-        
-        return Panel(content,
-                    title=title_text,
-                    subtitle=subtitle,
-                    border_style=border_color,
-                    padding=(1, 2),
-                    expand=True)
-    
-    def action_cycle_dashboard(self):
-        """Cycle through dashboard panels: metrics → war room → feed status"""
-#        logging.info("KEY 7 PRESSED: Cycling dashboard panel")
-        # 0 = Main metrics, 1 = War room, 2 = Feed status
-        self.dashboard_panel_index = (self.dashboard_panel_index + 1) % 3
-        # Reset all page offsets when switching panels
-        self.dashboard_page_offset = 0
-        self.threat_summary_page = 0
-#        logging.info(f"Dashboard panel index now: {self.dashboard_panel_index}")
-        self.update_display()
-    
-    def action_abuseipdb_lookup(self):
-        """Action placeholder - AbuseIPDB lookup removed"""
-#        logging.info("AbuseIPDB lookup not available - feature removed")
-        pass
-    
-    async def _prompt_for_abuseipdb_ip(self):
-        """Prompt user for IP and run AbuseIPDB lookup"""
-        # In a real TUI app, you'd use Input widget. For now, we'll use a simple approach
-        # by marking the panel as needing input, then using on_key to capture the IP
-#        logging.info("AbuseIPDB lookup initiated - waiting for IP input")
-        self.abuseipdb_input_mode = True
-        self.abuseipdb_input_buffer = ""
-        self.call_later(self.update_display)
-    
-    async def _run_abuseipdb_query(self, ip_address: str):
-        """Run AbuseIPDB query for the given IP"""
-#        logging.info(f"Starting AbuseIPDB query for: {ip_address}")
-        self.abuseipdb_last_query = ip_address
-        self.abuseipdb_loading = True
-        self.abuseipdb_last_result = None
-        self.call_later(self.update_display)
+                    lines.append(Text(line, style=body if not ("CVE-" in line and "[" in line) else ("bold #ff6666" if not cw else body)))
         
         try:
-            # Run the AbuseIPDB query
-            results = await self.enrich_indicator(ip_address, "ip")
-            self.abuseipdb_last_result = results
-#            logging.info(f"AbuseIPDB complete for {ip_address}: {len(results)} providers returned data")
+            page_height = max(10, self.query_one("#dashboard").size.height - 6)
+        except Exception:
+            page_height = 40
+        # Wrapped lines take more than one row; estimate with the panel width
+        try:
+            width = max(20, self.query_one("#dashboard").size.width - 6)
+        except Exception:
+            width = 60
+        pages, current, used = [], [], 0
+        for line in lines:
+            rows = max(1, -(-len(line.plain) // width))
+            if used + rows > page_height and current:
+                pages.append(current)
+                current, used = [], 0
+            current.append(line)
+            used += rows
+        pages.append(current)
+        self.threat_summary_pages = pages
+        self.threat_summary_page = max(0, min(self.threat_summary_page, len(pages) - 1))
         
-        except Exception as e:
-            logging.error(f"Error querying AbuseIPDB for {ip_address}: {e}")
-            self.abuseipdb_last_result = None
-        
-        finally:
-            self.abuseipdb_loading = False
-            self.call_later(self.update_display)
+        title_str = "WAR ROOM" + (f" - Page {self.threat_summary_page + 1}/{len(pages)}" if len(pages) > 1 else "")
+        border_color = "#00ff00" if cw else "#9933ff"
+        if self.panel_focus == "dashboard":
+            title_text = Text(title_str, style=f"bold black on {border_color}")
+        else:
+            title_text = title_str
+        subtitle = Text("← → pages  •  g refresh", style=f"bold {border_color}") if len(pages) > 1 else Text("g refresh", style=f"bold {border_color}")
+        return Panel(Group(*pages[self.threat_summary_page]), title=title_text, subtitle=subtitle,
+                     border_style=border_color, padding=(1, 2), expand=True)
     
     async def _run_api_tools_query(self, indicator: str):
         """Run enrichment query for the given indicator across all configured providers"""
@@ -3542,36 +2494,34 @@ Alert: {alert_text[:300]}"""
     
 
     def action_open_selected_link(self):
-        """Open URL for the currently highlighted row (via keyboard navigation with up/down arrows)"""
+        """Open the highlighted alert, or the latest report for the highlighted incident"""
         if self.main_view_mode == "alerts":
-            if 0 <= self.hover_row < len(self.alert_urls):
-                url = self.alert_urls[self.hover_row]
-                if url:
-                    webbrowser.open(url)
-#                    logging.info(f"Opened alert URL via keyboard (row {self.hover_row}): {url[:80]}")
-                    self.notify(f"Opening alert in browser...")
-                else:
-                    self.notify("No URL available for this alert", timeout=2)
-        
-        elif self.main_view_mode == "incidents":
-            if 0 <= self.hover_row < len(self.incident_source_urls):
-                incident_id, source_urls = self.incident_source_urls[self.hover_row]
-                # Open the first available source URL for this incident
-                for source_name in sorted(source_urls.keys()):
-                    url = source_urls[source_name]
-                    if url:
-                        webbrowser.open(url)
-#                        logging.info(f"Opened {source_name} source for INC-{incident_id} via keyboard: {url}")
-                        self.notify(f"Opening incident source in browser...")
-                        return
+            alert = self.selected_alert()
+            if not alert:
+                self.notify("Select an alert with ↑/↓ first", timeout=2)
+            elif alert.get("url"):
+                webbrowser.open(alert["url"])
+                STATE.mark_read(alert)
+                STATE.save()
+                self.notify("Opening alert in browser...")
             else:
-                self.notify("No incident selected", timeout=2)
+                self.notify("No link for this alert (phishing URLs are never opened)", timeout=3)
+            self.mark_dirty()
+        elif self.main_view_mode == "incidents":
+            if 0 <= self.hover_row < len(self.incident_rows):
+                inc = self.incident_rows[self.hover_row][0]
+                if inc.url:
+                    webbrowser.open(inc.url)
+                    self.notify("Opening latest report in browser...")
+            else:
+                self.notify("Select an incident with ↑/↓ first", timeout=2)
 
     def on_key(self, event: events.Key) -> None:
         """Handle key events - Tab, view toggle, and arrow key pagination"""
         # PRIORITY: Check for 'v' key FIRST to allow exiting input mode and cycling views
         # This ensures 'v' always works to cycle views, even when in input mode
-        if event.key == "v":
+        typing_indicator = self.main_view_mode == "api_tools" and self.api_tools_input_mode and self.api_tools_input_buffer
+        if event.key == "v" and not typing_indicator:
             event.prevent_default()
             # Exit input modes if active
             if self.api_tools_input_mode:
@@ -3580,6 +2530,11 @@ Alert: {alert_text[:300]}"""
 #                logging.info("Exited API Tools input mode via 'v' key")
             # Now cycle the view
             self.action_toggle_view()
+            return
+        
+        if event.key == "a" and self.main_view_mode == "alerts":
+            event.prevent_default()
+            self.action_explain_alert()
             return
         
         # Handle Enter key: open the highlighted alert/incident URL in alerts or incidents view
@@ -3653,7 +2608,7 @@ Alert: {alert_text[:300]}"""
             event.prevent_default()
             # Navigate down in alerts/incidents view to highlight next row
             if self.main_view_mode in ["alerts", "incidents"]:
-                max_row = len(self.alert_urls) - 1 if self.main_view_mode == "alerts" else len(self.incident_source_urls) - 1
+                max_row = len(self.page_alerts) - 1 if self.main_view_mode == "alerts" else len(self.incident_rows) - 1
                 self.hover_row = min(max_row, self.hover_row + 1)
                 self.call_later(self.update_display)
         elif event.key == "left":
@@ -3732,6 +2687,7 @@ Alert: {alert_text[:300]}"""
         current_idx = themes.index(self.theme_mode) if self.theme_mode in themes else 0
         self.theme_mode = themes[(current_idx + 1) % len(themes)]
         self.apply_theme()
+        self.save_settings()
         self.call_later(self.update_display)
     
     def action_page_up(self):
@@ -3749,101 +2705,50 @@ Alert: {alert_text[:300]}"""
         self.feed_page_offset = min(self.feed_page_offset + self.rows_per_page, max_offset)
         self.call_later(self.update_display)
     
-    def on_mouse_move(self, event) -> None:
-        """Track mouse movement over feeds to highlight rows"""
-        # Check if mouse is over the feeds widget
-        try:
-            feeds_widget = self.query_one("#feeds", Static)
-            # Get the widget's region
-            if feeds_widget.region.contains(event.screen_x, event.screen_y):
-                # Calculate which row is being hovered
-                # Panel has: border (1) + title line (1) + top padding (1) = 3 lines offset
-                relative_y = event.screen_y - feeds_widget.region.y - 3
-                if relative_y >= 0:
-                    new_hover = relative_y
-                    if new_hover != self.hover_row:
-                        self.hover_row = new_hover
-                        self.call_later(self.update_display)
-            else:
-                if self.hover_row != -1:
-                    self.hover_row = -1
-                    self.call_later(self.update_display)
-        except Exception:
-            pass
-    
     def on_click(self, event) -> None:
-        """Handle clicks on the feeds area - only enable clicks in specific views with valid targets"""
-        # Only allow clicking in alerts or incidents view
-        if self.main_view_mode not in ["alerts", "incidents"]:
+        """Click a row to select it; click the selected row again to open it"""
+        if self.main_view_mode not in ("alerts", "incidents") or getattr(event.widget, "id", None) != "feeds":
             return
-        
-        # Only process clicks on the feeds widget
-        if event.widget.id != "feeds":
-            return
-        
-        # In incidents view, open the source URL for the clicked incident
-        if self.main_view_mode == "incidents":
-            # Only allow clicks if we have incident data
-            if not self.incident_source_urls:
-                return
-            
-            click_y = event.y - 3  # Account for panel border/title
-            # Estimate which incident row was clicked (roughly 6 lines per incident)
-            incident_index = click_y // 6
-            
-            if 0 <= incident_index < len(self.incident_source_urls):
-                incident_id, source_urls = self.incident_source_urls[incident_index]
-                for source_name in sorted(source_urls.keys()):
-                    url = source_urls[source_name]
-                    if url:
-                        webbrowser.open(url)
-#                        logging.info(f"Opened {source_name} source for INC-{incident_id}: {url}")
-                        return
-            else:
-                pass
-        
         if self.main_view_mode == "alerts":
-            # Only allow clicks if we have alert data
-            if not self.alert_urls:
+            # Outer panel border + padding + table top border = 3 rows before the first alert
+            row = event.y - 3
+            if not 0 <= row < len(self.page_alerts):
                 return
-            
-            click_y = event.y
-            
-            # Better row estimation: 
-            # Panel border/title typically = 3 lines
-            # Each table row is typically 2 lines (1 for content + 1 spacing)
-            # But Rich tables can vary, so we'll be more generous with row height
-            
-            panel_header_offset = 3  # Account for border + title + padding
-            adjusted_y = click_y - panel_header_offset
-            
-            # Estimate row: assuming ~2-3 Y units per row
-            # Try 2 first, then 3 if out of bounds
-            row_index = adjusted_y // 2
-            
-            # If that puts us out of bounds and we're positive, try 3
-            if row_index >= len(self.alert_urls) and adjusted_y > 0:
-                row_index = adjusted_y // 3
-            
-            # Ensure valid range
-            row_index = max(0, min(row_index, len(self.alert_urls) - 1))
-            
-            if 0 <= row_index < len(self.alert_urls):
-                url = self.alert_urls[row_index]
-                if url:
-                    webbrowser.open(url)
-#                    logging.info(f"Opened alert URL (row {row_index} of {len(self.alert_urls)}, click_y {event.y}): {url[:80]}")
-                    return
-                else:
-                    pass
-            else:
-                pass
+        else:
+            # Outer panel border + padding = 2 rows before the first incident line
+            line = event.y - 2
+            row = next((i for i, (_, first, last) in enumerate(self.incident_rows) if first <= line <= last), None)
+            if row is None:
+                return
+        self.panel_focus = "main"
+        if row == self.hover_row:
+            self.action_open_selected_link()
+        else:
+            self.hover_row = row
+            self.update_display()
 
 def main():
     """Main entry point"""
-    # Print title screen
-    console.clear()
+    parser = argparse.ArgumentParser(description="CybrWire - terminal threat intelligence dashboard")
+    parser.add_argument("--setup", action="store_true", help="choose data age and display mode again")
+    args = parser.parse_args()
     
+    saved = STATE.settings
+    if saved and not args.setup:
+        recency = saved.get("recency_hours", 24)
+        cold_war = saved.get("cold_war", False)
+    else:
+        recency, cold_war = startup_prompts()
+    
+    app = CybrWireApp(cold_war=cold_war, recency=recency)
+    try:
+        app.run()
+    finally:
+        app.save_settings()
+
+def startup_prompts():
+    """Title screen and first-run questions; returns (recency_hours, cold_war)"""
+    console.clear()
     ascii_art = [
         ("╔════════════════════════════════════════════════════════════════════════════════════════════════════════╗", "#00ffff"),
         ("║                                                                                                        ║", "#0099ff"),
@@ -3910,13 +2815,11 @@ def main():
     console.print()
     console.print(" [bold dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/]")
     console.print()
-    console.print(" [dim]Loading CybrWire...[/]")
+    console.print(" [dim]Loading CybrWire... (choices are saved; run with --setup to change them)[/]")
     console.print()
     
     console.clear()
-    
-    app = CybrWireApp(cold_war=cold_war, recency=recency)
-    app.run()
+    return recency, cold_war
 
 if __name__ == "__main__":
     main()
