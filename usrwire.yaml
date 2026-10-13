@@ -10,21 +10,37 @@
 # Add your API keys and custom feeds below
 
 # ==============================================================================
-# AI ENRICHMENT API KEYS
+# ENRICHMENT API KEYS
 # ==============================================================================
 # Configure these keys to enable IOC enrichment in the API Tools panel
-# and AI-powered threat analysis in the War Room
 #
 # Get free API keys from the providers listed below and paste them between the quotes
-# Example: gemini_api_key: "your_actual_api_key_here"
+# Example: abuseipdb_api_key: "your_actual_api_key_here"
 #
-# If you don't want to use a provider, just leave it empty: gemini_api_key: ""
+# If you don't want to use a provider, just leave it empty: abuseipdb_api_key: ""
+
+# ==============================================================================
+# AI ANALYSIS (War Room briefing and per-alert explanations)
+# ==============================================================================
+# Pick ONE provider. Leave model blank to use the default shown.
+#
+#   anthropic          Claude          key: https://console.anthropic.com/  default model: claude-opus-5-5
+#                                      (cheaper: claude-sonnet-5-5 or claude-haiku-5-5)
+#   gemini             Google Gemini   key: https://aistudio.google.com/apikey  default model: gemini-flash-latest
+#   openai             OpenAI          key: https://platform.openai.com/  model: required
+#   openrouter         OpenRouter      key: https://openrouter.ai/  model: required (e.g. a model ID from their list)
+#   ollama             Local models    no key; model: required (e.g. llama3.1); base_url defaults to localhost
+#   openai_compatible  Any server with an OpenAI-style /chat/completions API (LM Studio, vLLM, Groq...)
+#                      base_url and model required
+#
+# Alerts in the current data window are sent to the provider you choose.
+ai:
+  provider: ""
+  api_key: ""
+  model: ""
+  base_url: ""
 
 enrichment:
-  # Google Gemini API - REQUIRED for War Room (AI-powered threat analysis)
-  # Get your free API key at: https://aistudio.google.com/apikey
-  gemini_api_key: ""
-
   # AbuseIPDB - IP reputation and abuse history lookups
   # Get your free API key at: https://www.abuseipdb.com/api
   abuseipdb_api_key: ""

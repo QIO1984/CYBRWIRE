@@ -1,6 +1,6 @@
 # C Y B R W I R E // Legendary Edition
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rich](https://img.shields.io/badge/Powered%20by-Rich-brightgreen)](https://github.com/Textualize/rich)
 [![Textual](https://img.shields.io/badge/Built%20with-Textual-blueviolet)](https://github.com/Textualize/textual)
@@ -19,7 +19,9 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
 - **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
 - **Real-time threat enrichment** – Integrate with VirusTotal, AbuseIPDB, Pulsedive, and Abuse.ch APIs
-- **AI-powered threat analysis** – War Room mode with Google Gemini for executive summaries
+- **AI threat briefings with your choice of provider** – Claude, Gemini, OpenAI, OpenRouter, Ollama (local), or any OpenAI-compatible server
+- **Alert preview and AI explanations** – read the summary of the selected alert without leaving the terminal, or press `a` for an AI explanation
+- **NEW badges** – alerts first seen since your last launch stay marked until you open them
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Live scrolling ticker** displaying latest threats and alerts
@@ -30,7 +32,8 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Interactive browsing** – open threat sources in your default browser
 - **Incident correlation** – automatically group related threats by CVE, IP, hash, and domain
 - **Manual refresh** with keyboard controls and feed pagination
-- **Minimal dependencies** – runs with `rich`, `httpx`, `feedparser`, `pyyaml`, `textual`, and `google-genai`
+- **Saved settings** – theme, filters and display mode persist between runs
+- **Minimal dependencies** – runs with `rich`, `httpx`, `feedparser`, `pyyaml`, `textual`, and `anthropic` (only needed for Claude)
 
 ## Screenshots
 
@@ -84,9 +87,30 @@ python3 cybrwire.py
 | `v` | Cycle main view (alerts → incidents → API tools) |
 | `c` | Toggle Cold War Mode |
 | `t` | Cycle theme |
-| `g` | Refresh AI threat analysis (War Room) |
+| `↑` `↓` / click | Select an alert or incident (click again to open) |
+| `enter` | Open the selected alert or incident in your browser |
+| `a` | Explain the selected alert with AI |
+| `g` | Generate a fresh AI briefing (War Room) |
 | `e` | Re-enable disabled feeds |
 | `q` | Quit |
+
+Your data age, display mode, theme and filters are saved in `cybrwire_state.json`, so later launches skip the startup questions. Run `python3 cybrwire.py --setup` to answer them again.
+
+## AI Briefings
+
+The War Room panel (`tab`, then `v`, or just press `g`) shows a briefing written by the AI provider you choose: bottom line, priority actions, active threats, notable vulnerabilities, and a watch list, based on the alerts in your current data window. Press `a` on any alert for a short explanation of it.
+
+Configure one provider in `cybrwire_local.yaml`:
+
+```yaml
+ai:
+  provider: "anthropic"    # anthropic | gemini | openai | openrouter | ollama | openai_compatible
+  api_key: "your-key"      # not needed for ollama
+  model: ""                # blank = provider default (anthropic: claude-opus-5-5, gemini: gemini-flash-latest)
+  base_url: ""             # only for ollama / openai_compatible
+```
+
+OpenAI, OpenRouter, Ollama, and OpenAI-compatible servers need `model` set. Ollama runs models on your own machine, so no alert data leaves it. An `enrichment.gemini_api_key` from older configs still works.
 
 ## API Key Enrichment
 
@@ -94,7 +118,6 @@ CybrWire supports optional threat intelligence API enrichment. Configure API key
 
 ```yaml
 enrichment:
-  gemini_api_key: "your-gemini-api-key-here"
   virustotal_api_key: "your-vt-api-key-here"
   abuseipdb_api_key: "your-abuseipdb-api-key-here"
   pulsedive_api_key: "your-pulsedive-api-key-here"
@@ -164,17 +187,17 @@ Errors and feed failures are written to `cybrwire.log` in the app folder.
 ## Features in Detail
 
 ### War Room (AI Analysis)
-Press `g` to refresh AI-powered threat analysis powered by Google Gemini. Get executive summaries of current threat landscape with top CVEs, threat actors, and industry targeting patterns.
+An AI briefing (see [AI Briefings](#ai-briefings)) followed by a local keyword analysis that needs no AI: top CVEs, affected software, exploit maturity, sectors, and threat actors.
 
 ### Incident Correlation
-CybrWire automatically correlates related alerts across different feeds by:
-- CVE identifiers
-- IP addresses and geographic hotspots
-- File hashes (malware families)
-- Domain names
-- Attack patterns and threat actors
+An incident is created when independent sources point at the same thing:
+- The same **CVE**, **IP address**, or **file hash** reported by two or more different feeds
+- A named **threat actor or ransomware group** appearing in two or more alerts
 
-View incidents in the **Incidents** panel for a unified threat picture.
+Each incident explains itself: what it is (the CISA KEV description when the CVE is known exploited), why the alerts were grouped, when it was first and last reported and by whom, related incidents, and the latest reports.
+
+### Dashboard
+Metrics are computed from the alerts in your data window. The ransomware hotspot and most active group come from Ransomware.live victim posts, alert velocity compares the last 24 hours with the 24 hours before, and the Doomsday Clock shows the [Bulletin of the Atomic Scientists](https://thebulletin.org/doomsday-clock/) setting, checked once a day.
 
 ### API Tools
 Query threat intelligence APIs directly from CybrWire:
@@ -184,13 +207,13 @@ Query threat intelligence APIs directly from CybrWire:
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - `rich` – Beautiful terminal output
 - `httpx` – Async HTTP client for feed fetching
 - `feedparser` – RSS/Atom feed parsing
 - `pyyaml` – YAML configuration files
 - `textual` – TUI framework
-- `google-genai` – Optional, for War Room AI analysis
+- `anthropic` – Only used when the AI provider is `anthropic`
 
 ## License
 
