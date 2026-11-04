@@ -269,6 +269,29 @@ def parse_threatfox(data, source_name, source_file, limit=20):
         })
     return items
 
+def parse_urlhaus(data, source_name, source_file, limit=20):
+    """abuse.ch URLhaus API: newest malware distribution URLs"""
+    items = []
+    for x in (data.get("urls") or [])[:limit]:
+        url = x.get("url", "")
+        threat = (x.get("threat") or "malware").replace("_", " ")
+        ts = _parse_iso((x.get("date_added") or "").replace(" UTC", "+00:00"))
+        items.append({
+            "title": f"MALWARE URL: {url} ({threat})"[:MAX_TITLE_LEN],
+            "summary": f"URLhaus: {threat}, status {x.get('url_status', 'unknown')}"[:MAX_SUMMARY_LEN],
+            "published": ts.strftime("%a, %d %b"),
+            "severity": "exploit",
+            "source": source_name,
+            "source_file": source_file,
+            "url": x.get("urlhaus_reference", ""),  # The report page, never the malware URL itself
+            "ts": ts,
+            "kind": "indicators",
+            "ioc": url,
+            "ioc_type": "url",
+            "threat": threat,
+        })
+    return items
+
 def parse_json(data, source_name, source_file):
     """Pick a JSON parser based on the shape of the response"""
     if isinstance(data, dict) and "vulnerabilities" in data:

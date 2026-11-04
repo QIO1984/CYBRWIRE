@@ -21,13 +21,18 @@ from rich import box
 from collections import Counter
 from enrichment import enrichment_engine, initialize_enrichment
 import ai
-from config import load_config
-from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, fetch_doomsday_seconds
+from config import RedactingFormatter, load_config, redact, secure_file
+from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, fetch_doomsday_seconds
 from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 import cve_intel
 from cve_card import CveCard
 from state import AppState, alert_key
+from watch_card import WatchCard
 from watchlist import Watchlist, matches_search
+from dedupe import group_duplicates
+from digest import build_digest
+from history import History
+import notify
 from textual.app import App, Screen, ComposeResult
 from textual.widgets import Static, Header
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -43,6 +48,10 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), "cybrwire.log"),
 )
+for _handler in logging.getLogger().handlers:
+    _handler.setFormatter(RedactingFormatter(_handler.formatter._fmt if _handler.formatter else None))
+    if getattr(_handler, "baseFilename", None):
+        secure_file(_handler.baseFilename)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
@@ -67,6 +76,7 @@ MAX_CONCURRENT_FEEDS = 8   # Higher values can overwhelm local DNS resolvers
 
 CONFIG = load_config()
 STATE = AppState()
+HISTORY = History()
 
 
 # Global state
@@ -309,9 +319,10 @@ class HelpScreen(Screen):
         help_text.append("│  D              Cycle Data Age - Switch between 24h / 48h / 7d windows\n", style=color)
         help_text.append("│  F              Cycle Alert Type - Switch between All / Alerts / Posts\n", style=color)
         help_text.append("│  4              Content Type - All / Advisories / News & Research / Ransomware / Indicators\n", style=color)
-        help_text.append("│  /              Search - Filter as you type, across all loaded items; Esc clears it\n", style=color)
+        help_text.append("│  /              Search - Filter as you type, across all feeds and history; Esc clears it\n", style=color)
         help_text.append("│  w              Watchlist Only - Show only items matching your watchlist (marked ★)\n", style=color)
-        help_text.append("│  Shift+W        Edit Watchlist - Add a term, or retype one to remove it\n", style=color)
+        help_text.append("│  Shift+W        Watchlist Card - See all terms and their hits, add or remove them\n", style=color)
+        help_text.append("│  U              Group Duplicates - Merge the same story from several feeds (marked +N)\n", style=color)
         help_text.append("│  I              CVE Card - CVSS, EPSS, KEV and exploit details for the selected item\n", style=color)
         help_text.append("│  Tab            Switch Panel Focus - Toggle between left and right panels\n", style=color)
         help_text.append("│  V              Toggle View in Focused Panel - Switch between Alerts / Incidents / API Tools\n", style=color)
@@ -629,6 +640,7 @@ class CybrWireApp(App):
         ("w", "toggle_watch_only", "Watchlist Only"),
         ("W", "edit_watchlist", "Edit Watchlist"),
         ("i", "open_cve_card", "CVE Card"),
+        ("u", "toggle_grouping", "Group Duplicates"),
         ("tab", "toggle_panel_focus", "Switch Panel"),
         ("v", "toggle_view", "Toggle View"),
         ("e", "re_enable_feeds", "Re-enable Feeds"),
@@ -686,8 +698,12 @@ class CybrWireApp(App):
         self.watchlist = Watchlist(CONFIG.watchlist, STATE.watchlist)
         self.watch_only = bool(saved.get("watch_only", False))
         self.search_query = ""     # Active search; narrows the feed until cleared with Esc
-        self.prompt = None         # Text being typed: "search", "watch" or None
+        self.prompt = None         # Text being typed: "search" or None
         self.prompt_buffer = ""
+        self.history_cache = (None, [])  # Last history search: (query, results)
+        self.group_dupes = bool(saved.get("group_dupes", True))
+        self.groups = group_duplicates([])
+        self.groups_key = None
         
         self.feed_failure_counts = {}  # Track consecutive failures per feed
         
@@ -748,6 +764,8 @@ class CybrWireApp(App):
             "filter_type_index": self.filter_type_index,
             "kind_index": self.kind_index,
             "watch_only": self.watch_only,
+            "group_dupes": self.group_dupes,
+            "notifications_started": STATE.settings.get("notifications_started", False),
         }
         STATE.save()
     
@@ -1081,6 +1099,7 @@ class CybrWireApp(App):
             asyncio.create_task(self._load_threat_summary_async())
             if not self.ai_problem and self.ai_settings.get("auto_briefing"):
                 asyncio.create_task(self.generate_ai_briefing())
+            asyncio.create_task(self.send_notifications())
             asyncio.create_task(self.refresher())
             
             self.update_display()
@@ -1132,11 +1151,12 @@ class CybrWireApp(App):
         abusech_key = (CONFIG.enrichment.get("abusech") or {}).get("api_key")
         # ThreatFox needs the abuse.ch Auth-Key; without one it is skipped rather than failing
         all_sources = [s for s in CONFIG.sources if s['name'] not in disabled_feeds
-                       and (s["type"] != "threatfox" or abusech_key)]
+                       and (s["type"] not in ("threatfox", "urlhaus") or abusech_key)]
         parsers = {"json": lambda r, n, f: parse_json(r.json(), n, f),
                    "rss": lambda r, n, f: parse_rss(r.text, n, f),
                    "txt": lambda r, n, f: parse_txt(r.text, n, f),
-                   "threatfox": lambda r, n, f: parse_threatfox(r.json(), n, f)}
+                   "threatfox": lambda r, n, f: parse_threatfox(r.json(), n, f),
+                   "urlhaus": lambda r, n, f: parse_urlhaus(r.json(), n, f)}
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
 
         async def fetch_one(c, src):
@@ -1146,6 +1166,8 @@ class CybrWireApp(App):
                 if src["type"] == "threatfox":
                     r = await c.post(src["url"], json={"query": "get_iocs", "days": 1},
                                      headers={"Auth-Key": abusech_key})
+                elif src["type"] == "urlhaus":
+                    r = await c.get(src["url"], headers={"Auth-Key": abusech_key})
                 else:
                     # Optional per-feed headers in YAML (e.g. API keys that must not go in the URL)
                     r = await c.get(src["url"], headers=src.get("headers"))
@@ -1168,7 +1190,7 @@ class CybrWireApp(App):
                 source_file_stats[source_file] = source_file_stats.get(source_file, 0) + len(result)
                 continue
 
-            error_msg = str(result) or type(result).__name__
+            error_msg = redact(str(result)) or type(result).__name__
             self.feed_failure_counts[src_name] = self.feed_failure_counts.get(src_name, 0) + 1
             failure_count = self.feed_failure_counts[src_name]
 
@@ -1202,8 +1224,33 @@ class CybrWireApp(App):
         
         STATE.record_alerts(alert_queue)
         STATE.save()
+        await asyncio.to_thread(HISTORY.record, alert_queue)
+        self.history_cache = (None, [])
         self.incidents_key = None  # Rebuild incidents for the new data
         self.mark_dirty()
+    
+    async def send_notifications(self):
+        """Tell the configured targets about alerts they haven't heard about yet"""
+        settings = CONFIG.notifications
+        if not notify.is_configured(settings):
+            return
+        triggers = settings.get("triggers") or ["watchlist"]
+        selected = notify.select_new(alert_queue, STATE.notified, self.watchlist, triggers, self.duplicate_groups().leader_of)
+        now = datetime.now(timezone.utc).isoformat()
+        if not STATE.settings.get("notifications_started"):
+            # First run with notifications on: today's backlog isn't news
+            STATE.notified.update({alert_key(a): now for a, _ in selected})
+            STATE.settings["notifications_started"] = True
+            STATE.save()
+            return
+        if not selected:
+            return
+        results = await notify.send(settings, *notify.build_message(selected))
+        if any(error is None for error in results.values()):
+            STATE.notified.update({alert_key(a): now for a, _ in selected})
+            STATE.save()
+        else:
+            self.notify("Notifications failed: " + ", ".join(f"{k} {v}" for k, v in results.items()), timeout=5)
     
     async def refresher(self):
         """Background task to fetch feeds periodically"""
@@ -1215,6 +1262,7 @@ class CybrWireApp(App):
             except asyncio.TimeoutError:
                 pass
             await asyncio.gather(self.fetch_feeds(), fetch_breaches(), self.refresh_doomsday())
+            await self.send_notifications()
             self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
             self.mark_dirty()
     
@@ -1339,10 +1387,13 @@ class CybrWireApp(App):
     
     def filtered_alerts(self):
         """Alerts in the current time window, feed source and alert-type filter.
-        A search looks through everything loaded: older items and indicators too."""
+        A search looks through everything: older items, indicators and the saved history."""
         searching = bool(self.search_query)
         if searching:
             alerts = [a for a in alert_queue if matches_search(a, self.search_query)]
+            archived = self.history_matches({alert_key(a) for a in alert_queue})
+            if archived:
+                alerts = sorted(alerts + archived, key=lambda a: a["ts"], reverse=True)
         else:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
             alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
@@ -1357,7 +1408,26 @@ class CybrWireApp(App):
             alerts = [a for a in alerts if self.is_alert(a)]
         elif self.filter_mode == "posts":
             alerts = [a for a in alerts if not self.is_alert(a)]
+        if self.group_dupes:
+            # A report stays visible if its group's lead report was filtered out
+            leader_of = self.duplicate_groups().leader_of
+            shown = {alert_key(a) for a in alerts}
+            alerts = [a for a in alerts if leader_of.get(alert_key(a)) not in shown]
         return alerts
+    
+    def duplicate_groups(self):
+        """Duplicate stories in the loaded alerts, regrouped only when they change"""
+        key = (id(alert_queue), len(alert_queue))
+        if key != self.groups_key:
+            self.groups = group_duplicates(alert_queue)
+            self.groups_key = key
+        return self.groups
+    
+    def history_matches(self, loaded_keys):
+        """Saved alerts matching the search that aren't loaded any more"""
+        if self.history_cache[0] != self.search_query:
+            self.history_cache = (self.search_query, HISTORY.search(self.search_query))
+        return [a for a in self.history_cache[1] if alert_key(a) not in loaded_keys]
     
     def selected_alert(self):
         if 0 <= self.hover_row < len(self.page_alerts):
@@ -1462,7 +1532,13 @@ class CybrWireApp(App):
         hits = self.watchlist.hits(alert)
         if hits:
             text.append(f"  ★ {', '.join(hits)}", style=f"bold {p.warn}")
+        if alert.get("archived"):
+            text.append("  from history", style=f"italic {p.muted}")
         text.append("\n")
+        others = self.duplicate_groups().others.get(alert_key(alert), []) if self.group_dupes else []
+        if others:
+            text.append("Also reported by ", style=f"bold {p.accent}")
+            text.append(", ".join(dict.fromkeys(a["source"] for a in others)) + "\n", style=p.muted)
         
         all_cves = self.alert_cves(alert)
         cves = all_cves[:3]
@@ -1552,6 +1628,9 @@ class CybrWireApp(App):
             watched = bool(self.watchlist.hits(a))
             if watched:
                 title.append("★ ", style=f"bold {p.warn}")
+            others = self.duplicate_groups().others.get(alert_key(a), []) if self.group_dupes else []
+            if others:
+                title.append(f"+{len(others)} ", style=f"bold {p.accent}")
             if STATE.is_new(a):
                 title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
                 title.append(" ")
@@ -1620,19 +1699,14 @@ class CybrWireApp(App):
         """The search or watchlist input line above the feed, when there is one"""
         p = self.palette
         bar = Text(no_wrap=True, overflow="ellipsis")
-        if self.prompt == "watch":
-            bar.append("Watch: ", style=f"bold {p.warn}")
-            bar.append(self.prompt_buffer + "█", style=f"bold {p.text}")
-            bar.append("  Enter add/remove · Esc done  ", style=p.muted)
-            bar.append(", ".join(self.watchlist.terms) or "no terms yet", style=p.muted)
-        elif self.prompt == "search":
+        if self.prompt == "search":
             bar.append("/ ", style=f"bold {p.accent}")
             bar.append(self.prompt_buffer + "█", style=f"bold {p.text}")
             bar.append("  Enter keep · Esc clear", style=p.muted)
         elif self.search_query:
             bar.append("/ ", style=f"bold {p.accent}")
             bar.append(self.search_query, style=f"bold {p.text}")
-            bar.append("  all loaded items · / edit · Esc clear", style=p.muted)
+            bar.append("  all feeds and history · / edit · Esc clear", style=p.muted)
         else:
             return None
         return bar
@@ -1651,10 +1725,29 @@ class CybrWireApp(App):
         self.update_display()
     
     def action_edit_watchlist(self):
-        """Add or remove a watchlist term"""
+        """See every watchlist term, add or remove them"""
         self.show_feed_from_top()
-        self.prompt = "watch"
-        self.prompt_buffer = ""
+        self.push_screen(WatchCard(), lambda _: self.update_display())
+    
+    def save_watchlist(self):
+        STATE.watchlist = list(self.watchlist.added)
+        STATE.save()
+    
+    def watch_hit_counts(self):
+        """Term -> how many loaded alerts it matches, for the watchlist card"""
+        counts = Counter()
+        for a in alert_queue:
+            if a.get("kind") != "indicators":
+                counts.update(self.watchlist.hits(a))
+        return counts
+    
+    def action_toggle_grouping(self):
+        """Collapse the same story from several feeds into one row, or list every report"""
+        self.group_dupes = not self.group_dupes
+        self.feed_page_offset = 0
+        self.hover_row = -1
+        self.save_settings()
+        self.notify("Duplicate reports " + ("grouped" if self.group_dupes else "shown separately"), timeout=2)
         self.update_display()
     
     def action_toggle_watch_only(self):
@@ -1675,21 +1768,6 @@ class CybrWireApp(App):
         self.show_feed_from_top()
         self.update_display()
     
-    def submit_watch_term(self):
-        """Toggle the typed term; the prompt stays open so several can be entered in a row"""
-        term = self.prompt_buffer.strip()
-        self.prompt_buffer = ""
-        if not term:
-            self.prompt = None
-            return
-        result = self.watchlist.toggle(term)
-        if result == "configured":
-            self.notify(f"'{term}' is set in your YAML file; remove it there", timeout=4)
-            return
-        STATE.watchlist = list(self.watchlist.added)
-        STATE.save()
-        self.notify(f"Watchlist: {result} '{term}'", timeout=2)
-    
     def set_prompt_text(self, text):
         """Update the input; a search filters the feed as it changes"""
         self.prompt_buffer = text
@@ -1700,23 +1778,16 @@ class CybrWireApp(App):
         self.update_display()
     
     def handle_prompt_key(self, event) -> bool:
-        """Keys while typing a search or watchlist term. False = not used here (arrows pass through)."""
+        """Keys while typing a search. False = not used here (arrows pass through)."""
         if event.key == "escape":
-            if self.prompt == "search":
-                self.clear_search()
-            else:
-                self.prompt = None
-                self.update_display()
+            self.clear_search()
         elif event.key == "enter":
-            if self.prompt == "watch":
-                self.submit_watch_term()
-            else:
-                self.prompt = None
-                self.hover_row = 0  # Enter again opens the top result
+            self.prompt = None
+            self.hover_row = 0  # Enter again opens the top result
             self.update_display()
         elif event.key == "backspace":
             self.set_prompt_text(self.prompt_buffer[:-1])
-        elif event.key in ("up", "down") and self.prompt == "search":
+        elif event.key in ("up", "down"):
             self.prompt = None  # Arrow keys move from typing into the results
             return False
         elif event.character and event.character.isprintable():
@@ -2578,6 +2649,8 @@ class CybrWireApp(App):
             elif alert.get("url"):
                 webbrowser.open(alert["url"])
                 STATE.mark_read(alert)
+                for other in self.duplicate_groups().others.get(alert_key(alert), []):
+                    STATE.mark_read(other)
                 STATE.save()
                 self.notify("Opening alert in browser...")
             else:
@@ -2823,7 +2896,17 @@ def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="CybrWire - terminal threat intelligence dashboard")
     parser.add_argument("--setup", action="store_true", help="choose data age and display mode again")
+    parser.add_argument("--digest", nargs="?", const=24, type=int, metavar="HOURS",
+                        help="print a plain-text summary of the last HOURS (default 24) and exit")
+    parser.add_argument("--test-notify", action="store_true", help="send a test message to the configured notification targets and exit")
     args = parser.parse_args()
+    
+    if args.digest is not None:
+        asyncio.run(run_digest(args.digest))
+        return
+    if args.test_notify:
+        asyncio.run(run_test_notify())
+        return
     
     saved = STATE.settings
     if saved and not args.setup:
@@ -2837,6 +2920,23 @@ def main():
         app.run()
     finally:
         app.save_settings()
+
+async def run_digest(hours):
+    """Fetch the feeds once and print a summary, leaving the app's NEW badges as they were"""
+    if STATE.previous_launch:
+        STATE.launch_time = STATE.previous_launch
+    app = CybrWireApp()
+    await app.fetch_feeds()
+    print(build_digest(alert_queue, hours, app.watchlist, KEV_CATALOG, failed_feeds))
+
+async def run_test_notify():
+    settings = CONFIG.notifications
+    if not notify.is_configured(settings):
+        print("No notification targets set. Add a notifications: section to cybrwire_local.yaml (see usrwire.yaml).")
+        return
+    results = await notify.send(settings, "CybrWire test", "Notifications are working.")
+    for name, error in results.items():
+        print(f"{name}: {error or 'delivered'}")
 
 def startup_prompts():
     """Title screen and first-run questions; returns (recency_hours, cold_war)"""

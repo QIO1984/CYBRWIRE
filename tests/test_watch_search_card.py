@@ -8,6 +8,7 @@ No network, no AI calls, and the real state file is never touched.
 
 import asyncio
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,9 @@ import state  # noqa: E402
 
 _tmp = tempfile.TemporaryDirectory()
 state.STATE_PATH = os.path.join(_tmp.name, "state.json")
+import history  # noqa: E402
+
+history.HISTORY_PATH = os.path.join(_tmp.name, "history.db")
 
 import ai  # noqa: E402
 import cve_card  # noqa: E402
@@ -29,6 +33,7 @@ import cybrwire  # noqa: E402
 import feeds  # noqa: E402
 from config import Config  # noqa: E402
 from cve_card import CveCard, exploit_status  # noqa: E402
+from watch_card import WatchCard  # noqa: E402
 from watchlist import Watchlist, matches_search  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
@@ -79,9 +84,10 @@ class WatchlistMatching(unittest.TestCase):
         self.assertTrue(Watchlist(["c++"]).hits(alert("A c++ library flaw")))
         self.assertEqual(Watchlist(["(unbalanced"]).hits(alert("nothing")), [])
 
-    def test_looks_at_source_and_indicator_fields(self):
-        self.assertTrue(Watchlist(["emotet"]).hits(SAMPLE[4]))
-        self.assertTrue(Watchlist(["cisco"]).hits(alert("Patch", source="Cisco PSIRT")))
+    def test_only_title_and_description_count(self):
+        self.assertTrue(Watchlist(["sessions"]).hits(alert("Flaw", "Sessions hijacked")))
+        self.assertEqual(Watchlist(["cisco"]).hits(alert("Patch", source="Cisco PSIRT")), [])
+        self.assertEqual(Watchlist(["emotet"]).hits(SAMPLE[4]), [])
 
     def test_toggle(self):
         w = Watchlist(["Fortinet"], ["Ivanti"])
@@ -194,7 +200,13 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         cybrwire.CONFIG = Config(sources=[], watchlist=["Fortinet"])
         cybrwire.STATE.settings = {}
         cybrwire.STATE.watchlist = []
+        cybrwire.STATE.notified = {}
         cybrwire.alert_queue[:] = SAMPLE
+        cybrwire.HISTORY.record([])
+        conn = sqlite3.connect(history.HISTORY_PATH)
+        with conn:
+            conn.execute("DELETE FROM alerts")
+        conn.close()
         feeds.KEV_DETAILS.clear()
         cve_intel.EPSS.clear()
 
@@ -293,8 +305,28 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(160, 45)) as pilot:
             await self.settle(pilot)
             await pilot.press("w")
-            self.assertEqual(app.prompt, "watch")
+            self.assertIsInstance(app.screen, WatchCard)
             self.assertTrue(app.watch_only)
+
+    async def test_watch_card_lists_all_terms_and_takes_keys_as_text(self):
+        app = self.make_app()
+        with mock.patch.object(app, "action_quit") as quit_, mock.patch.object(app, "action_refresh") as refresh:
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.settle(pilot)
+                await pilot.press("W", *"qr", "backspace", "backspace", *"ivanti", "enter", *"citrix*", "enter")
+                card = app.screen.render_card().plain
+                for expected in ("3 terms", "Fortinet", "from YAML", "ivanti", "citrix*"):
+                    self.assertIn(expected, card)
+                self.assertRegex(card, r"ivanti\s+1 loaded")
+                quit_.assert_not_called()
+                refresh.assert_not_called()
+                await pilot.press("down", "delete")  # Removes the selected app-added term
+                self.assertEqual(app.watchlist.terms, ["Fortinet", "citrix*"])
+                await pilot.press("up", "delete")    # YAML terms stay
+                self.assertIn("Fortinet", app.watchlist.terms)
+                await pilot.press("escape")
+                self.assertNotIsInstance(app.screen, WatchCard)
+            self.assertEqual(cybrwire.STATE.watchlist, ["citrix*"])
 
     async def test_click_selects_correct_row_with_search_bar(self):
         app = self.make_app()
@@ -371,6 +403,61 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
 
     async def test_config_tolerates_odd_watchlist_values(self):
         self.assertEqual(Watchlist(["A", None, 5]).terms, ["A", "5"])
+
+    async def test_search_includes_saved_history_once(self):
+        gone = alert("Vintage Sonicwall story", hours=2000)
+        cybrwire.HISTORY.record([gone, SAMPLE[2]])
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash", *"sonicwall", "enter")
+            rows = app.filtered_alerts()
+            self.assertEqual([a["title"] for a in rows], ["Vintage Sonicwall story"])
+            self.assertTrue(rows[0]["archived"])
+            self.assertIn("from history", app.make_alert_preview(rows[0]).plain)
+            await pilot.press("escape", "slash", *"citrixbleed")
+            self.assertEqual(self.titles(app), ["CitrixBleed returns"])  # Loaded copy only
+
+    async def test_duplicates_collapse_toggle_and_survive_filters(self):
+        lead = alert("Ivanti patches critical EPMM authentication bypass flaw", source="A", severity="zeroday")
+        other = alert("Ivanti patches critical EPMM authentication bypass bug", source="B")
+        cybrwire.alert_queue[:] = [other, lead]
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            self.assertEqual(app.filtered_alerts(), [lead])
+            self.assertIn("Also reported by B", app.make_alert_preview(lead).plain)
+            await pilot.press("f", "f")  # Posts only: the lead is filtered out, so the other report shows
+            self.assertEqual(app.filtered_alerts(), [other])
+            await pilot.press("f", "u")
+            self.assertCountEqual(app.filtered_alerts(), [lead, other])
+            self.assertFalse(cybrwire.STATE.settings["group_dupes"])
+
+    async def test_notifications_skip_backlog_then_send_once(self):
+        cybrwire.CONFIG = Config(sources=[], watchlist=["ivanti"], notifications={"ntfy_url": "https://n.test/t"})
+        app = self.make_app()
+        send = mock.AsyncMock(return_value={"ntfy": None})
+        with mock.patch("notify.send", send):
+            await app.send_notifications()
+            send.assert_not_called()
+            new = alert("Fresh Ivanti flaw")
+            cybrwire.alert_queue.insert(0, new)
+            await app.send_notifications()
+            send.assert_called_once()
+            self.assertIn("Fresh Ivanti flaw", send.call_args.args[2])
+            await app.send_notifications()
+            send.assert_called_once()
+
+    async def test_failed_notification_is_retried(self):
+        cybrwire.CONFIG = Config(sources=[], watchlist=["ivanti"], notifications={"ntfy_url": "https://n.test/t"})
+        cybrwire.STATE.settings = {"notifications_started": True}
+        app = self.make_app()
+        app.notify = mock.Mock()
+        send = mock.AsyncMock(return_value={"ntfy": "HTTP 500"})
+        with mock.patch("notify.send", send):
+            await app.send_notifications()
+            await app.send_notifications()
+        self.assertEqual(send.call_count, 2)
 
     async def test_no_cve_in_alert(self):
         app = self.make_app()

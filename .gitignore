@@ -49,3 +49,5 @@ Thumbs.db
 # Local app state (settings, seen alerts)
 cybrwire_state.json
 cybrwire_state.json.tmp
+cybrwire_history.db
+cybrwire_history.db-*
