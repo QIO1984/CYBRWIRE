@@ -119,7 +119,7 @@ curated:
     type: "rss"
     kind: "news"
   - name: "Trend Micro Research"
-    url: "http://feeds.trendmicro.com/TrendMicroResearch"
+    url: "https://feeds.feedburner.com/TrendMicroResearch"
     type: "rss"
     kind: "news"
   - name: "ESET WeLiveSecurity"
@@ -283,8 +283,8 @@ curated:
     type: "rss"
     kind: "news"
   - name: "URLhaus - Malware URLs"
-    url: "https://urlhaus.abuse.ch/downloads/csv_recent/"
-    type: "txt"
+    url: "https://urlhaus-api.abuse.ch/v1/urls/recent/limit/50/"
+    type: "urlhaus"
     kind: "indicators"
 
   # === MOBILE & APP SECURITY ===
@@ -364,7 +364,7 @@ curated:
     type: "rss"
     kind: "news"
   - name: "Varonis Security Research"
-    url: "https://www.varonis.com/blog/rss.xml"
+    url: "https://feeds.feedburner.com/VaronisBlog"
     type: "rss"
     kind: "news"
   - name: "Huntress Security Blog"

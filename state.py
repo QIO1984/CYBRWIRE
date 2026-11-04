@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from config import APP_DIR
+from config import APP_DIR, secure_file
 
 STATE_PATH = os.path.join(APP_DIR, "cybrwire_state.json")
 SEEN_RETENTION = timedelta(days=30)
@@ -30,6 +30,7 @@ class AppState:
         self.briefing: Dict[str, Any] = {}     # last AI briefing: {"text", "time"}
         self.cvss: Dict[str, Any] = {}         # CVE -> {"score", "severity", "checked"} from NVD
         self.watchlist: list = []              # Terms added in the app (YAML terms live in the config)
+        self.notified: Dict[str, str] = {}     # Alert key -> ISO timestamp a notification covered it
         self.previous_launch: Optional[datetime] = None
         self._load()
         self.launch_time = datetime.now(timezone.utc)
@@ -50,6 +51,7 @@ class AppState:
         self.briefing = data.get("briefing", {})
         self.cvss = data.get("cvss", {})
         self.watchlist = data.get("watchlist", [])
+        self.notified = data.get("notified", {})
         if data.get("last_launch"):
             self.previous_launch = datetime.fromisoformat(data["last_launch"])
 
@@ -57,6 +59,7 @@ class AppState:
         cutoff = (datetime.now(timezone.utc) - SEEN_RETENTION).isoformat()
         self.first_seen = {k: v for k, v in self.first_seen.items() if v >= cutoff}
         self.read = {k: v for k, v in self.read.items() if v >= cutoff}
+        self.notified = {k: v for k, v in self.notified.items() if v >= cutoff}
         data = {
             "settings": self.settings,
             "last_launch": self.launch_time.isoformat(),
@@ -66,12 +69,14 @@ class AppState:
             "briefing": self.briefing,
             "cvss": self.cvss,
             "watchlist": self.watchlist,
+            "notified": self.notified,
         }
         tmp = STATE_PATH + ".tmp"
         try:
             with open(tmp, "w") as f:
                 json.dump(data, f)
             os.replace(tmp, STATE_PATH)
+            secure_file(STATE_PATH)
         except OSError as e:
             logging.error(f"Could not save state to {STATE_PATH}: {e}")
 

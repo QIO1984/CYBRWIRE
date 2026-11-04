@@ -23,7 +23,8 @@
 # WATCHLIST
 # ==============================================================================
 # Vendors, products or keywords you care about. Matching items get a star, and w
-# shows only those. Matches whole words in any case; a trailing * matches a prefix.
+# shows only those. Matches whole words in titles and descriptions, in any case; a
+# trailing * matches a prefix.
 # Terms here and in cybrwire_local.yaml are combined. You can also press Shift+W in
 # the app. To keep your list private, put it in cybrwire_local.yaml.
 #
@@ -31,6 +32,20 @@
 #   - Fortinet
 #   - citrix*
 #   - CVE-2024-3400
+
+# ==============================================================================
+# NOTIFICATIONS
+# ==============================================================================
+# Optional push messages while the app runs. These URLs work like passwords, so
+# put this section in cybrwire_local.yaml. Test with: python3 cybrwire.py --test-notify
+# triggers can be any of: watchlist (the default), kev, zeroday
+#
+# notifications:
+#   ntfy_url: "https://ntfy.sh/a-long-random-topic-name"
+#   ntfy_token: ""
+#   discord_webhook: ""
+#   slack_webhook: ""
+#   triggers: [watchlist, kev]
 
 # ==============================================================================
 # AI PROVIDER (War Room briefings and alert explanations)

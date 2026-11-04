@@ -19,7 +19,10 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, and Indicators (what to block)
 - **CVE scores** – CISA KEV status, CVSS severity (NVD) and EPSS exploit likelihood shown wherever a CVE appears
 - **Watchlist** – star everything that mentions the vendors, products or keywords you care about, and press `w` to see only those
-- **Search** – press `/` to filter as you type across every loaded item, including older alerts and indicators
+- **Search** – press `/` to filter as you type across all feeds and a year of saved history, including older alerts and indicators
+- **Duplicate grouping** – the same story from several feeds becomes one row marked `+N`; `u` lists every report
+- **Notifications** – push watchlist hits, new KEV entries or zero-days to ntfy, Discord or Slack
+- **Digest mode** – `python3 cybrwire.py --digest` prints a plain-text summary for a terminal, pipe or cron job, with no AI calls
 - **CVE card** – press `i` for CVSS, EPSS, CISA KEV status, exploit links, affected products and which of your feeds report it
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
 - **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
@@ -104,7 +107,8 @@ python3 cybrwire.py
 | `4` | Cycle content type (All → Advisories → News & Research → Ransomware → Indicators) |
 | `/` | Search all loaded items (`esc` clears) |
 | `w` | Show only watchlist hits, or everything |
-| `W` | Add a watchlist term, or retype one to remove it |
+| `W` | Open the watchlist card: see all terms and their hits, add or remove them |
+| `u` | Group duplicate reports, or list them all |
 | `i` | Open the CVE card for the selected alert or incident |
 | `tab` | Switch between main feed and dashboard panels |
 | `v` | Cycle main view (alerts → incidents → API tools) |
@@ -194,7 +198,7 @@ A **CLEAN** result means the provider has no record of the indicator, not that i
 - **`cybrwire_local.yaml`** – Your private API keys and feeds (in .gitignore)
 
 Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),
-`txt` (IP/CIDR lists, URL lists, DShield, and URLhaus CSV), or `threatfox` (uses your abuse.ch key).
+`txt` (IP/CIDR lists, URL lists, DShield), or `threatfox` and `urlhaus` (use your abuse.ch key).
 Give each feed a `kind` so it lands in the right group: `advisory`, `news` (the default),
 `ransomware`, or `indicators`. Feeds that need an API key can send it
 as a header instead of putting it in the URL:
@@ -209,8 +213,8 @@ custom:
 ```
 
 Watchlist terms can be added in the app with `W` or listed in `usrwire.yaml` or `cybrwire_local.yaml`.
-They match whole words in any case, and a trailing `*` matches a prefix. A match in the alert's
-title, summary, source or indicator counts:
+They match whole words in an alert's title or description, in any case, and a trailing `*`
+matches a prefix:
 
 ```yaml
 watchlist:
@@ -219,7 +223,13 @@ watchlist:
   - CVE-2024-3400
 ```
 
-Errors and feed failures are written to `cybrwire.log` in the app folder.
+Notifications are set in a `notifications:` section (see `usrwire.yaml`). Their URLs work like
+passwords, so keep them in `cybrwire_local.yaml`. Run `python3 cybrwire.py --test-notify` to check them.
+
+Every alert is saved to `cybrwire_history.db` for a year, so search can find items that feeds have dropped.
+
+Errors and feed failures are written to `cybrwire.log` in the app folder, with loaded keys masked.
+The app restricts `cybrwire_local.yaml`, its state, history and log files to your user.
 
 ## Features in Detail
 

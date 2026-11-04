@@ -1,8 +1,9 @@
 """
 Watchlist and search matching for CybrWire
 
-Watchlist terms are whole-word and case-insensitive, so "ssl" doesn't flag every
-OpenSSL story; a trailing * matches a prefix ("citrix*" finds CitrixBleed).
+Watchlist terms match whole words in an alert's title and description, in any
+case, so "ssl" doesn't flag every OpenSSL story; a trailing * matches a prefix
+("citrix*" finds CitrixBleed).
 Search is a plain substring match; every word in the query has to appear.
 """
 
@@ -12,10 +13,11 @@ from typing import Any, Dict, Iterable, List
 from state import alert_key
 
 SEARCH_FIELDS = ("title", "summary", "source", "severity", "ioc", "threat")
+WATCH_FIELDS = ("title", "summary")
 
 
-def _alert_text(alert: Dict[str, Any]) -> str:
-    return " ".join(str(alert.get(f) or "") for f in SEARCH_FIELDS)
+def _alert_text(alert: Dict[str, Any], fields=SEARCH_FIELDS) -> str:
+    return " ".join(str(alert.get(f) or "") for f in fields)
 
 
 def _compile(term: str) -> "re.Pattern":
@@ -70,7 +72,7 @@ class Watchlist:
             return []
         key = alert_key(alert)
         if key not in self._memo:
-            text = _alert_text(alert)
+            text = _alert_text(alert, WATCH_FIELDS)
             self._memo[key] = [t for t, pattern in self._patterns if pattern.search(text)]
         return self._memo[key]
 
