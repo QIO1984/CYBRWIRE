@@ -19,6 +19,8 @@ MAX_TITLE_LEN = 200  # The feed table truncates to fit the screen
 # Full CISA KEV catalog (CVE ID -> description), refreshed with the KEV feed.
 # The feed list only keeps the newest entries; incidents check against all of them.
 KEV_CATALOG = {}
+# CVE ID -> the full KEV record (vendor, product, dates, required action) for the CVE card
+KEV_DETAILS = {}
 MAX_SUMMARY_LEN = 300
 
 # Marketing, events and other non-intel posts. Only applied to RSS items with
@@ -102,6 +104,7 @@ async def fetch_doomsday_seconds() -> int:
 
 def parse_cisa(data, source_name, source_file):
     KEV_CATALOG.update({v["cveID"]: v.get("shortDescription", "") for v in data.get("vulnerabilities", []) if v.get("cveID")})
+    KEV_DETAILS.update({v["cveID"]: v for v in data.get("vulnerabilities", []) if v.get("cveID")})
     items = []
     for v in data.get("vulnerabilities", []):
         date_added = v.get("dateAdded", "")

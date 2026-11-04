@@ -46,6 +46,7 @@ class Config:
     sources: List[Dict[str, Any]] = field(default_factory=list)
     enrichment: Dict[str, Dict[str, str]] = field(default_factory=dict)  # provider -> {"api_key": ...}
     ai: Dict[str, Any] = field(default_factory=dict)
+    watchlist: List[str] = field(default_factory=list)
 
     @property
     def configured_api_names(self) -> List[str]:
@@ -75,7 +76,7 @@ def load_config() -> Config:
 
     for name, category in FEED_FILES:
         for key, value in files[name].items():
-            if key in ("enrichment", "ai") or not isinstance(value, list):
+            if key in ("enrichment", "ai", "watchlist") or not isinstance(value, list):
                 continue
             for src in value:
                 if isinstance(src, dict) and src.get("name") and src.get("url"):
@@ -97,5 +98,10 @@ def load_config() -> Config:
             config.enrichment[provider] = {"api_key": enrichment[yaml_key]}
 
     config.ai = ai
+
+    # Terms from both files apply; a single value instead of a list is taken as one term
+    for name in ("usrwire.yaml", "cybrwire_local.yaml"):
+        terms = files[name].get("watchlist") or []
+        config.watchlist += terms if isinstance(terms, list) else [terms]
 
     return config
