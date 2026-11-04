@@ -29,6 +29,7 @@ class AppState:
         self.doomsday: Dict[str, Any] = {}
         self.briefing: Dict[str, Any] = {}     # last AI briefing: {"text", "time"}
         self.cvss: Dict[str, Any] = {}         # CVE -> {"score", "severity", "checked"} from NVD
+        self.watchlist: list = []              # Terms added in the app (YAML terms live in the config)
         self.previous_launch: Optional[datetime] = None
         self._load()
         self.launch_time = datetime.now(timezone.utc)
@@ -48,6 +49,7 @@ class AppState:
         self.doomsday = data.get("doomsday", {})
         self.briefing = data.get("briefing", {})
         self.cvss = data.get("cvss", {})
+        self.watchlist = data.get("watchlist", [])
         if data.get("last_launch"):
             self.previous_launch = datetime.fromisoformat(data["last_launch"])
 
@@ -63,6 +65,7 @@ class AppState:
             "doomsday": self.doomsday,
             "briefing": self.briefing,
             "cvss": self.cvss,
+            "watchlist": self.watchlist,
         }
         tmp = STATE_PATH + ".tmp"
         try:

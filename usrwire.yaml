@@ -20,6 +20,19 @@
 # If you don't want to use a provider, just leave it empty: abuseipdb_api_key: ""
 
 # ==============================================================================
+# WATCHLIST
+# ==============================================================================
+# Vendors, products or keywords you care about. Matching items get a star, and w
+# shows only those. Matches whole words in any case; a trailing * matches a prefix.
+# Terms here and in cybrwire_local.yaml are combined. You can also press Shift+W in
+# the app. To keep your list private, put it in cybrwire_local.yaml.
+#
+# watchlist:
+#   - Fortinet
+#   - citrix*
+#   - CVE-2024-3400
+
+# ==============================================================================
 # AI PROVIDER (War Room briefings and alert explanations)
 # ==============================================================================
 # Optional. Choose ONE provider: uncomment the ai: line and one example block,

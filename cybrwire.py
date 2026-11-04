@@ -25,11 +25,14 @@ from config import load_config
 from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, fetch_doomsday_seconds
 from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 import cve_intel
+from cve_card import CveCard
 from state import AppState, alert_key
+from watchlist import Watchlist, matches_search
 from textual.app import App, Screen, ComposeResult
 from textual.widgets import Static, Header
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.theme import Theme as TextualTheme
 from theme import COLD_WAR, DEFAULT_PALETTE, PALETTES, Palette
 from textual import events
@@ -306,6 +309,10 @@ class HelpScreen(Screen):
         help_text.append("│  D              Cycle Data Age - Switch between 24h / 48h / 7d windows\n", style=color)
         help_text.append("│  F              Cycle Alert Type - Switch between All / Alerts / Posts\n", style=color)
         help_text.append("│  4              Content Type - All / Advisories / News & Research / Ransomware / Indicators\n", style=color)
+        help_text.append("│  /              Search - Filter as you type, across all loaded items; Esc clears it\n", style=color)
+        help_text.append("│  w              Watchlist Only - Show only items matching your watchlist (marked ★)\n", style=color)
+        help_text.append("│  Shift+W        Edit Watchlist - Add a term, or retype one to remove it\n", style=color)
+        help_text.append("│  I              CVE Card - CVSS, EPSS, KEV and exploit details for the selected item\n", style=color)
         help_text.append("│  Tab            Switch Panel Focus - Toggle between left and right panels\n", style=color)
         help_text.append("│  V              Toggle View in Focused Panel - Switch between Alerts / Incidents / API Tools\n", style=color)
         help_text.append("│  E              Re-enable Feeds - Re-enable all auto-disabled feeds\n", style=color)
@@ -520,19 +527,25 @@ class CybrWireFooter(Static):
         
         # Data Age with value
         footer_text.append("d ", style=key_color)
-        footer_text.append(f"Data Age: {data_age_label}  ", style=desc_color)
+        footer_text.append(f"Age: {data_age_label}  ", style=desc_color)
         
         # Filter with type and count
-        footer_text.append("f filter ", style=key_color)
+        footer_text.append("f ", style=key_color)
         footer_text.append(f"{filter_label} - ({count})  ", style=desc_color)
         
         # Cycle Feeds
         footer_text.append("4 ", style=key_color)
         footer_text.append(f"Type: {CONTENT_KINDS[app.kind_index][1]}  ", style=desc_color)
         
+        # Search and watchlist
+        footer_text.append("/ ", style=key_color)
+        footer_text.append("Search  ", style=desc_color)
+        footer_text.append("w ", style=key_color)
+        footer_text.append(f"Watch: {'On' if app.watch_only else 'Off'}  ", style=desc_color)
+        
         # Switch Panel
         footer_text.append("tab ", style=key_color)
-        footer_text.append("Switch Panel  ", style=desc_color)
+        footer_text.append("Panel  ", style=desc_color)
         
         # Toggle View
         footer_text.append("v ", style=key_color)
@@ -540,11 +553,11 @@ class CybrWireFooter(Static):
         
         # Cold War Mode
         footer_text.append("c ", style=key_color)
-        footer_text.append("CW Mode  ", style=desc_color)
+        footer_text.append("CW  ", style=desc_color)
         
         # Cycle Theme
         footer_text.append("t ", style=key_color)
-        footer_text.append(f"Theme: {app.palette.name}  ", style=desc_color)
+        footer_text.append("Theme  ", style=desc_color)
         
         # Help
         footer_text.append("h ", style=key_color)
@@ -612,6 +625,10 @@ class CybrWireApp(App):
         ("d", "cycle_data_age", "Data Age"),
         ("f", "cycle_filter_type", "Alert Type"),
         ("4", "cycle_feeds", "Content Type"),
+        ("slash", "start_search", "Search"),
+        ("w", "toggle_watch_only", "Watchlist Only"),
+        ("W", "edit_watchlist", "Edit Watchlist"),
+        ("i", "open_cve_card", "CVE Card"),
         ("tab", "toggle_panel_focus", "Switch Panel"),
         ("v", "toggle_view", "Toggle View"),
         ("e", "re_enable_feeds", "Re-enable Feeds"),
@@ -665,6 +682,12 @@ class CybrWireApp(App):
         self.filter_type_index = saved.get("filter_type_index", 0)
         self.filter_mode = ["all", "alerts", "posts"][self.filter_type_index]
         self.kind_index = saved.get("kind_index", 0) if 0 <= saved.get("kind_index", 0) < len(CONTENT_KINDS) else 0
+        
+        self.watchlist = Watchlist(CONFIG.watchlist, STATE.watchlist)
+        self.watch_only = bool(saved.get("watch_only", False))
+        self.search_query = ""     # Active search; narrows the feed until cleared with Esc
+        self.prompt = None         # Text being typed: "search", "watch" or None
+        self.prompt_buffer = ""
         
         self.feed_failure_counts = {}  # Track consecutive failures per feed
         
@@ -724,6 +747,7 @@ class CybrWireApp(App):
             "theme": self.theme_mode,
             "filter_type_index": self.filter_type_index,
             "kind_index": self.kind_index,
+            "watch_only": self.watch_only,
         }
         STATE.save()
     
@@ -1314,11 +1338,21 @@ class CybrWireApp(App):
     PREVIEW_LINES = 8  # Lines reserved under the alert table for the selected-alert preview
     
     def filtered_alerts(self):
-        """Alerts in the current time window, feed source and alert-type filter"""
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
-        alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
+        """Alerts in the current time window, feed source and alert-type filter.
+        A search looks through everything loaded: older items and indicators too."""
+        searching = bool(self.search_query)
+        if searching:
+            alerts = [a for a in alert_queue if matches_search(a, self.search_query)]
+        else:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
+            alerts = [a for a in alert_queue if a["ts"] >= cutoff_time]
         kind = self.active_kind
-        alerts = [a for a in alerts if (a.get("kind") != "indicators" if kind == "all" else a.get("kind") == kind)]
+        if kind != "all":
+            alerts = [a for a in alerts if a.get("kind") == kind]
+        elif not searching:
+            alerts = [a for a in alerts if a.get("kind") != "indicators"]
+        if self.watch_only:
+            alerts = [a for a in alerts if self.watchlist.hits(a)]
         if self.filter_mode == "alerts":
             alerts = [a for a in alerts if self.is_alert(a)]
         elif self.filter_mode == "posts":
@@ -1357,6 +1391,43 @@ class CybrWireApp(App):
                 self.mark_dirty()
         STATE.save()
     
+    @staticmethod
+    def alert_cves(alert):
+        """CVE IDs named in an alert, in order of appearance"""
+        return list(dict.fromkeys(m.upper() for m in CVE_RE.findall(f"{alert['title']} {alert.get('summary', '')}")))
+    
+    def alerts_mentioning(self, cve):
+        """Every loaded alert that names this CVE, for the CVE card"""
+        return [a for a in alert_queue if cve in self.alert_cves(a)]
+    
+    async def fetch_cve_detail(self, cve):
+        """Everything the CVE card shows that isn't loaded yet"""
+        await asyncio.gather(self.nvd.fetch(cve, detail=True), cve_intel.fetch_epss([cve]))
+        STATE.save()
+        self.mark_dirty()
+    
+    def action_open_cve_card(self):
+        """Open the CVE card for the highlighted alert or incident"""
+        cves = []
+        if self.main_view_mode == "alerts":
+            alert = self.selected_alert()
+            if not alert:
+                self.notify("Select an alert with ↑/↓ first", timeout=2)
+                return
+            cves = self.alert_cves(alert)
+        elif self.main_view_mode == "incidents" and 0 <= self.hover_row < len(self.incident_rows):
+            inc = self.incident_rows[self.hover_row][0]
+            cves = [inc.value] if inc.kind == "cve" else list(dict.fromkeys(c for a in inc.alerts for c in self.alert_cves(a)))
+        elif self.main_view_mode == "incidents":
+            self.notify("Select an incident with ↑/↓ first", timeout=2)
+            return
+        else:
+            return
+        if cves:
+            self.push_screen(CveCard(cves))
+        else:
+            self.notify("No CVE named in this item", timeout=2)
+    
     def make_alert_preview(self, alert):
         """Detail pane for the highlighted alert"""
         p = self.palette
@@ -1388,9 +1459,13 @@ class CybrWireApp(App):
         if STATE.is_new(alert):
             text.append("  ")
             text.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
+        hits = self.watchlist.hits(alert)
+        if hits:
+            text.append(f"  ★ {', '.join(hits)}", style=f"bold {p.warn}")
         text.append("\n")
         
-        cves = list(dict.fromkeys(m.upper() for m in CVE_RE.findall(f"{alert['title']} {alert.get('summary', '')}")))[:3]
+        all_cves = self.alert_cves(alert)
+        cves = all_cves[:3]
         if cves:
             for i, cve in enumerate(cves):
                 if i:
@@ -1413,6 +1488,8 @@ class CybrWireApp(App):
         if alert.get("url"):
             text.append(alert["url"] + "\n", style=f"underline {p.muted}")
         hints = [("Enter", "open in browser")]
+        if all_cves:
+            hints.append(("i", "CVE card"))
         if not self.ai_problem and key not in self.alert_explanations:
             hints.append(("a", "explain with AI"))
         text.append_text(self.hint_bar(hints))
@@ -1439,6 +1516,9 @@ class CybrWireApp(App):
             container_height = self.size.height - 8
         # Panel borders + padding (4) and the spacer above the preview (1)
         self.rows_per_page = max(5, container_height - 5 - self.PREVIEW_LINES)
+        prompt_bar = self.make_prompt_bar()
+        if prompt_bar:
+            self.rows_per_page = max(5, self.rows_per_page - 1)
         
         indicators_view = self.active_kind == "indicators"
         table = Table(box=None, show_header=indicators_view, header_style=f"bold {p.muted}",
@@ -1469,6 +1549,9 @@ class CybrWireApp(App):
             selected = row_idx == self.hover_row
             sev = a["severity"]
             title = Text()
+            watched = bool(self.watchlist.hits(a))
+            if watched:
+                title.append("★ ", style=f"bold {p.warn}")
             if STATE.is_new(a):
                 title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
                 title.append(" ")
@@ -1484,7 +1567,7 @@ class CybrWireApp(App):
                     Text(short_date, style=p.muted),
                     Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
                     Text((a.get("ioc_type") or "").upper(), style=f"bold {p.accent}"),
-                    Text(a.get("ioc") or a["title"], style=title_style),
+                    Text(("★ " if watched else "") + (a.get("ioc") or a["title"]), style=title_style),
                     Text(a.get("threat") or "", style=p.text),
                     Text(a["source"], style=p.muted),
                     style=row_style,
@@ -1499,7 +1582,15 @@ class CybrWireApp(App):
             )
         
         if not self.page_alerts:
-            empty = [Text("NO ALERTS", style=p.warn), Text("Nothing matches the current filters", style=p.muted)]
+            if self.watch_only and not self.watchlist.terms:
+                reason = "Your watchlist is empty: press W to add a vendor, product or keyword"
+            elif self.watch_only:
+                reason = "No watchlist hits under these filters: press w to show everything"
+            elif self.search_query:
+                reason = "Nothing matches this search under the f and 4 filters"
+            else:
+                reason = "Nothing matches the current filters"
+            empty = [Text("NO ALERTS", style=p.warn), Text(reason, style=p.muted)]
             table.add_row("", "", *empty, *([""] * (len(table.columns) - 4)))
         
         rem = int((self.next_refresh - datetime.now(timezone.utc)).total_seconds())
@@ -1507,7 +1598,7 @@ class CybrWireApp(App):
         current_page = self.feed_page_offset // self.rows_per_page + 1
         status = Text(f" refresh in {max(rem, 0) // 60 + 1}m · up {int(uptime.total_seconds() // 3600)}h"
                       f"{int(uptime.total_seconds() % 3600 // 60):02d}m   ", style=p.muted)
-        hints = [("↑↓", "select"), ("Enter", "open"), ("a", "explain")]
+        hints = [("↑↓", "select"), ("Enter", "open"), ("i", "CVE"), ("a", "explain")]
         if total_pages > 1:
             hints.append(("←→", "pages"))
         status.append_text(self.hint_bar(hints))
@@ -1515,13 +1606,126 @@ class CybrWireApp(App):
         
         page = f" · page {current_page}/{total_pages}" if total_pages > 1 else ""
         kind_label = "" if self.active_kind == "all" else f" · {CONTENT_KINDS[self.kind_index][1].upper()}"
-        title_text, border = self.frame(f"GLOBAL THREAT FEED{kind_label} ({len(filtered_alerts)}){page}", self.panel_focus == "main")
+        watch_label = " · WATCHLIST" if self.watch_only else ""
+        title_text, border = self.frame(f"GLOBAL THREAT FEED{kind_label}{watch_label} ({len(filtered_alerts)}){page}", self.panel_focus == "main")
         
         preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=p.border, box=box.ROUNDED,
                         padding=(0, 1), height=self.PREVIEW_LINES)
-        return Panel(Group(table, Text(""), preview),
+        body = [prompt_bar, table, Text(""), preview] if prompt_bar else [table, Text(""), preview]
+        return Panel(Group(*body),
                      title=title_text, subtitle=status, border_style=border, box=box.ROUNDED,
                      padding=(1, 2))
+    
+    def make_prompt_bar(self):
+        """The search or watchlist input line above the feed, when there is one"""
+        p = self.palette
+        bar = Text(no_wrap=True, overflow="ellipsis")
+        if self.prompt == "watch":
+            bar.append("Watch: ", style=f"bold {p.warn}")
+            bar.append(self.prompt_buffer + "█", style=f"bold {p.text}")
+            bar.append("  Enter add/remove · Esc done  ", style=p.muted)
+            bar.append(", ".join(self.watchlist.terms) or "no terms yet", style=p.muted)
+        elif self.prompt == "search":
+            bar.append("/ ", style=f"bold {p.accent}")
+            bar.append(self.prompt_buffer + "█", style=f"bold {p.text}")
+            bar.append("  Enter keep · Esc clear", style=p.muted)
+        elif self.search_query:
+            bar.append("/ ", style=f"bold {p.accent}")
+            bar.append(self.search_query, style=f"bold {p.text}")
+            bar.append("  all loaded items · / edit · Esc clear", style=p.muted)
+        else:
+            return None
+        return bar
+    
+    def show_feed_from_top(self):
+        """Back to the first page of the alerts view after the filters change"""
+        self.main_view_mode = "alerts"
+        self.feed_page_offset = 0
+        self.hover_row = -1
+    
+    def action_start_search(self):
+        """Search everything loaded, filtering as you type"""
+        self.show_feed_from_top()
+        self.prompt = "search"
+        self.prompt_buffer = self.search_query
+        self.update_display()
+    
+    def action_edit_watchlist(self):
+        """Add or remove a watchlist term"""
+        self.show_feed_from_top()
+        self.prompt = "watch"
+        self.prompt_buffer = ""
+        self.update_display()
+    
+    def action_toggle_watch_only(self):
+        """Show only watchlist hits, or everything; an empty watchlist asks for a term first"""
+        if not self.watchlist.terms:
+            self.watch_only = True
+            self.action_edit_watchlist()
+            return
+        self.watch_only = not self.watch_only
+        self.show_feed_from_top()
+        self.save_settings()
+        self.update_display()
+    
+    def clear_search(self):
+        self.search_query = ""
+        self.prompt = None
+        self.prompt_buffer = ""
+        self.show_feed_from_top()
+        self.update_display()
+    
+    def submit_watch_term(self):
+        """Toggle the typed term; the prompt stays open so several can be entered in a row"""
+        term = self.prompt_buffer.strip()
+        self.prompt_buffer = ""
+        if not term:
+            self.prompt = None
+            return
+        result = self.watchlist.toggle(term)
+        if result == "configured":
+            self.notify(f"'{term}' is set in your YAML file; remove it there", timeout=4)
+            return
+        STATE.watchlist = list(self.watchlist.added)
+        STATE.save()
+        self.notify(f"Watchlist: {result} '{term}'", timeout=2)
+    
+    def set_prompt_text(self, text):
+        """Update the input; a search filters the feed as it changes"""
+        self.prompt_buffer = text
+        if self.prompt == "search":
+            self.search_query = text.strip()
+            self.feed_page_offset = 0
+            self.hover_row = -1
+        self.update_display()
+    
+    def handle_prompt_key(self, event) -> bool:
+        """Keys while typing a search or watchlist term. False = not used here (arrows pass through)."""
+        if event.key == "escape":
+            if self.prompt == "search":
+                self.clear_search()
+            else:
+                self.prompt = None
+                self.update_display()
+        elif event.key == "enter":
+            if self.prompt == "watch":
+                self.submit_watch_term()
+            else:
+                self.prompt = None
+                self.hover_row = 0  # Enter again opens the top result
+            self.update_display()
+        elif event.key == "backspace":
+            self.set_prompt_text(self.prompt_buffer[:-1])
+        elif event.key in ("up", "down") and self.prompt == "search":
+            self.prompt = None  # Arrow keys move from typing into the results
+            return False
+        elif event.character and event.character.isprintable():
+            self.set_prompt_text(self.prompt_buffer + event.character)
+        return True
+    
+    def check_action(self, action, parameters):
+        """Single-key commands are off while typing, so 'q' in a search doesn't quit"""
+        return not self.prompt
     
     def frame(self, title, focused):
         """Title and border style for a panel; only the focused panel is highlighted"""
@@ -2390,6 +2594,19 @@ class CybrWireApp(App):
 
     def on_key(self, event: events.Key) -> None:
         """Handle key events - Tab, view toggle, and arrow key pagination"""
+        if isinstance(self.screen, ModalScreen):
+            return  # The CVE card handles its own keys
+        
+        if self.prompt:
+            event.prevent_default()
+            if self.handle_prompt_key(event):
+                return
+        
+        if event.key == "escape" and self.search_query and self.main_view_mode == "alerts":
+            event.prevent_default()
+            self.clear_search()
+            return
+        
         # PRIORITY: Check for 'v' key FIRST to allow exiting input mode and cycling views
         # This ensures 'v' always works to cycle views, even when in input mode
         typing_indicator = self.main_view_mode == "api_tools" and self.api_tools_input_mode and self.api_tools_input_buffer
@@ -2494,6 +2711,10 @@ class CybrWireApp(App):
         """Handle paste events for input buffers - allows users to paste large IOCs without typing"""
         pasted_text = event.text.strip()
         
+        if self.prompt:
+            self.set_prompt_text(self.prompt_buffer + pasted_text)
+            return
+        
         # If in API Tools view, append pasted text to input buffer
         if self.main_view_mode == "api_tools" and self.api_tools_input_mode:
             self.api_tools_input_buffer += pasted_text
@@ -2582,7 +2803,7 @@ class CybrWireApp(App):
             return
         if self.main_view_mode == "alerts":
             # Outer panel border + top padding = 2 rows before the first alert (+1 header in Indicators)
-            row = event.y - 2 - (1 if self.active_kind == "indicators" else 0)
+            row = event.y - 2 - (1 if self.active_kind == "indicators" else 0) - (1 if self.prompt or self.search_query else 0)
             if not 0 <= row < len(self.page_alerts):
                 return
         else:
