@@ -60,7 +60,7 @@ def _request_for(slot_id: str, value: str, ai_settings: Dict, sources=()) -> Opt
             return {"url": "https://api.anthropic.com/v1/models", "params": {"limit": 1},
                     "headers": {"x-api-key": value, "anthropic-version": ANTHROPIC_VERSION}}
         custom_url = ai_settings.get("base_url") if ai_settings.get("provider") == provider else None
-        base = (custom_url or ai.PROVIDERS[provider][1] or "").rstrip("/")
+        base = (custom_url or ai.PROVIDERS[provider] or "").rstrip("/")
         if not base:
             return None
         if provider == "gemini":

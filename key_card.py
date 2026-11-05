@@ -16,12 +16,13 @@ from keystore import (ENV, FILE, KEYCHAIN, OLD_COPY, SECRETS_FILE, SLOTS, SLOTS_
                       clean_value, mask)
 from widgets import Card, CardButton, RowTable
 
-HINTS = "Enter set · t test · Del remove · p provider · ↑↓ select · Esc close"
+HINTS = "Enter set · t test · Del remove · a switch AI · Tab AI settings · Esc close"
 EDIT_HINTS = "Enter test and save · Esc cancel"
 PROVIDER_LABELS = {"anthropic": "Anthropic", "gemini": "Google Gemini", "openai": "OpenAI", "openrouter": "OpenRouter",
                    "ollama": "Ollama (on this machine, no key)", "openai_compatible": "OpenAI-compatible server"}
 NEEDS_URL = ("ollama", "openai_compatible")
 NO_PROVIDER = "none"
+PROFILE_NAMES = ("Primary", "Alternate")
 
 
 class KeyCard(Card):
@@ -35,13 +36,13 @@ class KeyCard(Card):
     }
     #key-title { height: 1; text-style: bold; color: $accent; }
     #key-notice { height: auto; margin-top: 1; }
-    #ai-row { height: auto; margin-top: 1; }
-    #ai-label { width: 12; height: 1; color: $text-muted; text-style: bold; }
-    #ai-provider { width: 1fr; }
-    #ai-details { height: auto; }
-    .ai-field-label { width: 12; height: 1; color: $text-muted; }
-    .ai-field { height: 1; }
-    .ai-input { width: 1fr; }
+    #ai-section { height: auto; margin-top: 1; }
+    .ai-profile, .ai-url-row { height: 1; }
+    .ai-use { width: 13; min-width: 13; }
+    .ai-provider { width: 30; }
+    .ai-model { width: 1fr; margin-left: 1; }
+    .ai-url-label { width: 14; height: 1; color: $text-muted; padding-left: 2; }
+    .ai-url { width: 1fr; }
     #key-table { height: auto; margin-top: 1; background: $background; scrollbar-size-vertical: 1; }
     #key-table > .datatable--cursor, #key-table > .datatable--hover {
         background: $panel; color: $foreground; text-style: none;
@@ -75,27 +76,26 @@ class KeyCard(Card):
         return self.rows[table.cursor_row] if 0 <= table.cursor_row < len(self.rows) else self.rows[0]
 
     def visible_slots(self):
-        """Only the chosen AI provider's key shows, along with everything else"""
-        provider = self.config.ai.get("provider")
-        return [s for s in SLOTS if s.section != "ai" or s.provider == provider]
+        """AI keys show for the chosen providers, along with everything else"""
+        providers = {p["provider"] for p in self.config.ai_profiles}
+        return [s for s in SLOTS if s.section != "ai" or s.provider in providers]
 
     def compose(self) -> ComposeResult:
-        provider = self.config.ai.get("provider") or NO_PROVIDER
         options = [("None (AI features off)", NO_PROVIDER)] + [(PROVIDER_LABELS[p], p) for p in ai.PROVIDERS]
         with VerticalScroll(id="key-card-scroll"):
             yield Static("API KEYS", id="key-title")
             yield Static(id="key-notice")
-            with Horizontal(id="ai-row"):
-                yield Static("AI provider", id="ai-label")
-                yield Select(options, value=provider if provider in ai.PROVIDERS else NO_PROVIDER, allow_blank=False,
-                             id="ai-provider", compact=True)
-            with Vertical(id="ai-details"):
-                with Horizontal(classes="ai-field"):
-                    yield Static("Model", classes="ai-field-label")
-                    yield Input(id="ai-model", classes="ai-input", compact=True)
-                with Horizontal(classes="ai-field", id="ai-url-row"):
-                    yield Static("Server URL", classes="ai-field-label")
-                    yield Input(id="ai-url", classes="ai-input", compact=True)
+            with Vertical(id="ai-section"):
+                for i, name in enumerate(PROFILE_NAMES):
+                    profile = self.config.ai_profiles[i]
+                    with Horizontal(classes="ai-profile"):
+                        yield CardButton(name, id=f"ai-use-{i}", classes="ai-use")
+                        yield Select(options, value=profile["provider"] or NO_PROVIDER, allow_blank=False,
+                                     id=f"ai-provider-{i}", classes="ai-provider", compact=True)
+                        yield Input(id=f"ai-model-{i}", classes="ai-model", compact=True)
+                    with Horizontal(classes="ai-url-row", id=f"ai-url-row-{i}"):
+                        yield Static("Server URL", classes="ai-url-label")
+                        yield Input(id=f"ai-url-{i}", classes="ai-url", compact=True)
             yield RowTable(id="key-table", cursor_type="row", show_header=False)
             yield Static(id="key-hint")
             yield Input(password=True, id="key-input", placeholder="Paste the key; it stays hidden", compact=True)
@@ -108,14 +108,17 @@ class KeyCard(Card):
                 yield CardButton("Close", id="key-close")
 
     def on_mount(self) -> None:
-        self.query_one("#key-card-scroll").border_subtitle = HINTS
+        scroll = self.query_one("#key-card-scroll")
+        scroll.can_focus = False  # So Tab goes straight to the AI settings
+        scroll.border_subtitle = HINTS
         table = self.query_one("#key-table", RowTable)
         table.add_column("", key="group", width=13)
         table.add_column("", key="label", width=19)
         table.add_column("", key="value", width=12)
         table.add_column("", key="where", width=20)
         table.add_column("", key="test", width=13)
-        self.fill_ai_fields()
+        for i in range(len(PROFILE_NAMES)):
+            self.fill_ai_fields(i)
         self.redraw()
 
     def say(self, message: str, style: str = "") -> None:
@@ -123,18 +126,23 @@ class KeyCard(Card):
 
     # What's on screen
 
-    def fill_ai_fields(self) -> None:
-        settings = self.config.ai
-        provider = settings.get("provider")
-        model = self.query_one("#ai-model", Input)
-        default = ai.PROVIDERS.get(provider, (None, None))
-        model.value = settings.get("model") or ""
-        model.placeholder = f"Blank = {default[0]}" if default[0] else "Required: the model's ID"
-        url = self.query_one("#ai-url", Input)
-        url.value = settings.get("base_url") or ""
-        url.placeholder = default[1] or "Required, e.g. http://localhost:1234/v1"
-        self.query_one("#ai-details").display = provider in ai.PROVIDERS
-        self.query_one("#ai-url-row").display = provider in NEEDS_URL
+    def fill_ai_fields(self, index: int) -> None:
+        profile = self.config.ai_profiles[index]
+        provider = profile["provider"]
+        model = self.query_one(f"#ai-model-{index}", Input)
+        example = ai.MODEL_EXAMPLES.get(provider)
+        model.value = profile["model"]
+        model.placeholder = f"Required: model, e.g. {example}" if example else "Required: the model's ID"
+        model.display = provider in ai.PROVIDERS
+        url = self.query_one(f"#ai-url-{index}", Input)
+        url.value = profile["base_url"]
+        url.placeholder = ai.PROVIDERS.get(provider) or "Required, e.g. http://localhost:1234/v1"
+        self.query_one(f"#ai-url-row-{index}").display = provider in NEEDS_URL
+
+    def update_profile_buttons(self) -> None:
+        for i, name in enumerate(PROFILE_NAMES):
+            active = i == self.config.active_ai_profile
+            self.query_one(f"#ai-use-{i}", CardButton).label = f"{'●' if active else '○'} {name}"
 
     def storage_notice(self) -> Text:
         p = self.app.palette
@@ -152,6 +160,8 @@ class KeyCard(Card):
             text.append(f"⚠ {len(movable)} outside {place}. Press m to move them and clear the old copies.\n", style=f"bold {p.warn}")
         if store.old_copy_exists:
             text.append(f"⚠ {OLD_COPY} may hold plaintext keys, even in comments. Check it, then delete it.\n", style=f"bold {p.warn}")
+        if self.app.ai_problem:
+            text.append(f"AI is off: {self.app.ai_problem}.\n", style=p.warn if self.config.ai.get("provider") else p.muted)
         text.rstrip()
         return text
 
@@ -186,6 +196,7 @@ class KeyCard(Card):
         self.query_one("#key-notice", Static).update(self.storage_notice())
         self.query_one("#key-status", Static).update(self.message or "")
         self.update_hint()
+        self.update_profile_buttons()
         self.query_one("#key-move").display = bool(self.config.keys.movable())
 
     def update_hint(self) -> None:
@@ -207,30 +218,44 @@ class KeyCard(Card):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         event.stop()
-        provider = None if event.value in (NO_PROVIDER, Select.BLANK) else event.value
-        if provider != self.config.ai.get("provider"):
-            self.app.choose_ai(provider, "", "")
-            self.fill_ai_fields()
-            self.message = None
-            self.redraw()
-        self.set_focus(None)
+        index = int(event.select.id.rsplit("-", 1)[1])
+        provider = "" if event.value in (NO_PROVIDER, Select.BLANK) else event.value
+        if provider == self.config.ai_profiles[index]["provider"]:
+            self.set_focus(None)
+            return
+        self.app.set_ai_profile(index, provider, "", "")  # A model belongs to one provider
+        self.fill_ai_fields(index)
+        self.message = None
+        self.redraw()
+        if provider:  # The next thing this provider needs
+            self.query_one(f"#ai-model-{index}", Input).focus()
+        else:
+            self.set_focus(None)
 
-    def save_ai_field(self, box: Input) -> None:
-        settings = self.config.ai
-        model = self.query_one("#ai-model", Input).value.strip()
-        url = self.query_one("#ai-url", Input).value.strip()
+    def save_ai_fields(self, index: int) -> None:
+        profile = self.config.ai_profiles[index]
+        model = self.query_one(f"#ai-model-{index}", Input).value.strip()
+        url = self.query_one(f"#ai-url-{index}", Input).value.strip()
         if url and not url.startswith(("https://", "http://")):
             self.say("The server URL should start with http:// or https://", self.app.palette.warn)
             self.redraw()
             return
-        if (model, url) != (settings.get("model") or "", settings.get("base_url") or ""):
-            self.app.choose_ai(settings.get("provider"), model, url)
+        if (model, url) != (profile["model"], profile["base_url"]):
+            self.app.set_ai_profile(index, profile["provider"], model, url)
             self.say("AI settings saved.", self.app.palette.good)
             self.redraw()
 
+    def use_profile(self, index: int) -> None:
+        p = self.app.palette
+        if not self.config.ai_profiles[index]["provider"]:
+            self.say(f"Choose a provider for {PROFILE_NAMES[index]} first.", p.warn)
+            return
+        self.app.activate_ai_profile(index)
+        self.say(f"{PROFILE_NAMES[index]} AI is now active.", p.good)
+
     def on_input_blurred(self, event: Input.Blurred) -> None:
-        if event.input.id in ("ai-model", "ai-url"):
-            self.save_ai_field(event.input)
+        if event.input.id.startswith("ai-"):
+            self.save_ai_fields(int(event.input.id.rsplit("-", 1)[1]))
 
     # Entering a key
 
@@ -261,7 +286,7 @@ class KeyCard(Card):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         if event.input.id != "key-input":
-            self.save_ai_field(event.input)
+            self.save_ai_fields(int(event.input.id.rsplit("-", 1)[1]))
             self.set_focus(None)
             return
         if self.busy:
@@ -413,6 +438,8 @@ class KeyCard(Card):
             return
         if self.busy or self.editing:
             return
+        if button.startswith("ai-use-"):
+            self.use_profile(int(button.rsplit("-", 1)[1]))
         if button == "key-set":
             self.start_edit()
         elif button == "key-test":
@@ -443,6 +470,8 @@ class KeyCard(Card):
                 event.stop()
                 self.set_focus(None)
             return
+        if event.key in ("tab", "shift+tab"):
+            return  # Tab reaches the AI settings
         event.stop()
         event.prevent_default()
         key = event.key
@@ -467,9 +496,8 @@ class KeyCard(Card):
             self.command_delete(confirm)
         elif key == "m":
             self.command_move(confirm)
-        elif key == "p":
-            self.query_one("#ai-provider", Select).focus()
-            return
+        elif key == "a":
+            self.use_profile((self.config.active_ai_profile + 1) % len(PROFILE_NAMES))
         else:
             return
         self.redraw()

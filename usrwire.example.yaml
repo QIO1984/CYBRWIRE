@@ -3,7 +3,7 @@
 # This file is yours: git ignores it, and it lives next to the app as usrwire.yaml.
 #
 # Keys never go in here. Press Shift+K in the app to enter and test API keys,
-# notification targets and feed keys, and to choose your AI provider.
+# notification targets and feed keys, and to choose your AI provider and model.
 #
 # The feeds that ship with CybrWire are in cybrwire.yaml and comwire.yaml.
 # Uncomment any section below that you want to use.

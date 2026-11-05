@@ -50,6 +50,9 @@ FALLBACK_SOURCES = [
 ]
 
 
+AI_PROFILE_COUNT = 2  # The primary provider and one alternate
+AI_PROFILE_FIELDS = ("provider", "model", "base_url")
+
 # Everything secret that was loaded, so it can be masked out of logs and error text
 SECRETS: set = set()
 SECRET_PARAM_RE = re.compile(r"([?&](?:key|api_?key|token|auth)=)[^&\s'\"]+", re.IGNORECASE)
@@ -103,6 +106,8 @@ class Config:
     key_sources: Dict[str, str] = field(default_factory=dict)  # slot id -> where its value came from
     ai_keys: Dict[str, str] = field(default_factory=dict)      # slot id -> key, one per AI provider
     feed_keys: Dict[str, str] = field(default_factory=dict)    # slot id -> key, one per feed
+    ai_profiles: List[Dict[str, str]] = field(default_factory=list)  # Primary, then alternate
+    active_ai_profile: int = 0
 
     def key_value(self, slot_id: str) -> Optional[str]:
         """The value the app is using for a key slot"""
@@ -143,6 +148,28 @@ class Config:
                 SECRETS.add(value)
         else:
             self.key_sources.pop(slot_id, None)
+
+    def load_ai_profiles(self, saved: Optional[Dict[str, Any]]) -> None:
+        """What was picked in the app, or else the ai: section of YAML, as the primary profile"""
+        saved = saved or {}
+        if "profiles" in saved:
+            profiles, active = list(saved["profiles"]), saved.get("active", 0)
+        else:
+            profiles, active = [saved or {k: self.ai.get(k) for k in AI_PROFILE_FIELDS}], 0
+        profiles = [{k: (p or {}).get(k) or "" for k in AI_PROFILE_FIELDS} for p in profiles[:AI_PROFILE_COUNT]]
+        profiles += [{k: "" for k in AI_PROFILE_FIELDS} for _ in range(AI_PROFILE_COUNT - len(profiles))]
+        self.ai_profiles = profiles
+        self.activate_ai_profile(active if 0 <= active < AI_PROFILE_COUNT else 0)
+
+    def activate_ai_profile(self, index: int) -> None:
+        self.active_ai_profile = index
+        profile = self.ai_profiles[index]
+        self.choose_ai(profile["provider"] or None, profile["model"], profile["base_url"])
+
+    def set_ai_profile(self, index: int, provider: str, model: str, base_url: str) -> None:
+        self.ai_profiles[index] = {"provider": provider or "", "model": model, "base_url": base_url}
+        if index == self.active_ai_profile:
+            self.activate_ai_profile(index)
 
     def refresh_ai_key(self) -> None:
         """ai.api_key is always the key of the chosen provider, and only that one"""
