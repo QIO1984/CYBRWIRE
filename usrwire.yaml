@@ -1,23 +1,10 @@
-# Production Configuration - API Keys and Custom Feeds
+# Custom feeds, watchlist and settings
 # ============================================================================
-# 
-# This file is NOT in .gitignore - keep it safe!
-# For LOCAL use and testing with PRIVATE API KEYS, create and use cybrwire_local.yaml instead
-# (cybrwire_local.yaml IS in .gitignore and will never be committed)
-# If you aren't using local overrides, add your keys here but be advised if you push to GitHub
-# they will be public. Keys in cybrwire_local.yaml take priority over keys here.
 #
-# Add your API keys and custom feeds below
-
-# ==============================================================================
-# ENRICHMENT API KEYS
-# ==============================================================================
-# Configure these keys to enable IOC enrichment in the API Tools panel
-#
-# Get free API keys from the providers listed below and paste them between the quotes
-# Example: abuseipdb_api_key: "your_actual_api_key_here"
-#
-# If you don't want to use a provider, just leave it empty: abuseipdb_api_key: ""
+# This file is tracked by git, so NEVER put API keys or webhook URLs here.
+# Press Shift+K in the app to enter and test them: they go to your system keychain.
+# On servers and in containers, use environment variables such as CYBRWIRE_NVD_API_KEY.
+# For private settings, copy this file to cybrwire_local.yaml, which git ignores.
 
 # ==============================================================================
 # WATCHLIST
@@ -36,78 +23,29 @@
 # ==============================================================================
 # NOTIFICATIONS
 # ==============================================================================
-# Optional push messages while the app runs. These URLs work like passwords, so
-# put this section in cybrwire_local.yaml. Test with: python3 cybrwire.py --test-notify
-# triggers can be any of: watchlist (the default), kev, zeroday
+# Optional push messages while the app runs. Add the targets with Shift+K in the
+# app; their URLs work like passwords. triggers can be any of: watchlist (the
+# default), kev, zeroday. Test with: python3 cybrwire.py --test-notify
 #
 # notifications:
-#   ntfy_url: "https://ntfy.sh/a-long-random-topic-name"
-#   ntfy_token: ""
-#   discord_webhook: ""
-#   slack_webhook: ""
 #   triggers: [watchlist, kev]
 
 # ==============================================================================
 # AI PROVIDER (War Room briefings and alert explanations)
 # ==============================================================================
-# Optional. Choose ONE provider: uncomment the ai: line and one example block,
-# then fill in your key. Alerts in the current data window are sent to that
-# provider when you press g (briefing) or a (explain alert); nothing is sent
-# on launch unless auto_briefing is true.
+# Optional. Choose ONE provider and put this in cybrwire_local.yaml, then add its
+# key with Shift+K. Alerts in the current data window are sent to that provider
+# when you press g (briefing) or a (explain alert); nothing is sent on launch
+# unless auto_briefing is true.
 #
 # ai:
-#   # Anthropic Claude - key: https://console.anthropic.com/
-#   provider: "anthropic"
-#   api_key: "your-anthropic-key"
+#   provider: "anthropic"          # anthropic | gemini | openai | openrouter | ollama | openai_compatible
 #   model: "claude-haiku-5-5"      # or claude-sonnet-5-5 / claude-opus-5-5 (default if blank)
-#
-#   # Google Gemini - key: https://aistudio.google.com/apikey
-#   provider: "gemini"
-#   api_key: "your-gemini-key"
-#   model: ""                      # blank = gemini-flash-latest
-#
-#   # OpenAI - key: https://platform.openai.com/
-#   provider: "openai"
-#   api_key: "your-openai-key"
-#   model: "your-model-id"         # required
-#
-#   # OpenRouter - key: https://openrouter.ai/
-#   provider: "openrouter"
-#   api_key: "your-openrouter-key"
-#   model: "provider/model-id"     # required
-#
-#   # Ollama - models running on your own machine, no key, no data leaves it
-#   provider: "ollama"
-#   model: "llama3.1"              # required; base_url defaults to http://localhost:11434/v1
-#
-#   # Any OpenAI-compatible server (LM Studio, vLLM, Groq...)
-#   provider: "openai_compatible"
-#   base_url: "http://localhost:1234/v1"
-#   api_key: ""                    # if the server needs one
-#   model: "your-model-id"
-#
+#                                  # gemini default: gemini-flash-latest
+#                                  # openai, openrouter, ollama and openai_compatible need a model
+#   base_url: ""                   # openai_compatible (LM Studio, vLLM, Groq...), e.g. http://localhost:1234/v1
+#                                  # ollama defaults to http://localhost:11434/v1 and needs no key
 #   auto_briefing: false           # true = new briefing at every launch (one call each time)
-
-enrichment:
-  # AbuseIPDB - IP reputation and abuse history lookups
-  # Get your free API key at: https://www.abuseipdb.com/api
-  abuseipdb_api_key: ""
-
-  # VirusTotal - Hash, URL, and domain analysis
-  # Get your free API key at: https://www.virustotal.com/
-  virustotal_api_key: ""
-
-  # Pulsedive - Multi-indicator threat intelligence platform
-  # Get your free API key at: https://pulsedive.com/
-  pulsedive_api_key: ""
-
-  # Abuse.ch - Malware hash and phishing URL databases
-  # Visit: https://abuse.ch/ (some features are free, no API key needed)
-  abuse_ch_api_key: ""
-
-  # NVD - CVSS scores for CVEs (optional; works without a key, just slower)
-  # Get a free key at: https://nvd.nist.gov/developers/request-an-api-key
-  nvd_api_key: ""
 
 # ==============================================================================
 # CUSTOM THREAT FEEDS
@@ -126,7 +64,7 @@ enrichment:
 #
 #   JSON Feed:
 #     - name: "Threat API"
-#       url: "https://api.example.com/threats.json?key=YOUR_KEY"
+#       url: "https://api.example.com/threats.json"
 #       type: "json"
 #
 #   Text/IP List:
@@ -136,7 +74,7 @@ enrichment:
 
 custom:
   # Add your custom feeds here
-  # Uncomment and modify the examples below, or add your own
+  # Uncomment and modify the examples above, or add your own
   # - name: "My Custom Feed"
   #   url: "https://example.com/feed.json"
   #   type: "json"

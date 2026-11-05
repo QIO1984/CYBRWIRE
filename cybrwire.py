@@ -21,13 +21,15 @@ from rich import box
 from collections import Counter
 from enrichment import enrichment_engine, initialize_enrichment
 import ai
-from config import RedactingFormatter, load_config, redact, secure_file
+from config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
+from keystore import FILE, SECRETS_FILE
 from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, fetch_doomsday_seconds
 from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 import cve_intel
 from cve_card import CveCard
 from state import AppState, alert_key
 from watch_card import WatchCard
+from key_card import KeyCard
 from watchlist import Watchlist, matches_search
 from dedupe import group_duplicates
 from digest import build_digest
@@ -158,6 +160,7 @@ class HelpScreen(Screen):
         help_text.append("│    Click         Select a row; click it again to open it\n", style=color)
         help_text.append("│    ← →           Change pages in paginated views (Feed, Incidents, War Room)\n", style=color)
         help_text.append("│    Enter         Open the selected alert (or an incident's latest report) in your browser\n", style=color)
+        help_text.append("│    Shift+K       Enter, test and secure API keys and notification URLs\n", style=color)
         help_text.append("│    A             Explain the selected alert with AI (shown in the preview pane)\n", style=color)
         help_text.append("│    Tab           Switch between left panel (alerts) and right panel (dashboard)\n", style=color)
         help_text.append("│    V             Toggle between Alerts, Incidents, and API Tools views\n", style=color)
@@ -252,7 +255,7 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  [PROVIDERS] (ai: section of cybrwire_local.yaml)\n", style=f"bold {accent}")
         help_text.append("│    anthropic, gemini, openai, openrouter, ollama (local), openai_compatible\n", style=color)
-        help_text.append("│    Set one provider in the ai: section of cybrwire_local.yaml (examples in usrwire.yaml)\n", style=color)
+        help_text.append("│    Set one provider in the ai: section of cybrwire_local.yaml, then add its key with Shift+K\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -272,8 +275,7 @@ class HelpScreen(Screen):
         help_text.append("│    Results show threat intel from configured providers\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [CONFIGURATION]\n", style=f"bold {accent}")
-        help_text.append("│    Production: Add API keys to usrwire.yaml (enrichment section)\n", style=color)
-        help_text.append("│    Local Dev: Add API keys to cybrwire_local.yaml (enrichment section)\n", style=color)
+        help_text.append("│    Press Shift+K to enter and test keys; they go to your system keychain\n", style=color)
         help_text.append("│    Free tier accounts have limited indicator coverage\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
@@ -639,6 +641,7 @@ class CybrWireApp(App):
         ("slash", "start_search", "Search"),
         ("w", "toggle_watch_only", "Watchlist Only"),
         ("W", "edit_watchlist", "Edit Watchlist"),
+        ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
         ("tab", "toggle_panel_focus", "Switch Panel"),
@@ -1101,6 +1104,7 @@ class CybrWireApp(App):
                 asyncio.create_task(self.generate_ai_briefing())
             asyncio.create_task(self.send_notifications())
             asyncio.create_task(self.refresher())
+            self.warn_about_key_storage()
             
             self.update_display()
             self.set_interval(1.0, self.render_tick)
@@ -1728,6 +1732,37 @@ class CybrWireApp(App):
         """See every watchlist term, add or remove them"""
         self.show_feed_from_top()
         self.push_screen(WatchCard(), lambda _: self.update_display())
+    
+    def action_manage_keys(self):
+        """Enter, test and secure API keys"""
+        self.show_feed_from_top()
+        self.push_screen(KeyCard(), lambda _: self.update_display())
+    
+    @property
+    def key_config(self):
+        return CONFIG
+    
+    def key_changed(self, slot_id):
+        """Put a key changed in the card to use right away, without a restart"""
+        if slot_id == "ai_api_key":
+            self.ai_problem = ai.configuration_problem(self.ai_settings)
+        elif slot_id == "nvd_api_key":
+            self.nvd.api_key = CONFIG.key_value(slot_id)
+        elif slot_id in ENRICHMENT_KEYS:
+            enrichment_engine.providers.pop(ENRICHMENT_KEYS[slot_id][0], None)
+            initialize_enrichment(CONFIG.enrichment)
+            if slot_id == "abuse_ch_api_key":  # This key also switches two feeds on or off
+                force_event.set()
+    
+    def warn_about_key_storage(self):
+        """Keys outside the keychain deserve a visible mention at launch"""
+        store = CONFIG.keys
+        movable = store.movable()
+        if movable:
+            self.notify(f"{len(movable)} API keys need securing. Press K, then m", severity="warning", timeout=10)
+        elif FILE in CONFIG.key_sources.values():
+            self.notify(f"No keychain ({store.problem}). Keys are in {SECRETS_FILE}: your user only, not encrypted",
+                        severity="warning", timeout=10)
     
     def save_watchlist(self):
         STATE.watchlist = list(self.watchlist.added)
@@ -2932,7 +2967,7 @@ async def run_digest(hours):
 async def run_test_notify():
     settings = CONFIG.notifications
     if not notify.is_configured(settings):
-        print("No notification targets set. Add a notifications: section to cybrwire_local.yaml (see usrwire.yaml).")
+        print("No notification targets set. Press K in the app to add one, or set CYBRWIRE_NTFY_URL.")
         return
     results = await notify.send(settings, "CybrWire test", "Notifications are working.")
     for name, error in results.items():

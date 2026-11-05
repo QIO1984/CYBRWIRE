@@ -68,7 +68,7 @@ def configuration_problem(settings: Dict[str, Any]) -> Optional[str]:
     if not (settings.get("model") or default_model):
         return f"Set ai.model for provider '{provider}'"
     if provider not in ("ollama",) and not settings.get("api_key"):
-        return f"Set ai.api_key for provider '{provider}'"
+        return f"Press K to add the key for provider '{provider}'"
     if not (settings.get("base_url") or default_url) and provider != "anthropic":
         return f"Set ai.base_url for provider '{provider}'"
     return None

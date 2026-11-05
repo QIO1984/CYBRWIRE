@@ -4,3 +4,4 @@ PyYAML
 rich
 textual
 anthropic
+keyring

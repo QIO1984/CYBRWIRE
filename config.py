@@ -1,8 +1,9 @@
 """
 Configuration loading for CybrWire
 
-All YAML files are read once here. Precedence for keys and AI settings:
+All YAML files are read once here. Precedence for AI settings:
 cybrwire_local.yaml (private, gitignored) > usrwire.yaml.
+Keys come from keystore.py, which still honors any left in those files.
 """
 
 import logging
@@ -10,9 +11,11 @@ import os
 import re
 import stat
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
+
+from keystore import SLOTS_BY_ID, KeyStore
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -32,6 +35,9 @@ ENRICHMENT_KEYS = {
     "abuse_ch_api_key": ("abusech", "ABUSE.CH"),
     "nvd_api_key": ("nvd", "NVD"),  # optional: raises NVD's CVSS lookup rate limit
 }
+
+# Keys that register an enrichment provider; the NVD key goes to the CVSS client instead
+ENRICHMENT_SLOTS = {k: v for k, v in ENRICHMENT_KEYS.items() if k != "nvd_api_key"}
 
 FALLBACK_SOURCES = [
     {"name": "CISA KEV", "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", "type": "json"},
@@ -88,6 +94,40 @@ class Config:
     ai: Dict[str, Any] = field(default_factory=dict)
     watchlist: List[str] = field(default_factory=list)
     notifications: Dict[str, Any] = field(default_factory=dict)
+    keys: Optional[KeyStore] = None
+    key_sources: Dict[str, str] = field(default_factory=dict)  # slot id -> where its value came from
+
+    def key_value(self, slot_id: str) -> Optional[str]:
+        """The value the app is using for a key slot"""
+        slot = SLOTS_BY_ID[slot_id]
+        if slot.section == "ai":
+            return self.ai.get(slot.yaml_key)
+        if slot.section == "notifications":
+            return self.notifications.get(slot.yaml_key)
+        provider = ENRICHMENT_KEYS[slot.yaml_key][0]
+        return (self.enrichment.get(provider) or {}).get("api_key")
+
+    def set_key_value(self, slot_id: str, value: Optional[str], source: Optional[str] = None) -> None:
+        """Put a key where the rest of the app reads it; None clears it"""
+        slot = SLOTS_BY_ID[slot_id]
+        if slot.section == "enrichment":
+            provider = ENRICHMENT_KEYS[slot.yaml_key][0]
+            if value:
+                self.enrichment[provider] = {"api_key": value}
+            else:
+                self.enrichment.pop(provider, None)
+        else:
+            block = self.ai if slot.section == "ai" else self.notifications
+            if value:
+                block[slot.yaml_key] = value
+            else:
+                block.pop(slot.yaml_key, None)
+        if value and source:
+            self.key_sources[slot_id] = source
+            if len(value) >= MIN_SECRET_LEN:
+                SECRETS.add(value)
+        else:
+            self.key_sources.pop(slot_id, None)
 
     @property
     def configured_api_names(self) -> List[str]:
@@ -149,6 +189,11 @@ def load_config() -> Config:
     # Same precedence as keys: local values win. False and [] are real settings here.
     for name in ("usrwire.yaml", "cybrwire_local.yaml"):
         config.notifications.update(files[name].get("notifications") or {})
+
+    # Keys found in the YAML above are replaced by whatever outranks them in the key store
+    config.keys = KeyStore(APP_DIR)
+    for slot_id, (value, source) in config.keys.resolve_all(config.keys.read_yaml_values()).items():
+        config.set_key_value(slot_id, value, source)
 
     _remember_secrets(config)
     return config

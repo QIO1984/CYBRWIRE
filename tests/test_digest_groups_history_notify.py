@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["CYBRWIRE_KEYCHAIN"] = "off"  # Tests must never touch the real keychain
 
 import config  # noqa: E402
 import digest  # noqa: E402
