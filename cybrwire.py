@@ -23,7 +23,7 @@ from enrichment import enrichment_engine, initialize_enrichment
 import ai
 from config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
 from keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
-from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, fetch_doomsday_seconds
+from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, fetch_doomsday_seconds
 from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 import cve_intel
 from cve_card import CveCard
@@ -40,7 +40,8 @@ from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.widgets import Input, Static, Header
 import sound
-from livewire import LiveWire, LiveWirePanel, quiet_items
+import evidence
+from livewire import LiveWire, LiveWirePanel, wire_items
 from widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
@@ -76,6 +77,7 @@ console = Console(color_system="truecolor", theme=Theme({
 HEADERS = {"User-Agent": "C Y B R W I R E // v1.0 LEGENDARY EDITION"}
 HEAT_BAR_WIDTH = 33
 REFRESH_INTERVAL = 300
+SIGHTING_DAYS = 7
 DOOMSDAY_DEFAULT_SECONDS = 85  # Setting announced January 2026; refreshed from thebulletin.org at runtime
 DOOMSDAY_CHECK_INTERVAL = timedelta(days=1)
 FEED_TIMEOUT = 15          # Seconds before giving up on a single feed
@@ -214,22 +216,22 @@ class HelpScreen(Screen):
         help_text.append("┌─ METRICS DASHBOARD (Left Side Metrics) " + "─" * 53 + "┐\n", style=accent)
         help_text.append("│\n", style=accent)
         help_text.append("│  [KEY METRICS]\n", style=f"bold {accent}")
-        help_text.append("│    Total Alerts      - Combined count of all alerts across time window and filters\n", style=color)
-        help_text.append("│    Critical/KEV      - CVEs in CISA's Known Exploited Vulnerabilities catalog\n", style=color)
-        help_text.append("│    Zero-Day          - Previously unknown vulnerabilities with no public patch\n", style=color)
-        help_text.append("│    Ransomware        - Ransomware families and related incidents\n", style=color)
-        help_text.append("│    APT Activity      - Advanced Persistent Threat (nation-state) campaigns\n", style=color)
-        help_text.append("│    Exploits/POC      - Public exploits or proof-of-concept code released\n", style=color)
-        help_text.append("│    IOCs Detected     - IP addresses, file hashes, or suspicious domains\n", style=color)
-        help_text.append("│    Incoming (1h)     - New alerts arriving in the last 60 minutes\n", style=color)
-        help_text.append("│    Avg/Hour          - Average alerts per hour across the data window\n", style=color)
+        help_text.append("│    Items Seen        - Everything loaded in the data window\n", style=color)
+        help_text.append("│    Alerts            - What the default Alerts filter shows: evidence, watchlist hits, breaches\n", style=color)
+        help_text.append("│    Confirmed         - On an official exploited list (CISA KEV, ENISA)\n", style=color)
+        help_text.append("│    Likely            - High exploit-likelihood score, or public exploit code and a raised score\n", style=color)
+        help_text.append("│    Reported          - News or a CIRCL sighting says exploited, not officially confirmed\n", style=color)
+        help_text.append("│    Ransomware        - Ransomware claims and stories\n", style=color)
+        help_text.append("│    Exploits          - Exploitation reported, or public exploit code. Blocklists don't count\n", style=color)
+        help_text.append("│    IOCs Listed       - IP addresses, URLs and domains on blocklists\n", style=color)
+        help_text.append("│    Incoming (1h)     - New items in the last 60 minutes\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [HEAT LEVELS]\n", style=f"bold {accent}")
         help_text.append("│    Heat Level        - % of total alerts that are high-threat (critical+severe)\n", style=color)
         help_text.append("│    Ransomware Heat   - % of ransomware threats (rising = ransomware wave)\n", style=color)
         help_text.append("│    APT Heat          - % of APT activity (rising = targeted campaigns)\n", style=color)
         help_text.append("│    Zero-Day Heat     - % of zero-day vulns (rising = day-zero activity spike)\n", style=color)
-        help_text.append("│    Exploit Heat      - % with public exploits (rising = mass exploitation risk)\n", style=color)
+        help_text.append("│    Exploit Heat      - % with exploitation or exploit code (rising = mass exploitation risk)\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [THREAT SCORING]\n", style=f"bold {accent}")
         help_text.append("│    Cyber DEFCON      - Overall threat level (1=CRITICAL, 5=SAFE)\n", style=color)
@@ -334,7 +336,7 @@ class HelpScreen(Screen):
         help_text.append("│  /              Search - Filter as you type, across all feeds and history; Esc clears it\n", style=color)
         help_text.append("│  w              Watchlist Only - Show only items matching your watchlist (marked ★)\n", style=color)
         help_text.append("│  Shift+W        Watchlist Card - See all terms and their hits, add or remove them\n", style=color)
-        help_text.append("│  L              Live Wire - Jump to the alert on the top bar (or click the bar)\n", style=color)
+        help_text.append("│  L              Live Wire - Jump to what's on the top bar (or click the bar)\n", style=color)
         help_text.append("│  B              Alert Sound - Off, PC speaker, teletype bell, modem chirp or terminal bell\n", style=color)
         help_text.append("│  U              Group Duplicates - Merge the same story from several feeds (marked +N)\n", style=color)
         help_text.append("│  I              CVE Card - CVSS, EPSS, KEV and exploit details for the selected item\n", style=color)
@@ -749,7 +751,7 @@ class CybrWireApp(App):
     theme_mode = reactive("default")  # default, dark, blue, purple, matrix
     kind_index = reactive(0)  # Index into CONTENT_KINDS
     data_age_index = reactive(0)  # Cycle: 0=24h, 1=48h, 2=7d
-    filter_type_index = reactive(0)  # Cycle: 0=all, 1=alerts, 2=posts
+    filter_type_index = reactive(1)  # Cycle: 0=all, 1=alerts, 2=posts
     dashboard_panel_index = reactive(0)  # Cycle dashboard: 0=metrics, 1=failed feeds
     main_view_mode = reactive("alerts")  # alerts, incidents, or api_tools
     
@@ -763,6 +765,7 @@ class CybrWireApp(App):
         self.refresher_task = None
         self.wire = LiveWire()
         self.last_arrivals = []
+        self.feed_cache = {}  # Feed name -> (when fetched, parsed items), for slow-moving lists
         self.sound = saved.get("sound", sound.OFF)
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
@@ -781,7 +784,8 @@ class CybrWireApp(App):
                 foreground=p.text, background=p.bg, surface=p.bg, panel=p.surface,
                 success=p.good, warning=p.warn, error=p.bad,
             ))
-        self.filter_type_index = saved.get("filter_type_index", 0)
+        # Alerts is the default, and anyone from before that gets it once too
+        self.filter_type_index = saved.get("filter_type_index", 1) if saved.get("alerts_default") else 1
         self.filter_mode = ["all", "alerts", "posts"][self.filter_type_index]
         self.kind_index = saved.get("kind_index", 0) if 0 <= saved.get("kind_index", 0) < len(CONTENT_KINDS) else 0
         
@@ -850,6 +854,7 @@ class CybrWireApp(App):
             "cold_war": self.cold_war_mode,
             "theme": self.theme_mode,
             "filter_type_index": self.filter_type_index,
+            "alerts_default": True,
             "kind_index": self.kind_index,
             "watch_only": self.watch_only,
             "group_dupes": self.group_dupes,
@@ -1272,7 +1277,9 @@ class CybrWireApp(App):
                    "rss": lambda r, n, f: parse_rss(r.text, n, f),
                    "txt": lambda r, n, f: parse_txt(r.text, n, f),
                    "threatfox": lambda r, n, f: parse_threatfox(r.json(), n, f),
-                   "urlhaus": lambda r, n, f: parse_urlhaus(r.json(), n, f)}
+                   "urlhaus": lambda r, n, f: parse_urlhaus(r.json(), n, f),
+                   "circl": lambda r, n, f: parse_circl(r.json(), n, f),
+                   "euvd": lambda r, n, f: parse_euvd(r.json(), n, f)}
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
         self.wire.begin_sweep(len(all_sources))
 
@@ -1282,7 +1289,15 @@ class CybrWireApp(App):
                 currently_loading = src['name']
                 self.wire.feed_started(src['name'])
                 try:
-                    return await fetch_and_parse(c, src)
+                    # Slow-moving lists only need asking now and then
+                    interval = src.get("interval_minutes")
+                    cached = self.feed_cache.get(src['name'])
+                    if interval and cached and time.monotonic() - cached[0] < interval * 60:
+                        return cached[1]
+                    result = await fetch_and_parse(c, src)
+                    if interval:
+                        self.feed_cache[src['name']] = (time.monotonic(), result)
+                    return result
                 finally:
                     self.wire.feed_done()
 
@@ -1292,6 +1307,9 @@ class CybrWireApp(App):
                                  headers={"Auth-Key": abusech_key})
             elif src["type"] == "urlhaus":
                 r = await c.get(src["url"], headers={"Auth-Key": abusech_key})
+            elif src["type"] == "circl":  # Only recent sightings: the full list runs to tens of thousands
+                since = (datetime.now(timezone.utc) - timedelta(days=SIGHTING_DAYS)).date().isoformat()
+                r = await c.get(f"{src['url']}&date_from={since}")
             else:
                 r = await c.get(src["url"], **CONFIG.feed_request_parts(src))
             r.raise_for_status()
@@ -1345,6 +1363,8 @@ class CybrWireApp(App):
         # Exploit-likelihood scores for every CVE mentioned (one batched, free request)
         await cve_intel.fetch_epss(m.upper() for a in alert_queue for m in CVE_RE.findall(f"{a['title']} {a['summary']}"))
         
+        # After EPSS, because the evidence depends on those scores
+        alert_queue = evidence.apply_evidence(alert_queue)
         known = set(STATE.first_seen)
         STATE.record_alerts(alert_queue)
         STATE.save()
@@ -1360,7 +1380,7 @@ class CybrWireApp(App):
         settings = CONFIG.notifications
         if not notify.is_configured(settings):
             return
-        triggers = settings.get("triggers") or ["watchlist"]
+        triggers = settings.get("triggers") or notify.DEFAULT_TRIGGERS
         selected = notify.select_new(alert_queue, STATE.notified, self.watchlist, triggers, self.duplicate_groups().leader_of)
         now = datetime.now(timezone.utc).isoformat()
         if not STATE.settings.get("notifications_started"):
@@ -1449,7 +1469,7 @@ class CybrWireApp(App):
     def wire_tick(self):
         """Keep the Live Wire current. It only redraws when what it shows has changed."""
         clock = time.monotonic()
-        self.wire.tick(clock, lambda: quiet_items(alert_queue, self.watchlist, self.duplicate_groups().leader_of, self.recency_hours))
+        self.wire.tick(clock, lambda: wire_items(alert_queue, self.watchlist, self.duplicate_groups().leader_of))
         if self.wire.expire_fresh(clock):
             self.mark_dirty()
         try:
@@ -1471,41 +1491,60 @@ class CybrWireApp(App):
         sound.play(self.sound, self.bell)
     
     def action_jump_to_wire(self):
-        """Show the alert on the Live Wire in the feed"""
+        """Show what's on the Live Wire in the feed"""
         shown = self.wire.shown
-        if shown:
-            self.jump_to_alert(shown.alert)
+        if not shown:
+            return
+        if shown.item.search:  # A campaign: every claim by that group
+            self.finish_typing()
+            self.main_view_mode = "alerts"
+            self.panel_focus = "main"
+            self.query_one("#search-box", SearchBox).value = shown.item.search
+            self.search_query = shown.item.search
+            self.feed_at_top = True
+            self.update_display()
+            return
+        self.jump_to_alert(shown.item.alert)
     
     def jump_to_alert(self, alert):
-        """Select an alert in the feed, clearing any filter that hides it"""
+        """Select an alert in the feed, widening the Data Age or clearing filters only as needed"""
         self.finish_typing()
         self.main_view_mode = "alerts"
         self.panel_focus = "main"
         key = alert_key(alert)
-        if not any(alert_key(a) == key for a in self.filtered_alerts()):
+        
+        def row_of():
+            return next((i for i, a in enumerate(self.filtered_alerts()) if alert_key(a) == key), None)
+        
+        alert_hours = (datetime.now(timezone.utc) - alert["ts"]).total_seconds() / 3600
+        if alert_hours >= self.recency_hours:
+            for index, hours in enumerate((24, 48, 168)):
+                if alert_hours < hours:
+                    self.data_age_index, self.recency_hours = index, hours
+                    break
+        if row_of() is None:
             self.search_query = ""
             self.query_one("#search-box", SearchBox).value = ""
             self.watch_only = False
             self.kind_index = 0
+        if row_of() is None:
             self.filter_type_index = 0
             self.filter_mode = "all"
-        rows = self.filtered_alerts()
-        row = next((i for i, a in enumerate(rows) if alert_key(a) == key), None)
+        row = row_of()
         self.update_display()
         if row is None:
-            self.notify("That alert is older than the Data Age window. Press d to widen it", timeout=4)
+            self.notify("That alert is older than the Data Age window", timeout=4)
             return
         self.query_one("#feed-table", ViewTable).move_cursor(row=row, animate=False, scroll=True)
     
     def announce_arrivals(self, arrivals):
         """One sound per check at most, and only for what's worth interrupting someone for"""
-        if self.sound != sound.OFF and any(a["severity"] == "zeroday" or self.watchlist.hits(a) for a in arrivals):
+        if self.sound != sound.OFF and any((a.get("evidence") and a["evidence"].urgent) or self.watchlist.hits(a) for a in arrivals):
             sound.play(self.sound, self.bell)
     
     def is_alert(self, item):
-        """Classify item as alert vs blog post"""
-        # Simple rule: INFO = blog post, everything else = alert
-        return item["severity"] != "info"
+        """Something happening that you may need to act on, rather than general reading"""
+        return evidence.is_alert(item, self.watchlist.hits(item))
     
     METRICS_WIDTH = 19  # Dashboard label plus its count
     AUTO_FOCUS = ""  # Keys go through on_key; only the search box ever takes focus
@@ -1532,7 +1571,8 @@ class CybrWireApp(App):
             alerts = [a for a in alerts if a.get("kind") != "indicators"]
         if self.watch_only:
             alerts = [a for a in alerts if self.watchlist.hits(a)]
-        if self.filter_mode == "alerts":
+        # Search and an explicit content type look past the default Alerts filter, or they'd seem broken
+        if self.filter_mode == "alerts" and not searching and kind == "all":
             alerts = [a for a in alerts if self.is_alert(a)]
         elif self.filter_mode == "posts":
             alerts = [a for a in alerts if not self.is_alert(a)]
@@ -1662,6 +1702,9 @@ class CybrWireApp(App):
         if label != sev.upper():
             label += f" · {sev.upper()}"  # e.g. FLASH · ZERODAY
         text.append(f" {label} " if sev in ("critical", "zeroday") else label, style=p.badge(sev))
+        ev = alert.get("evidence")
+        if ev:
+            text.append(f"  {ev.tier}", style=f"bold {p.severity(sev)}")
         text.append(f"  {alert['source']}  •  {when}", style=p.muted)
         if STATE.is_new(alert):
             text.append("  ")
@@ -1676,6 +1719,13 @@ class CybrWireApp(App):
         if others:
             text.append("Also reported by ", style=f"bold {p.accent}")
             text.append(", ".join(dict.fromkeys(a["source"] for a in others)) + "\n", style=p.muted)
+        if ev:
+            text.append("Why  ", style=f"bold {p.accent}")
+            text.append(" · ".join(ev.reasons) + "\n", style=p.text)
+            if ev.action:
+                text.append("Do   ", style=f"bold {p.accent}")
+                due = evidence.due_text(ev, datetime.now(timezone.utc))
+                text.append(ev.action + (f" ({due})" if due else "") + "\n", style=p.text)
         
         all_cves = self.alert_cves(alert)
         cves = all_cves[:3]
@@ -1769,8 +1819,10 @@ class CybrWireApp(App):
                             Text(a.get("threat") or "", style=p.text, no_wrap=True, overflow="ellipsis"),
                             Text(a["source"], style=p.muted, no_wrap=True, overflow="ellipsis")]
         urgent = sev in ("critical", "zeroday")
-        return cells + [Text(f" {p.severity_name(sev)} " if urgent else p.severity_name(sev), style=p.badge(sev)),
-                        self.feed_title_cell(a, False)]
+        # Cold War keeps its message precedence words; other themes say how strong the evidence is
+        ev = a.get("evidence")
+        label = ev.tier if ev and not p.monochrome else p.severity_name(sev)
+        return cells + [Text(f" {label} " if urgent else label, style=p.badge(sev)), self.feed_title_cell(a, False)]
     
     def empty_feed_reason(self):
         if self.watch_only and not self.watchlist.terms:
@@ -1779,6 +1831,8 @@ class CybrWireApp(App):
             return "No watchlist hits under these filters: press w to show everything"
         if self.search_query:
             return "Nothing matches this search under the f and 4 filters"
+        if self.filter_mode == "alerts" and self.active_kind == "all":
+            return "Nothing with evidence behind it in this window: press f to see everything, or d for a longer window"
         return "Nothing matches the current filters"
     
     def sync_feed_view(self):
@@ -2070,25 +2124,28 @@ class CybrWireApp(App):
         # don't count as "incoming"
         dated_alerts = [a for a in source_filtered_queue if not a.get("undated")]
         
-        counts = Counter(a["severity"] for a in window_alerts)
+        # Blocklist rows are lookups, not events: a thousand listed IPs say nothing about
+        # exploitation, so threat counts and meters only read stories
+        stories = [a for a in window_alerts if a.get("kind") != "indicators"]
+        counts = Counter(a["severity"] for a in stories)
         critical_count, zeroday_count = counts["critical"], counts["zeroday"]
         ransomware_count, apt_count, exploit_count = counts["ransomware"], counts["apt"], counts["exploit"]
         filtered_count = len(window_alerts)
         new_count = sum(1 for a in dated_alerts if now - a["ts"] < timedelta(hours=1))
         ioc_count = sum(1 for a in window_alerts if a.get("kind") == "indicators")
-        rate = filtered_count / max(self.recency_hours, 1)
+        tiers = Counter(a["evidence"].tier for a in window_alerts if a.get("evidence"))
         
         # --- Metrics (left) and source mix (right) ---
         metrics_list = [
-            ("Total Alerts", filtered_count, p.text),
-            ("Critical/KEV", critical_count, p.critical),
-            ("Zero-Day", zeroday_count, p.zeroday),
+            ("Items Seen", filtered_count, p.text),
+            ("Alerts", sum(1 for a in stories if self.is_alert(a)), p.text),
+            ("Confirmed", tiers[evidence.CONFIRMED], p.critical),
+            ("Likely", tiers[evidence.LIKELY], p.exploit),
+            ("Reported", tiers[evidence.REPORTED], p.zeroday),
             ("Ransomware", ransomware_count, p.ransomware),
-            ("APT Activity", apt_count, p.apt),
-            ("Exploits/POC", exploit_count, p.exploit),
+            ("Exploits", exploit_count, p.exploit),
             ("IOCs Listed", ioc_count, p.text),
             ("Incoming (1h)", new_count, p.text),
-            ("Avg/Hour", f"{rate:.0f}/hr", p.text),
         ]
         # Which feed sets are loaded: curated (vetted) vs custom and community contributions
         source_counts = Counter(a.get("source_file", "curated") for a in window_alerts)
@@ -2119,12 +2176,17 @@ class CybrWireApp(App):
         
         # --- Heat meters ---
         def pct_of(n):
-            return n / filtered_count * 100 if filtered_count else 0
+            return n / len(stories) * 100 if stories else 0
+
+        def pct_text(n):
+            """One zero-day among hundreds of items must not read as none"""
+            pct = pct_of(n)
+            return "<1%" if 0 < pct < 1 else f"{int(pct)}%"
         total_threats = critical_count + zeroday_count + ransomware_count + apt_count + exploit_count
         heat_pct = pct_of(total_threats)
         # Weighted score: zero-days 5x, critical/KEV 4x, ransomware & APT 3x, exploits 2x
         weighted = critical_count * 4 + zeroday_count * 5 + (ransomware_count + apt_count) * 3 + exploit_count * 2
-        master_pct = min(100, weighted / (filtered_count * 17) * 100) if filtered_count else 0
+        master_pct = min(100, weighted / (len(stories) * 17) * 100) if stories else 0
         defcon = 5 if master_pct < 20 else 4 if master_pct < 40 else 3 if master_pct < 60 else 2 if master_pct < 80 else 1
         last_zeroday_time = max((a["ts"] for a in window_alerts if a["severity"] == "zeroday"), default=None)
         time_since_zeroday = f"{age(last_zeroday_time)} ago" if last_zeroday_time else "none in window"
@@ -2133,10 +2195,10 @@ class CybrWireApp(App):
         
         meters = [
             ("Heat Level", f"{int(heat_pct)}%", heat_pct, p.level(heat_pct)),
-            ("Ransomware", f"{int(pct_of(ransomware_count))}%", pct_of(ransomware_count), p.ransomware),
-            ("APT", f"{int(pct_of(apt_count))}%", pct_of(apt_count), p.apt),
-            ("Zero-Day", f"{int(pct_of(zeroday_count))}%", pct_of(zeroday_count), p.zeroday),
-            ("Exploit", f"{int(pct_of(exploit_count))}%", pct_of(exploit_count), p.exploit),
+            ("Ransomware", pct_text(ransomware_count), pct_of(ransomware_count), p.ransomware),
+            ("APT", pct_text(apt_count), pct_of(apt_count), p.apt),
+            ("Zero-Day", pct_text(zeroday_count), pct_of(zeroday_count), p.zeroday),
+            ("Exploit", pct_text(exploit_count), pct_of(exploit_count), p.exploit),
             ("Doomsday", f"{self.doomsday_seconds}s", doomsday_pct, p.bad),
             (f"DEFCON {defcon}", f"{int(master_pct)}%", master_pct, p.level(master_pct)),
         ]
@@ -2180,7 +2242,7 @@ class CybrWireApp(App):
             insights.append(("Dominant threat", f"{name} wave", color))
         insights.append(("Last zero-day", time_since_zeroday, p.zeroday if last_zeroday_time else p.muted))
         
-        # Alert Velocity - alerts published in the last 24h vs the 24h before. Each feed only
+        # Item velocity - items published in the last 24h vs the 24h before. Each feed only
         # keeps its newest items, so only count feeds whose history reaches back 48h;
         # otherwise busy feeds make every day look like a spike.
         oldest = {}
@@ -2193,17 +2255,17 @@ class CybrWireApp(App):
             ratio = last_day / prev_day
             status, color = (("Spiking", p.bad) if ratio > 1.5 else ("Increasing", p.warn) if ratio > 1.2
                              else ("Cooling", p.good) if ratio < 0.7 else ("Steady", p.text))
-            insights.append(("Alert velocity", f"{status} ({last_day} vs {prev_day} prior day)", color))
+            insights.append(("Item velocity", f"{status} ({last_day} vs {prev_day} prior day)", color))
         else:
-            insights.append(("Alert velocity", "not enough history", p.muted))
+            insights.append(("Item velocity", "not enough history", p.muted))
         
         vectors = Counter()
-        for alert in window_alerts:
+        for alert in stories:
             title_lower = alert["title"].lower()
             vectors.update(v for v in ("Malware", "Ransomware", "Web", "Exploit", "Phishing", "Email") if v.lower() in title_lower)
         if vectors:
             vector, n = vectors.most_common(1)[0]
-            insights.append(("Primary vector", f"{vector} ({int(n / max(filtered_count, 1) * 100)}%)", p.text))
+            insights.append(("Primary vector", f"{vector} ({pct_text(n)})", p.text))
         
         victims = [m for m in (RANSOM_VICTIM_RE.match(a["title"]) for a in window_alerts
                                if a["title"].startswith("RANSOMWARE VICTIM")) if m]

@@ -11,9 +11,10 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 
+import evidence  # noqa: E402
 import livewire  # noqa: E402
 import sound  # noqa: E402
-from livewire import LiveWire, quiet_items  # noqa: E402
+from livewire import LiveWire, wire_items  # noqa: E402
 from watchlist import Watchlist  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
@@ -25,6 +26,12 @@ def alert(title, severity="info", source=None, hours=1, kind="news", **extra):
             "url": f"https://x.test/{title}", "ts": NOW - timedelta(hours=hours), **extra}
 
 
+def with_evidence(title, tier=evidence.CONFIRMED, score=100, recent=True, **extra):
+    a = alert(title, **extra)
+    a["evidence"] = evidence.Evidence(tier, score, ["because"], cve=extra.get("cve"), recent=recent)
+    return a
+
+
 class ArrivalTests(unittest.TestCase):
     def wire(self):
         wire = LiveWire()
@@ -33,20 +40,29 @@ class ArrivalTests(unittest.TestCase):
 
     def test_first_check_of_a_session_announces_nothing(self):
         wire = LiveWire()
-        self.assertEqual(wire.end_sweep([alert("a")], NO_TERMS, {}, 0.0), [])
+        self.assertEqual(wire.end_sweep([with_evidence("a")], NO_TERMS, {}, 0.0), [])
         self.assertEqual(wire.session_count, 0)
         self.assertEqual(wire.queue, [])
 
-    def test_most_severe_comes_first_and_watchlist_breaks_ties(self):
+    def test_only_evidence_or_a_watchlist_hit_is_announced(self):
         terms = Watchlist(["vendor"])
         wire = self.wire()
-        wire.end_sweep([alert("plain"), alert("vendor flaw"), alert("big", "zeroday"), alert("other", "exploit")], terms, {}, 1.0)
-        self.assertEqual([a["title"] for a in wire.queue], ["big", "other", "vendor flaw", "plain"])
+        routine, watched, proven = alert("routine"), alert("vendor news"), with_evidence("proven")
+        arrivals = wire.end_sweep([routine, watched, proven], terms, {}, 1.0)
+        self.assertEqual(arrivals, [proven, watched])
+        self.assertEqual([i.label for i in wire.queue], [evidence.CONFIRMED, "WATCHLIST"])
+        self.assertEqual(wire.session_count, 2)
+        self.assertTrue(wire.is_fresh(routine))  # Still marked LIVE in the feed
 
-    def test_a_burst_is_capped_and_counted(self):
+    def test_an_old_exploited_cve_in_a_new_story_is_not_news(self):
         wire = self.wire()
-        wire.end_sweep([alert(f"s{i}") for i in range(26)], NO_TERMS, {}, 1.0)
+        self.assertEqual(wire.end_sweep([with_evidence("old", recent=False)], NO_TERMS, {}, 1.0), [])
+
+    def test_strongest_first_and_a_burst_is_capped_and_counted(self):
+        wire = self.wire()
+        wire.end_sweep([with_evidence(f"s{i}", score=i) for i in range(26)], NO_TERMS, {}, 1.0)
         self.assertEqual(wire.session_count, 26)
+        self.assertEqual(wire.queue[0].headline, "s25")
         self.assertEqual(len(wire.queue), livewire.MAX_ARRIVALS_SHOWN)
         for _ in range(livewire.MAX_ARRIVALS_SHOWN):
             wire.shown = None
@@ -56,9 +72,9 @@ class ArrivalTests(unittest.TestCase):
 
     def test_noise_is_not_news(self):
         wire = self.wire()
-        leader = alert("second report")
-        old = alert("backlog from a newly added feed", hours=24 * 30)
-        arrivals = wire.end_sweep([leader, old, alert("ioc", kind="indicators"), alert("undated", undated=True)],
+        leader = with_evidence("second report")
+        old = with_evidence("backlog from a newly added feed", hours=24 * 30)
+        arrivals = wire.end_sweep([leader, old, with_evidence("ioc", kind="indicators"), with_evidence("undated", undated=True)],
                                   NO_TERMS, {livewire.alert_key(leader): "someone"}, 1.0)
         self.assertEqual(arrivals, [])
 
@@ -72,31 +88,35 @@ class ArrivalTests(unittest.TestCase):
         self.assertFalse(wire.is_fresh(a))
 
 
+def item(name):
+    return livewire.WireItem("REPORTED", name, "", alert(name))
+
+
 class RotationTests(unittest.TestCase):
-    def test_quiet_items_take_turns_at_their_pace(self):
+    def test_items_take_turns_at_their_pace(self):
         wire = LiveWire()
-        items = [alert("a"), alert("b")]
+        items = [item("a"), item("b")]
         wire.tick(0.0, lambda: items)
-        self.assertEqual(wire.shown.alert["title"], "a")
+        self.assertEqual(wire.shown.item.headline, "a")
         wire.tick(livewire.QUIET_SECONDS - 1, lambda: items)
-        self.assertEqual(wire.shown.alert["title"], "a")
+        self.assertEqual(wire.shown.item.headline, "a")
         wire.tick(livewire.QUIET_SECONDS, lambda: items)
-        self.assertEqual(wire.shown.alert["title"], "b")
+        self.assertEqual(wire.shown.item.headline, "b")
         wire.tick(livewire.QUIET_SECONDS * 2, lambda: items)
-        self.assertEqual(wire.shown.alert["title"], "a")
+        self.assertEqual(wire.shown.item.headline, "a")
 
     def test_an_arrival_interrupts_a_quiet_item_but_not_another_arrival(self):
         wire = LiveWire()
         wire.baseline_done = True
-        wire.tick(0.0, lambda: [alert("quiet")])
-        wire.end_sweep([alert("one", "zeroday"), alert("two")], NO_TERMS, {}, 1.0)
+        wire.tick(0.0, lambda: [item("quiet")])
+        wire.end_sweep([with_evidence("one", score=9), with_evidence("two", score=1)], NO_TERMS, {}, 1.0)
         wire.tick(1.0, lambda: [])
         self.assertTrue(wire.shown.arrival)
-        self.assertEqual(wire.shown.alert["title"], "one")
+        self.assertEqual(wire.shown.item.headline, "one")
         wire.tick(2.0, lambda: [])
-        self.assertEqual(wire.shown.alert["title"], "one")
+        self.assertEqual(wire.shown.item.headline, "one")
         wire.tick(1.0 + livewire.ARRIVAL_SECONDS, lambda: [])
-        self.assertEqual(wire.shown.alert["title"], "two")
+        self.assertEqual(wire.shown.item.headline, "two")
 
     def test_nothing_to_show_is_said_plainly(self):
         wire = LiveWire()
@@ -104,26 +124,47 @@ class RotationTests(unittest.TestCase):
         self.assertIsNone(wire.shown)
 
 
-class QuietItemTests(unittest.TestCase):
-    def test_most_severe_first_within_the_window(self):
-        items = quiet_items([alert("info"), alert("exploit", "exploit"), alert("zero", "zeroday"), alert("kev", "critical"),
-                             alert("too old", "zeroday", hours=100)], NO_TERMS, {}, 24)
-        self.assertEqual([a["title"] for a in items], ["kev", "zero", "exploit", "info"])
+class WireItemTests(unittest.TestCase):
+    def test_strongest_evidence_leads_and_says_why(self):
+        strong = with_evidence("strong", score=150)
+        weak = with_evidence("weak", evidence.REPORTED, score=60)
+        items = wire_items([weak, strong, alert("no evidence at all")], NO_TERMS, {}, NOW)
+        self.assertEqual([i.headline for i in items], ["strong", "weak"])
+        self.assertEqual(items[0].label, evidence.CONFIRMED)
+        self.assertIn("because", items[0].detail)
 
-    def test_watchlist_hits_lead_their_severity(self):
-        items = quiet_items([alert("plain", "exploit"), alert("vendor bug", "exploit", hours=5)], Watchlist(["vendor"]), {}, 24)
-        self.assertEqual(items[0]["title"], "vendor bug")
+    def test_one_line_per_cve_named_by_product(self):
+        a = with_evidence("story one", cve="CVE-1", source="A")
+        b = with_evidence("story two", cve="CVE-1", source="B", score=120)
+        b["evidence"].name = "Acme Router"
+        items = wire_items([a, b], NO_TERMS, {}, NOW)
+        self.assertEqual([i.headline for i in items], ["Acme Router CVE-1"])
 
-    def test_one_source_cannot_take_over(self):
-        victims = [alert(f"victim {i}", "ransomware", source="Ransomware.live") for i in range(20)]
-        items = quiet_items(victims + [alert("news")], NO_TERMS, {}, 24)
-        self.assertEqual(sum(a["source"] == "Ransomware.live" for a in items), livewire.MAX_QUIET_PER_SOURCE)
-        self.assertIn("news", [a["title"] for a in items])
+    def test_watchlist_outranks_slightly_stronger_evidence(self):
+        items = wire_items([with_evidence("plain", score=110), with_evidence("vendor bug", score=100)], Watchlist(["vendor"]), {}, NOW)
+        self.assertEqual(items[0].headline, "vendor bug")
+
+    def test_old_exploited_cves_and_week_old_stories_drop_out(self):
+        items = wire_items([with_evidence("old cve", recent=False), with_evidence("stale", hours=24 * 8)], NO_TERMS, {}, NOW)
+        self.assertEqual(items, [])
+
+    def test_ransomware_claims_become_one_campaign_line(self):
+        claims = [alert(f"RANSOMWARE VICTIM: v{i} (medusalocker) [US]", "ransomware", source="Ransomware.live") for i in range(17)]
+        claims += [alert("RANSOMWARE VICTIM: lonely (tinygang)", "ransomware", source="Ransomware.live")]
+        items = wire_items(claims, NO_TERMS, {}, NOW)
+        self.assertEqual([i.headline for i in items], ["medusalocker claimed 17 victims in 48h"])
+        self.assertEqual(items[0].label, "CAMPAIGN")
+        self.assertEqual(items[0].search, "medusalocker")
+
+    def test_breaches_follow_the_evidence(self):
+        items = wire_items([alert("Harvard - 850,537 breached accounts", source="Have I Been Pwned Latest Breaches"),
+                            with_evidence("proven")], NO_TERMS, {}, NOW)
+        self.assertEqual([i.label for i in items], [evidence.CONFIRMED, "BREACH"])
 
     def test_indicators_undated_and_duplicates_stay_out(self):
-        dup = alert("dup")
-        items = quiet_items([dup, alert("ioc", kind="indicators"), alert("undated", undated=True)], NO_TERMS,
-                            {livewire.alert_key(dup): "x"}, 24)
+        dup = with_evidence("dup")
+        items = wire_items([dup, with_evidence("ioc", kind="indicators"), with_evidence("undated", undated=True)], NO_TERMS,
+                           {livewire.alert_key(dup): "x"}, NOW)
         self.assertEqual(items, [])
 
 

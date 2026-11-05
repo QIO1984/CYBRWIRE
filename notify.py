@@ -18,7 +18,8 @@ MAX_LISTED = 8                  # Alerts named in one message; the rest are coun
 MAX_AGE = timedelta(hours=48)   # A feed that resurfaces old items shouldn't alert
 TIMEOUT = 15
 TARGET_KEYS = ("ntfy_url", "discord_webhook", "slack_webhook")
-TRIGGERS = ("watchlist", "kev", "zeroday")
+TRIGGERS = ("watchlist", "confirmed", "kev", "zeroday")
+DEFAULT_TRIGGERS = ["watchlist", "confirmed"]
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_MAX_TITLE = 250
 PUSHOVER_MAX_MESSAGE = 1024
@@ -36,6 +37,9 @@ def triggered_by(alert: Dict, watch_hits: List[str], triggers: List[str]) -> Opt
     """Why this alert deserves a notification, or None"""
     if "watchlist" in triggers and watch_hits:
         return "★ " + ", ".join(watch_hits)
+    ev = alert.get("evidence")
+    if "confirmed" in triggers and ev and ev.tier == "CONFIRMED" and ev.recent:
+        return " ".join(x for x in ("CONFIRMED", ev.name) if x)
     if "kev" in triggers and alert["title"].startswith("KEV ACTIVE"):
         return "KEV"
     if "zeroday" in triggers and alert["severity"] == "zeroday":
@@ -62,7 +66,12 @@ def build_message(selected: List[Tuple[Dict, str]]) -> Tuple[str, str]:
     """(title, body) in plain text"""
     count = len(selected)
     title = f"CybrWire: {count} new alert{'s' if count != 1 else ''}"
-    lines = [f"{reason} | {a['title'][:140]} ({a['source']})" for a, reason in selected[:MAX_LISTED]]
+    lines = []
+    for a, reason in selected[:MAX_LISTED]:
+        lines.append(f"{reason} | {a['title'][:140]} ({a['source']})")
+        action = a["evidence"].action if a.get("evidence") else ""
+        if action:
+            lines.append(f"  Action: {action[:160]}")
     if count > MAX_LISTED:
         lines.append(f"...and {count - MAX_LISTED} more")
     return title, "\n".join(lines)

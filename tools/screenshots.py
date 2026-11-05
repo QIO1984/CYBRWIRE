@@ -38,11 +38,11 @@ from cve_card import CveCard  # noqa: E402
 from key_card import KeyCard  # noqa: E402
 from keystore import KEYCHAIN, SLOTS, KeyStore  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
-from livewire import Shown, quiet_items  # noqa: E402
+from livewire import Shown, wire_items  # noqa: E402
 
 SIZE = (150, 46)
 FIREFOX_ATTEMPTS = 3
-WATCH_TERMS = ["Fortinet", "Ivanti", "Citrix*", "Cisco", "ransomware"]
+WATCH_TERMS = ["Fortinet", "Ivanti", "Citrix*", "Cisco"]
 SAMPLE_KEYS = {"anthropic_api_key": "sample000000000000000e5f6", "virustotal_api_key": "sample000000000000000a1b2", "abuse_ch_api_key": "sample000000000000000c3d4"}
 
 
@@ -130,7 +130,7 @@ async def main(output):
         await snap("dashboard", synthwave)
 
         # The bar mid-check with an arrival on show. The alert is real; only its timing is staged.
-        lead = quiet_items(cybrwire.alert_queue, app.watchlist, app.duplicate_groups().leader_of, app.recency_hours)[0]
+        lead = wire_items(cybrwire.alert_queue, app.watchlist, app.duplicate_groups().leader_of)[0]
         app.wire.begin_sweep(len(cybrwire.CONFIG.sources))
         for _ in range(len(cybrwire.CONFIG.sources) * 2 // 3):
             app.wire.feed_done()

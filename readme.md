@@ -163,11 +163,23 @@ You can keep a Primary and an Alternate provider and model, and switch between t
 
 ## Live Wire
 
-The bar across the top shows what the app is really doing. Its title follows each feed check as it runs, then counts down to the next one. Anything first seen while the app is open is announced as `JUST IN`, most severe first, and wears a `LIVE` badge in the feed for 90 seconds. When nothing is arriving, the most severe current items take turns, with your watchlist hits first. Press `l` or click the bar to jump to the alert on show.
+The bar across the top shows what the app is really doing. Its title follows each feed check as it runs, then counts down to the next one. Between arrivals, what has the strongest evidence of exploitation in the last 7 days takes turns, along with busy ransomware campaigns and new breaches, and each line says why it's there. New items with evidence, or watchlist hits, are announced as `JUST IN`. Anything new wears a `LIVE` badge in the feed for 90 seconds. Press `l` or click the bar to jump to what's on show.
+
+## Evidence
+
+Keywords can't tell you whether something is being attacked, so stories are judged on outside signals:
+
+| Label | Means |
+|---|---|
+| `CONFIRMED` | On an official exploited list: CISA KEV or ENISA EUVD. New entries show what to do, with CISA's deadline where it still applies |
+| `LIKELY` | A high EPSS exploit-likelihood score, or public exploit code plus a raised score |
+| `REPORTED` | News headlines or a CIRCL sighting say it's exploited, without official confirmation |
+
+The default **Alerts** filter (`f`) shows those, plus watchlist hits, new breaches, threat-actor stories and ransomware stories. Press `f` for everything. Search and the content types (`4`) look past it, and individual ransomware claims live under `4`. The same evidence decides the dashboard counts, sounds and notifications.
 
 Feeds are checked every 5 minutes, so an alert can't appear sooner than its source publishes it and the next check finds it.
 
-Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for a new zero-day or watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
+Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for something newly confirmed, a reported zero-day or a watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
 
 ## Keyboard or Mouse
 
@@ -289,7 +301,7 @@ An incident is created when independent sources point at the same thing:
 Each incident explains itself: what it is (the CISA KEV description when the CVE is known exploited), why the alerts were grouped, when it was first and last reported and by whom, related incidents, and the latest reports.
 
 ### Dashboard
-Metrics are computed from the alerts in your data window. The ransomware hotspot and most active group come from Ransomware.live victim posts, alert velocity compares the last 24 hours with the 24 hours before, and the Doomsday Clock shows the [Bulletin of the Atomic Scientists](https://thebulletin.org/doomsday-clock/) setting, checked once a day.
+Metrics are computed from the alerts in your data window. The ransomware hotspot and most active group come from Ransomware.live victim posts, item velocity compares the last 24 hours with the 24 hours before, and the Doomsday Clock shows the [Bulletin of the Atomic Scientists](https://thebulletin.org/doomsday-clock/) setting, checked once a day.
 
 ### API Tools
 Query threat intelligence APIs directly from CybrWire:

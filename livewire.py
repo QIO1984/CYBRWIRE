@@ -1,11 +1,12 @@
 """
 The Live Wire: the bar across the top that shows what the app is really doing
 
-It never invents activity. The title follows the real feed checks, anything first
-seen during this session is announced, and when nothing is arriving the most
-severe current items take turns.
+It never invents activity. The title follows the real feed checks, anything with
+evidence behind it is announced as it arrives, and in between what has the
+strongest evidence takes turns. Every line says why it's there.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
@@ -14,25 +15,37 @@ from rich.text import Text
 from textual import events
 from textual.widgets import Static
 
-from incidents import SEVERITY_RANK, age
+from evidence import CONFIRMED, due_text, is_breach
+from incidents import age
 from state import alert_key
 
 ARRIVAL_SECONDS = 6       # How long an arrival stays up
 QUIET_SECONDS = 8         # How long each item stays up when nothing is arriving
+JUST_IN_HOURS = 6         # Older than this, an arrival is new to you but it isn't "just in"
 FRESH_SECONDS = 90        # How long an arrival wears the LIVE badge in the feed
 MAX_ARRIVALS_SHOWN = 5    # Per check; a bigger burst is counted as "+N more"
 MAX_ARRIVAL_AGE = timedelta(hours=48)  # A newly added feed's backlog isn't news
-QUIET_ITEMS = 10
-MAX_QUIET_PER_SOURCE = 3  # So one busy source can't take over the bar
+WIRE_WINDOW = timedelta(days=7)        # Exploitation stays news longer than the default 24h Data Age
+CAMPAIGN_WINDOW = timedelta(hours=48)
+WATCH_BOOST = 25
+MAX_EVIDENCE_ITEMS = 10
+MAX_CAMPAIGNS = 2
+MIN_CAMPAIGN_CLAIMS = 5
+MAX_BREACHES = 2
+CLAIM_RE = re.compile(r"^RANSOMWARE VICTIM: .* \(([^)]+)\)")
 TYPE_RATE = 60            # Cold War: characters per second
 PULSE_SECONDS = 0.4       # Dot flip while a check runs
 SETTLE_SECONDS = 2        # Dot stays bright this long after a check
 SOUND_LABEL_WIDTH = 24    # Clickable end of the bottom border
 
 
-def rank(alert: Dict, watchlist) -> tuple:
-    """Most severe first, watchlist hits first within a severity, then newest"""
-    return (SEVERITY_RANK.get(alert.get("severity"), 99), not watchlist.hits(alert), -alert["ts"].timestamp())
+@dataclass
+class WireItem:
+    label: str
+    headline: str
+    detail: str
+    alert: Dict
+    search: str = ""  # Clicking shows this search instead of one alert
 
 
 def eligible(alert: Dict, leader_of: Dict) -> bool:
@@ -40,23 +53,69 @@ def eligible(alert: Dict, leader_of: Dict) -> bool:
     return alert.get("kind") != "indicators" and alert_key(alert) not in leader_of
 
 
-def quiet_items(alerts: List[Dict], watchlist, leader_of: Dict, recency_hours: int, now: Optional[datetime] = None) -> List[Dict]:
+def significant(alert: Dict, watchlist) -> bool:
+    """Worth announcing the moment it arrives"""
+    ev = alert.get("evidence")
+    if watchlist.hits(alert):
+        return True
+    return bool(ev) and not (ev.tier == CONFIRMED and not ev.recent)
+
+
+def evidence_item(alert: Dict, now: datetime) -> WireItem:
+    ev = alert["evidence"]
+    headline = f"{ev.name} {ev.cve}" if ev.name and ev.cve else alert["title"]
+    detail = [*ev.reasons[:3], due_text(ev, now)]
+    return WireItem(ev.tier, headline, " · ".join(d for d in detail if d), alert)
+
+
+def arrival_item(alert: Dict, now: datetime) -> WireItem:
+    if alert.get("evidence"):
+        return evidence_item(alert, now)
+    return WireItem("WATCHLIST", alert["title"], alert["source"], alert)
+
+
+def wire_items(alerts: List[Dict], watchlist, leader_of: Dict, now: Optional[datetime] = None) -> List[WireItem]:
+    """The rotation: what has evidence behind it, then ransomware campaigns and new breaches"""
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=recency_hours)
-    candidates = [a for a in alerts if a["ts"] >= cutoff and eligible(a, leader_of) and not a.get("undated")]
-    picked, per_source = [], {}
-    for a in sorted(candidates, key=lambda a: rank(a, watchlist)):
-        if per_source.get(a["source"], 0) < MAX_QUIET_PER_SOURCE:
-            per_source[a["source"]] = per_source.get(a["source"], 0) + 1
-            picked.append(a)
-            if len(picked) == QUIET_ITEMS:
-                break
-    return picked
+    window = [a for a in alerts if now - a["ts"] <= WIRE_WINDOW and eligible(a, leader_of) and not a.get("undated")]
+
+    def score(alert):
+        ev = alert["evidence"]
+        age_days = (now - alert["ts"]).total_seconds() / 86400
+        return ev.score + (WATCH_BOOST if watchlist.hits(alert) else 0) - age_days * 3
+
+    # One line per CVE, led by the strongest story about it
+    best = {}
+    for alert in window:
+        ev = alert.get("evidence")
+        if not ev or (ev.tier == CONFIRMED and not ev.recent):
+            continue
+        key = ev.cve or alert_key(alert)
+        if key not in best or score(alert) > score(best[key]):
+            best[key] = alert
+    ranked = sorted(best.values(), key=score, reverse=True)[:MAX_EVIDENCE_ITEMS]
+    items = [evidence_item(a, now) for a in ranked]
+
+    claims = {}
+    for alert in window:
+        match = CLAIM_RE.match(alert["title"])
+        if match and now - alert["ts"] <= CAMPAIGN_WINDOW:
+            claims.setdefault(match.group(1), []).append(alert)
+    busiest = sorted(claims.items(), key=lambda kv: -len(kv[1]))[:MAX_CAMPAIGNS]
+    for group, victims in busiest:
+        if len(victims) >= MIN_CAMPAIGN_CLAIMS:
+            latest = max(victims, key=lambda a: a["ts"])
+            items.append(WireItem("CAMPAIGN", f"{group} claimed {len(victims)} victims in 48h",
+                                  "Ransomware.live", latest, search=group))
+
+    breaches = sorted((a for a in window if is_breach(a)), key=lambda a: a["ts"], reverse=True)[:MAX_BREACHES]
+    items += [WireItem("BREACH", a["title"], "Have I Been Pwned", a) for a in breaches]
+    return items
 
 
 @dataclass
 class Shown:
-    alert: Dict
+    item: WireItem
     arrival: bool
     since: float
     more: int = 0
@@ -72,7 +131,7 @@ class LiveWire:
         self.last_check_clock = 0.0
         self.baseline_done = False  # The first check of a session only sets the baseline
         self.session_count = 0
-        self.queue: List[Dict] = []
+        self.queue: List[WireItem] = []
         self.more = 0
         self.fresh: Dict[str, float] = {}
         self.shown: Optional[Shown] = None
@@ -99,18 +158,20 @@ class LiveWire:
         if not self.baseline_done:
             self.baseline_done = True
             return []
-        arrivals = [a for a in first_seen_now if eligible(a, leader_of) and not a.get("undated")
-                    and now - a["ts"] <= MAX_ARRIVAL_AGE]
-        arrivals.sort(key=lambda a: rank(a, watchlist))
+        stories = [a for a in first_seen_now if eligible(a, leader_of) and not a.get("undated")
+                   and now - a["ts"] <= MAX_ARRIVAL_AGE]
+        self.fresh.update({alert_key(a): clock for a in stories})  # All of them get the LIVE badge in the feed
+        arrivals = [a for a in stories if significant(a, watchlist)]
+        arrivals.sort(key=lambda a: -((a.get("evidence").score if a.get("evidence") else 0)
+                                      + (WATCH_BOOST if watchlist.hits(a) else 0)))
         self.session_count += len(arrivals)
-        self.fresh.update({alert_key(a): clock for a in arrivals})
-        self.queue.extend(arrivals[:MAX_ARRIVALS_SHOWN])
+        self.queue.extend(arrival_item(a, now) for a in arrivals[:MAX_ARRIVALS_SHOWN])
         self.more += max(0, len(arrivals) - MAX_ARRIVALS_SHOWN)
         return arrivals
 
     # What's on the bar
 
-    def tick(self, clock: float, quiet: Callable[[], List[Dict]]) -> None:
+    def tick(self, clock: float, quiet: Callable[[], List[WireItem]]) -> None:
         """Move to the next item when the current one has had its time"""
         shown = self.shown
         if shown:
@@ -119,11 +180,11 @@ class LiveWire:
             if clock - shown.since < limit and (shown.arrival or not self.queue):
                 return
         if self.queue:
-            alert = self.queue.pop(0)
+            item = self.queue.pop(0)
             more = self.more if not self.queue else 0
             if not self.queue:
                 self.more = 0
-            self.shown = Shown(alert, True, clock, more)
+            self.shown = Shown(item, True, clock, more)
             return
         items = quiet()
         if not items:
@@ -204,21 +265,24 @@ class LiveWirePanel(Static):
         shown = app.wire.shown
         text = Text(no_wrap=True, overflow="ellipsis")
         if not shown:
-            text.append("All quiet: nothing to report in this data window", style=p.muted)
+            text.append("No exploitation evidence in the last 7 days. Feeds are still being checked", style=p.muted)
             return text
-        alert = shown.alert
+        item = shown.item
+        alert = item.alert
         sev = alert["severity"]
         if shown.arrival:
-            text.append(" JUST IN ", style=f"bold {p.bg} on {p.accent}")
+            just_in = datetime.now(timezone.utc) - alert["ts"] <= timedelta(hours=JUST_IN_HOURS)
+            text.append(" JUST IN " if just_in else " NEW ", style=f"bold {p.bg} on {p.accent}")
             text.append(" ")
         text.append(f"{age(alert['ts']):>3}  ", style=p.muted)
-        urgent = sev in ("critical", "zeroday")
-        text.append(f" {p.severity_name(sev)} " if urgent else p.severity_name(sev), style=p.badge(sev))
+        filled = item.label == CONFIRMED
+        badge = p.badge("critical") if filled else f"bold {p.severity(sev)}"
+        text.append(f" {item.label} " if filled else item.label, style=badge)
         text.append("  ")
         if app.watchlist.hits(alert):
             text.append("★ ", style=f"bold {p.warn}")
-        text.append(alert["title"], style=f"bold {p.text}" if urgent or shown.arrival else p.text)
-        text.append(f"  · {alert['source']}", style=p.muted)
+        text.append(item.headline, style=f"bold {p.text}")
+        text.append(f"  · {item.detail}", style=p.muted)
         if shown.more:
             text.append(f"  +{shown.more} more", style=f"bold {p.accent}")
         if p.monochrome:  # A teletype prints as you watch
