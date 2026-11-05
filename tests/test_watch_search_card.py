@@ -15,6 +15,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+from textual import events
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 import history  # noqa: E402
@@ -228,7 +230,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(160, 45)) as pilot:
                 await self.settle(pilot)
                 await pilot.press("slash", "q", "r")
-                self.assertEqual(app.prompt_buffer, "qr")
+                self.assertEqual(app.query_one("#search-box").value, "qr")
                 self.assertEqual(self.titles(app), [])
                 refresh.assert_not_called()
                 quit_.assert_not_called()
@@ -237,7 +239,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("enter")
                 self.assertIsNone(app.prompt)
                 self.assertEqual(app.search_query, "citrix")
-                self.assertEqual(app.hover_row, 0)
+                self.assertEqual(app.query_one("#feed-table").cursor_row, 0)
                 await pilot.press("escape")
                 self.assertEqual(app.search_query, "")
                 self.assertNotIn("Old Fortinet story", self.titles(app))
@@ -260,7 +262,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(160, 45)) as pilot:
             await self.settle(pilot)
             await pilot.press("slash", "4", "v", "w", "i", "tab", "a")
-            self.assertEqual(app.prompt_buffer, "4vwia")
+            self.assertEqual(app.query_one("#search-box").value, "4vwia")
             self.assertEqual(app.kind_index, 0)
             self.assertEqual(app.main_view_mode, "alerts")
             self.assertFalse(app.watch_only)
@@ -271,7 +273,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             await pilot.press("slash", *"ivanti", "down")
             self.assertIsNone(app.prompt)
-            self.assertEqual(app.hover_row, 0)
+            self.assertEqual(app.query_one("#feed-table").cursor_row, 0)
             self.assertEqual(app.selected_alert()["title"], SAMPLE[0]["title"])
 
     async def test_watch_only_and_editing_persist(self):
@@ -328,9 +330,127 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             await pilot.press("slash", *"e", "enter")
             await self.settle(pilot)
-            second = app.page_alerts[1]
-            await pilot.click("#feeds", offset=(10, 4))  # Border, padding, search bar, first row
-            self.assertIs(app.selected_alert(), second)
+            second = app.feed_rows[1]
+            with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+                await pilot.click("#feed-table", offset=(10, 1))
+                await self.settle(pilot)
+                self.assertIs(app.selected_alert(), second)
+                browser.assert_not_called()
+                await pilot.click("#feed-table", offset=(40, 1))  # Same row, another column
+                await self.settle(pilot)
+                browser.assert_called_once_with(second["url"])
+
+    async def test_feed_keeps_selection_when_new_alerts_arrive(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("down", "down")
+            chosen = app.selected_alert()
+            cybrwire.alert_queue.insert(0, alert("Brand new story"))
+            app.update_display()
+            await self.settle(pilot)
+            self.assertIs(app.selected_alert(), chosen)
+            self.assertEqual(app.query_one("#feed-table").cursor_row, app.feed_rows.index(chosen))
+
+    async def test_feed_scrolls_through_everything_without_pages(self):
+        cybrwire.alert_queue[:] = [alert(f"Story number {i}", hours=1 + i / 100) for i in range(300)]
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            table = app.query_one("#feed-table")
+            self.assertEqual(table.row_count, 300)
+            await pilot.press("right")
+            await self.settle(pilot)
+            self.assertGreater(table.cursor_row, 10)
+            self.assertEqual(app.selected_alert(), app.feed_rows[table.cursor_row])
+            await pilot.press("left")
+            await self.settle(pilot)
+            self.assertEqual(table.cursor_row, 0)
+
+    async def test_cursor_stays_on_screen_past_the_bottom(self):
+        cybrwire.alert_queue[:] = [alert(f"Story number {i}", hours=1 + i / 100) for i in range(300)]
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            table = app.query_one("#feed-table")
+            for _ in range(table.size.height + 5):
+                await pilot.press("down")
+                app.update_display()  # A redraw mid-scroll must not pull the view back
+            await pilot.pause(0.5)
+            self.assertGreaterEqual(table.cursor_row, table.scroll_y)
+            self.assertLess(table.cursor_row, table.scroll_y + table.size.height)
+
+    async def test_unchanged_feed_is_not_rebuilt(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            with mock.patch.object(app.query_one("#feed-table"), "clear") as clear:
+                app.update_display()
+                clear.assert_not_called()
+
+    async def test_columns_follow_a_resize(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            table = app.query_one("#feed-table")
+            wide = table.ordered_columns[-1].width
+            await pilot.resize_terminal(110, 45)
+            await self.settle(pilot)
+            await self.settle(pilot)
+            self.assertLess(table.ordered_columns[-1].width, wide)
+
+    async def test_empty_feed_explains_itself_and_selects_nothing(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash", *"zzzznothing", "enter")
+            await self.settle(pilot)
+            table = app.query_one("#feed-table")
+            self.assertIsNone(app.selected_alert())
+            self.assertFalse(table.show_cursor)
+            self.assertIn("NO ALERTS", table.get_row_at(0)[2].plain)
+            with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+                await pilot.press("enter")
+                browser.assert_not_called()
+
+    async def test_indicator_columns_and_back(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            while app.active_kind != "indicators":
+                await pilot.press("4")
+            await self.settle(pilot)
+            table = app.query_one("#feed-table")
+            self.assertEqual([str(c.label) for c in table.ordered_columns][2:4], ["TYPE", "INDICATOR"])
+            self.assertTrue(table.show_header)
+            while app.active_kind != "all":
+                await pilot.press("4")
+            await self.settle(pilot)
+            self.assertFalse(table.show_header)
+            self.assertEqual(len(table.ordered_columns), 4)
+
+    async def test_search_box_takes_paste_and_cursor_keys(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash")
+            box = app.query_one("#search-box")
+            box.post_message(events.Paste("citrix"))
+            await self.settle(pilot)
+            self.assertEqual(box.value, "citrix")
+            self.assertEqual(self.titles(app), ["CitrixBleed returns"])
+            await pilot.press("home", "x")
+            self.assertEqual(box.value, "xcitrix")
+
+    async def test_clicking_away_from_search_turns_commands_back_on(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash", "e")
+            self.assertEqual(app.prompt, "search")
+            app.set_focus(None)
+            await self.settle(pilot)
+            self.assertIsNone(app.prompt)
 
     async def test_api_tools_typing_still_goes_to_its_input(self):
         app = self.make_app()
@@ -359,9 +479,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         browser = cve_card.webbrowser.open
         async with app.run_test(size=(160, 45)) as pilot:
             await self.settle(pilot)
-            await pilot.press("i")  # Nothing selected yet
-            self.assertNotIsInstance(app.screen, CveCard)
-            await pilot.press("down", "i")
+            await pilot.press("i")
             self.assertIsInstance(app.screen, CveCard)
             await app.workers.wait_for_complete()
             await self.settle(pilot)
@@ -371,10 +489,10 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
                              "IN YOUR FEEDS (1)", "1 of 2"):
                 self.assertIn(expected, card)
             # Arrows go to the card, not the feed underneath
-            offset = app.feed_page_offset
+            row = app.query_one("#feed-table").cursor_row
             await pilot.press("right")
             self.assertEqual(app.screen.cve, "CVE-2099-0002")
-            self.assertEqual(app.feed_page_offset, offset)
+            self.assertEqual(app.query_one("#feed-table").cursor_row, row)
             await pilot.press("x")
             browser.assert_called_with("https://poc.test/b")
             await pilot.press("enter")
