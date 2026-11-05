@@ -88,11 +88,7 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure API keys (optional, for enrichment features)
-cp usrwire.yaml cybrwire_local.yaml
-# Edit cybrwire_local.yaml and add your API keys
-
-# Run it!
+# Run it! Press Shift+K in the app to add API keys (optional)
 python3 cybrwire.py
 ```
 
@@ -127,32 +123,33 @@ Your data age, display mode, theme and filters are saved in `cybrwire_state.json
 
 The War Room panel (`tab`, then `v`, or just press `g`) shows a briefing written by the AI provider you choose: bottom line, priority actions, active threats, notable vulnerabilities, and a watch list, based on the alerts in your current data window. Press `a` on any alert for a short explanation of it.
 
-Configure one provider in `cybrwire_local.yaml`:
+Choose one provider in `cybrwire_local.yaml`, then press `Shift+K` to add its key:
 
 ```yaml
 ai:
   provider: "anthropic"    # anthropic | gemini | openai | openrouter | ollama | openai_compatible
-  api_key: "your-key"      # not needed for ollama
   model: ""                # blank = provider default (anthropic: claude-opus-5-5, gemini: gemini-flash-latest)
   base_url: ""             # only for ollama / openai_compatible
 ```
 
 OpenAI, OpenRouter, Ollama, and OpenAI-compatible servers need `model` set. Ollama runs models on your own machine, so no alert data leaves it. One provider is active at a time; `usrwire.yaml` has a commented example for each.
 
-## API Key Enrichment
+## API Keys
 
-CybrWire supports optional threat intelligence API enrichment. Configure API keys in `cybrwire_local.yaml`:
+Press `Shift+K` to enter, test and remove API keys and notification URLs. Each key is tested when you enter it and takes effect straight away.
 
-```yaml
-enrichment:
-  virustotal_api_key: "your-vt-api-key-here"
-  abuseipdb_api_key: "your-abuseipdb-api-key-here"
-  pulsedive_api_key: "your-pulsedive-api-key-here"
-  abuse_ch_api_key: "your-abuse-ch-api-key-here"
-```
+| Stored in | When | Protection |
+|---|---|---|
+| Environment variable | You set `CYBRWIRE_NVD_API_KEY` and the like, or `CYBRWIRE_NVD_API_KEY_FILE` for a mounted secret. Wins over everything else | Up to your environment |
+| System keychain | The default for new keys | Encrypted at rest by your desktop or OS |
+| `cybrwire_secrets.yaml` | Only when no keychain works, and the app warns you | Your user only, **not encrypted** |
+| YAML files | Old setups still work, but the app asks you to move them: press `m` in the card | Plaintext |
 
-**Note:** API keys in `cybrwire_local.yaml` are in `.gitignore` and will never be committed to GitHub. 
-          Use file `usrwire.yaml` as template to create `cybrwire_local.yaml`, or rename it.
+Variable names are `CYBRWIRE_` plus `AI_API_KEY`, `ABUSEIPDB_API_KEY`, `VIRUSTOTAL_API_KEY`, `PULSEDIVE_API_KEY`, `ABUSE_CH_API_KEY`, `NVD_API_KEY`, `NTFY_URL`, `NTFY_TOKEN`, `DISCORD_WEBHOOK` or `SLACK_WEBHOOK`. Set `CYBRWIRE_KEYCHAIN=off` to skip the keychain.
+
+A keychain protects keys from other users, backups and accidental commits. It can't stop malware running as you, because the app itself has to be able to read them.
+
+Testing a key makes one call to that provider. AI providers only list models, which is free; AbuseIPDB, VirusTotal and Pulsedive count one lookup against your quota; notification targets receive a real test message. Keys for custom feeds (`headers:` below) stay in `cybrwire_local.yaml`.
 
 ## API Tier Limitations ⚠️
 
@@ -193,9 +190,9 @@ A **CLEAN** result means the provider has no record of the indicator, not that i
 ## Configuration Files
 
 - **`cybrwire.yaml`** – Curated official threat feeds (CISA, Microsoft, Talos, etc.)
-- **`usrwire.yaml`** – Template for your own API keys and custom feeds
+- **`usrwire.yaml`** – Template for custom feeds and settings; tracked by git, so no keys here
 - **`comwire.yaml`** – Community-contributed feeds - Submit yours via PR
-- **`cybrwire_local.yaml`** – Your private API keys and feeds (in .gitignore)
+- **`cybrwire_local.yaml`** – Your private settings and feeds (in .gitignore)
 
 Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),
 `txt` (IP/CIDR lists, URL lists, DShield), or `threatfox` and `urlhaus` (use your abuse.ch key).
@@ -223,13 +220,13 @@ watchlist:
   - CVE-2024-3400
 ```
 
-Notifications are set in a `notifications:` section (see `usrwire.yaml`). Their URLs work like
-passwords, so keep them in `cybrwire_local.yaml`. Run `python3 cybrwire.py --test-notify` to check them.
+Notification targets are added with `Shift+K`, because their URLs work like passwords. Which events
+send one is set in a `notifications:` section (see `usrwire.yaml`). Run `python3 cybrwire.py --test-notify` to check them.
 
 Every alert is saved to `cybrwire_history.db` for a year, so search can find items that feeds have dropped.
 
 Errors and feed failures are written to `cybrwire.log` in the app folder, with loaded keys masked.
-The app restricts `cybrwire_local.yaml`, its state, history and log files to your user.
+The app restricts `cybrwire_local.yaml`, `cybrwire_secrets.yaml`, its state, history and log files to your user.
 
 ## Features in Detail
 

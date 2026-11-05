@@ -2,6 +2,8 @@
 .env
 *.env
 cybrwire_local.yaml
+cybrwire_secrets.yaml
+.cybrwire-*
 
 # Python-specific ignores
 __pycache__/

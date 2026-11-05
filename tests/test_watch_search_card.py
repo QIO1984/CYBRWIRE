@@ -15,16 +15,10 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Must happen before cybrwire is imported: it loads the state at import time
-import state  # noqa: E402
-
-_tmp = tempfile.TemporaryDirectory()
-state.STATE_PATH = os.path.join(_tmp.name, "state.json")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import isolated  # noqa: E402,F401
 import history  # noqa: E402
-
-history.HISTORY_PATH = os.path.join(_tmp.name, "history.db")
+import state  # noqa: E402
 
 import ai  # noqa: E402
 import cve_card  # noqa: E402
