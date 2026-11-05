@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -36,6 +37,8 @@ import cybrwire  # noqa: E402
 from cve_card import CveCard  # noqa: E402
 from key_card import KeyCard  # noqa: E402
 from keystore import KEYCHAIN, SLOTS, KeyStore  # noqa: E402
+from textual.screen import ModalScreen  # noqa: E402
+from livewire import Shown, quiet_items  # noqa: E402
 
 SIZE = (150, 46)
 FIREFOX_ATTEMPTS = 3
@@ -111,6 +114,8 @@ async def main(output):
                 app.theme_mode = theme
             app.apply_theme()
             app.update_display()
+            if not isinstance(app.screen, ModalScreen):
+                app.wire_tick()  # Its timer doesn't run under the test harness
             if isinstance(app.screen, KeyCard):
                 app.screen.redraw()
             await pilot.pause(0.5)
@@ -120,7 +125,24 @@ async def main(output):
 
         synthwave, amber, retro = "synthwave", "amber_crt", "retro_warm"
 
+        app.wire.baseline_done = True
+        app.wire_tick()
         await snap("dashboard", synthwave)
+
+        # The bar mid-check with an arrival on show. The alert is real; only its timing is staged.
+        lead = quiet_items(cybrwire.alert_queue, app.watchlist, app.duplicate_groups().leader_of, app.recency_hours)[0]
+        app.wire.begin_sweep(len(cybrwire.CONFIG.sources))
+        for _ in range(len(cybrwire.CONFIG.sources) * 2 // 3):
+            app.wire.feed_done()
+        app.wire.feed_started("CISA KEV")
+        app.wire.session_count = 1
+        app.wire.shown = Shown(lead, True, time.monotonic())
+        app.query_one("#ticker").redraw(time.monotonic())
+        await snap("live_wire", retro)
+        app.wire.sweeping = False
+        app.wire.shown = None
+        app.wire.session_count = 0
+        app.wire_tick()
 
         await pilot.press("slash", *"ransomware")
         await pilot.pause(0.5)

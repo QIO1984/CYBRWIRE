@@ -39,6 +39,8 @@ from textual.app import App, Screen, ComposeResult
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.widgets import Input, Static, Header
+import sound
+from livewire import LiveWire, LiveWirePanel, quiet_items
 from widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
@@ -93,7 +95,6 @@ disabled_feeds = {}  # Tracks disabled feeds: {feed_name: (error_msg, disable_re
 currently_loading = None
 incidents_cache = []
 start_time = datetime.now(timezone.utc)
-ticker_offset = 0
 
 RANSOM_VICTIM_RE = re.compile(r"^RANSOMWARE VICTIM: .* \(([^)]+)\)(?: \[([A-Z]{2})\])?")
 COUNTRY_NAMES = {
@@ -333,6 +334,8 @@ class HelpScreen(Screen):
         help_text.append("│  /              Search - Filter as you type, across all feeds and history; Esc clears it\n", style=color)
         help_text.append("│  w              Watchlist Only - Show only items matching your watchlist (marked ★)\n", style=color)
         help_text.append("│  Shift+W        Watchlist Card - See all terms and their hits, add or remove them\n", style=color)
+        help_text.append("│  L              Live Wire - Jump to the alert on the top bar (or click the bar)\n", style=color)
+        help_text.append("│  B              Alert Sound - Off, PC speaker, teletype bell, modem chirp or terminal bell\n", style=color)
         help_text.append("│  U              Group Duplicates - Merge the same story from several feeds (marked +N)\n", style=color)
         help_text.append("│  I              CVE Card - CVSS, EPSS, KEV and exploit details for the selected item\n", style=color)
         help_text.append("│  Tab            Switch Panel Focus - Toggle between left and right panels\n", style=color)
@@ -611,10 +614,6 @@ class CybrWireApp(App):
         height: 1;
     }
     
-    #ticker {
-        height: 3;
-    }
-    
     #main-layout {
         border: none;
     }
@@ -725,6 +724,8 @@ class CybrWireApp(App):
         ("slash", "start_search", "Search"),
         ("w", "toggle_watch_only", "Watchlist Only"),
         ("W", "edit_watchlist", "Edit Watchlist"),
+        ("l", "jump_to_wire", "Go To Live Wire Alert"),
+        ("b", "cycle_sound", "Alert Sound"),
         ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
@@ -760,6 +761,9 @@ class CybrWireApp(App):
         self.recency_hours = recency
         self.data_age_index = {24: 0, 48: 1, 168: 2}.get(recency, 0)
         self.refresher_task = None
+        self.wire = LiveWire()
+        self.last_arrivals = []
+        self.sound = saved.get("sound", sound.OFF)
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
         self.feed_at_top = False    # Return to the first row at the next redraw
@@ -851,6 +855,7 @@ class CybrWireApp(App):
             "group_dupes": self.group_dupes,
             "notifications_started": STATE.settings.get("notifications_started", False),
             "ai": STATE.settings.get("ai"),
+            "sound": self.sound,
         }
         STATE.save()
     
@@ -1190,7 +1195,7 @@ class CybrWireApp(App):
             
             self.update_display()
             self.set_interval(1.0, self.render_tick)
-            self.set_interval(0.7, self.animate_ticker)
+            self.set_interval(0.1, self.wire_tick)
         except Exception as e:
             logging.error(f"Error in initial_load: {e}", exc_info=True)
             raise
@@ -1216,7 +1221,7 @@ class CybrWireApp(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield StyledHeader(show_clock=True, icon="◆")
-        yield Static(id="ticker")
+        yield LiveWirePanel(id="ticker")
         
         # Always create both layouts, use CSS to control visibility
         with Horizontal(id="main-layout"):
@@ -1269,21 +1274,29 @@ class CybrWireApp(App):
                    "threatfox": lambda r, n, f: parse_threatfox(r.json(), n, f),
                    "urlhaus": lambda r, n, f: parse_urlhaus(r.json(), n, f)}
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
+        self.wire.begin_sweep(len(all_sources))
 
         async def fetch_one(c, src):
             global currently_loading
             async with semaphore:
                 currently_loading = src['name']
-                if src["type"] == "threatfox":
-                    r = await c.post(src["url"], json={"query": "get_iocs", "days": 1},
-                                     headers={"Auth-Key": abusech_key})
-                elif src["type"] == "urlhaus":
-                    r = await c.get(src["url"], headers={"Auth-Key": abusech_key})
-                else:
-                    r = await c.get(src["url"], **CONFIG.feed_request_parts(src))
-                r.raise_for_status()
-                # Parse in a thread so large feeds don't freeze the UI
-                return await asyncio.to_thread(parsers[src["type"]], r, src['name'], src.get("source_file", "curated"))
+                self.wire.feed_started(src['name'])
+                try:
+                    return await fetch_and_parse(c, src)
+                finally:
+                    self.wire.feed_done()
+
+        async def fetch_and_parse(c, src):
+            if src["type"] == "threatfox":
+                r = await c.post(src["url"], json={"query": "get_iocs", "days": 1},
+                                 headers={"Auth-Key": abusech_key})
+            elif src["type"] == "urlhaus":
+                r = await c.get(src["url"], headers={"Auth-Key": abusech_key})
+            else:
+                r = await c.get(src["url"], **CONFIG.feed_request_parts(src))
+            r.raise_for_status()
+            # Parse in a thread so large feeds don't freeze the UI
+            return await asyncio.to_thread(parsers[src["type"]], r, src['name'], src.get("source_file", "curated"))
 
         async with httpx.AsyncClient(headers=HEADERS, timeout=FEED_TIMEOUT, follow_redirects=True) as c:
             results = await asyncio.gather(*(fetch_one(c, src) for src in all_sources), return_exceptions=True)
@@ -1332,8 +1345,11 @@ class CybrWireApp(App):
         # Exploit-likelihood scores for every CVE mentioned (one batched, free request)
         await cve_intel.fetch_epss(m.upper() for a in alert_queue for m in CVE_RE.findall(f"{a['title']} {a['summary']}"))
         
+        known = set(STATE.first_seen)
         STATE.record_alerts(alert_queue)
         STATE.save()
+        first_seen_now = [a for a in alert_queue if alert_key(a) not in known]
+        self.last_arrivals = self.wire.end_sweep(first_seen_now, self.watchlist, self.duplicate_groups().leader_of, time.monotonic())
         await asyncio.to_thread(HISTORY.record, alert_queue)
         self.history_cache = (None, [])
         self.incidents_key = None  # Rebuild incidents for the new data
@@ -1372,6 +1388,7 @@ class CybrWireApp(App):
             except asyncio.TimeoutError:
                 pass
             await asyncio.gather(self.fetch_feeds(), fetch_breaches(), self.refresh_doomsday())
+            self.announce_arrivals(self.last_arrivals)
             await self.send_notifications()
             self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
             self.mark_dirty()
@@ -1385,8 +1402,6 @@ class CybrWireApp(App):
         self.last_full_render = time.monotonic()
         try:
             self.query_one(CybrWireFooter).refresh()  # Type, filter and count change with the feed
-            self.ticker_core = self.make_ticker_core()
-            self.animate_ticker(advance=False)
             
             # Update feeds table, incidents panel, or API tools (toggled with key v)
             mode = self.main_view_mode
@@ -1431,65 +1446,61 @@ class CybrWireApp(App):
             import traceback
             logging.error(traceback.format_exc())
     
-    def animate_ticker(self, advance=True):
-        """Scroll the ticker one step (only the ticker widget is redrawn)"""
-        global ticker_offset
-        if advance:
-            ticker_offset += 1
+    def wire_tick(self):
+        """Keep the Live Wire current. It only redraws when what it shows has changed."""
+        clock = time.monotonic()
+        self.wire.tick(clock, lambda: quiet_items(alert_queue, self.watchlist, self.duplicate_groups().leader_of, self.recency_hours))
+        if self.wire.expire_fresh(clock):
+            self.mark_dirty()
         try:
-            self.query_one("#ticker", Static).update(self.make_ticker())
-        except Exception:
-            pass
+            self.query_one(LiveWirePanel).redraw(clock)
+        except NoMatches:
+            pass  # A card is open
     
-    def make_ticker_core(self):
-        """Build the ticker text from current alerts (recomputed on redraw only)"""
-        now = datetime.now(timezone.utc)
-        cutoff_time = now - timedelta(hours=self.recency_hours)
-        
-        # Build ticker content
-        ticker_parts = []
-        
-        # Malicious IPs
-        malicious_ips = []
-        for a in alert_queue:
-            if "TOP MALICIOUS IP" in a.get("title", ""):
-                ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', a.get("title", ""))
-                if ip_match:
-                    malicious_ips.append(ip_match.group(1))
-        if malicious_ips:
-            ticker_parts.append(f"Top Malicious IPs: {', '.join(malicious_ips[:3])}")
-        
-        # Zero-day alerts
-        zeroday_alerts = [a for a in alert_queue if a["severity"] == "zeroday" and a.get("ts", now) >= cutoff_time]
-        if zeroday_alerts:
-            ticker_parts.append(" // ".join([f'Zero-Day: "{a["title"][:50]}"' for a in zeroday_alerts[:2]]))
-        else:
-            ticker_parts.append("Zero-Day: No alerts")
-        
-        # Ransomware alerts
-        ransomware_alerts = [a for a in alert_queue if a["severity"] == "ransomware" and a.get("ts", now) >= cutoff_time]
-        if ransomware_alerts:
-            ticker_parts.append(" // ".join([f'Ransomware: "{a["title"][:50]}"' for a in ransomware_alerts[:2]]))
-        else:
-            ticker_parts.append("Ransomware: No alerts")
-        
-        new_count = sum(1 for a in alert_queue if STATE.is_new(a))
-        if new_count:
-            ticker_parts.insert(0, f"{new_count} NEW since last visit")
-        
-        ticker_core = "  //  ".join(ticker_parts)
-        return ticker_core or "--- NO CRITICAL THREATS DETECTED ---"
+    def failed_feed_count(self):
+        return len(failed_feeds)
     
-    def make_ticker(self):
-        """Render the visible slice of the ticker at the current scroll offset"""
-        core = getattr(self, "ticker_core", "") or "--- LOADING ---"
-        loop = core + "   //   "
-        offset = ticker_offset % len(loop)
-        visible_text = (loop * 3)[offset:offset + max(self.size.width - 4, 10)]
-        p = self.palette
-        return Panel(Text(visible_text, style=f"bold {p.accent}"),
-                     title=Text(f" {p.title('LIVE THREAT TAPE')} ", style=f"bold {p.muted}"),
-                     border_style=p.border, box=box.ROUNDED, padding=0)
+    def sound_label(self):
+        return sound.label(self.sound)
+    
+    def action_cycle_sound(self):
+        """Off, or one of the alert sounds. Each one plays when chosen, so you can hear it."""
+        self.sound = sound.next_tone(self.sound)
+        self.save_settings()
+        self.notify(f"Alert sound: {sound.label(self.sound)}", timeout=2)
+        sound.play(self.sound, self.bell)
+    
+    def action_jump_to_wire(self):
+        """Show the alert on the Live Wire in the feed"""
+        shown = self.wire.shown
+        if shown:
+            self.jump_to_alert(shown.alert)
+    
+    def jump_to_alert(self, alert):
+        """Select an alert in the feed, clearing any filter that hides it"""
+        self.finish_typing()
+        self.main_view_mode = "alerts"
+        self.panel_focus = "main"
+        key = alert_key(alert)
+        if not any(alert_key(a) == key for a in self.filtered_alerts()):
+            self.search_query = ""
+            self.query_one("#search-box", SearchBox).value = ""
+            self.watch_only = False
+            self.kind_index = 0
+            self.filter_type_index = 0
+            self.filter_mode = "all"
+        rows = self.filtered_alerts()
+        row = next((i for i, a in enumerate(rows) if alert_key(a) == key), None)
+        self.update_display()
+        if row is None:
+            self.notify("That alert is older than the Data Age window. Press d to widen it", timeout=4)
+            return
+        self.query_one("#feed-table", ViewTable).move_cursor(row=row, animate=False, scroll=True)
+    
+    def announce_arrivals(self, arrivals):
+        """One sound per check at most, and only for what's worth interrupting someone for"""
+        if self.sound != sound.OFF and any(a["severity"] == "zeroday" or self.watchlist.hits(a) for a in arrivals):
+            sound.play(self.sound, self.bell)
     
     def is_alert(self, item):
         """Classify item as alert vs blog post"""
@@ -1735,7 +1746,10 @@ class CybrWireApp(App):
         others = self.duplicate_groups().others.get(alert_key(a), []) if self.group_dupes else []
         if others:
             title.append(f"+{len(others)} ", style=f"bold {p.accent}")
-        if STATE.is_new(a):
+        if self.wire.is_fresh(a):
+            title.append(" LIVE ", style=f"bold {p.bg} on {p.focus}")
+            title.append(" ")
+        elif STATE.is_new(a):
             title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
             title.append(" ")
         title.append(a["title"], style=title_style)

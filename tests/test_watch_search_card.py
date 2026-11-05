@@ -10,6 +10,7 @@ import asyncio
 import os
 import sqlite3
 import sys
+import time
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,7 @@ import cybrwire  # noqa: E402
 import feeds  # noqa: E402
 from config import Config  # noqa: E402
 from cve_card import CveCard, exploit_status  # noqa: E402
+from livewire import Shown  # noqa: E402
 from watch_card import WatchCard  # noqa: E402
 from watchlist import Watchlist, matches_search  # noqa: E402
 
@@ -679,6 +681,94 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await pilot.click(cybrwire.CybrWireFooter, offset=(first + 1, 0))
             await self.settle(pilot)
             self.assertIsInstance(app.screen, WatchCard)
+
+    async def test_live_wire_click_jumps_and_clears_a_hiding_filter(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash", *"openssl", "enter")
+            await self.settle(pilot)
+            target = next(a for a in SAMPLE if a["title"].startswith("CitrixBleed"))
+            app.wire.shown = Shown(target, False, time.monotonic())
+            app.wire_tick()
+            await pilot.click("#ticker", offset=(30, 1))
+            await self.settle(pilot)
+            self.assertEqual(app.search_query, "")
+            self.assertIs(app.selected_alert(), target)
+
+    async def test_live_wire_shows_arrivals_and_badges_them_in_the_feed(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            wire = app.wire
+            wire.end_sweep([], app.watchlist, {}, 0.0)  # The first check only sets the baseline
+            fresh = alert("Brand new zero-day", severity="zeroday")
+            cybrwire.alert_queue.insert(0, fresh)
+            clock = time.monotonic()
+            wire.end_sweep([fresh], app.watchlist, {}, clock)
+            app.wire_tick()
+            app.update_display()
+            await self.settle(pilot)
+            panel = app.query_one("#ticker")
+            self.assertIn("JUST IN", panel.drawn[3])
+            self.assertIn("Brand new zero-day", panel.drawn[3])
+            self.assertIn("1 new this session", panel.drawn[2])
+            table = app.query_one("#feed-table")
+            self.assertIn("LIVE", table.get_row_at(app.feed_rows.index(fresh))[3].plain)
+
+    async def test_live_wire_title_follows_a_real_check(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            app.wire.begin_sweep(61)
+            app.wire.feed_started("CISA KEV")
+            for _ in range(42):
+                app.wire.feed_done()
+            app.wire_tick()
+            self.assertIn("checking 42/61 · CISA KEV", app.query_one("#ticker").drawn[1])
+            app.wire.end_sweep([], app.watchlist, {}, time.monotonic())
+            app.wire_tick()
+            self.assertIn("last check 0s ago", app.query_one("#ticker").drawn[1])
+
+    async def test_fetch_reports_progress_and_arrivals_through_the_wire(self):
+        cybrwire.CONFIG = Config(sources=[{"name": "Fake", "url": "https://x.test/f", "type": "rss", "source_file": "curated"}])
+        app = self.make_app()
+        rss = "<rss><channel><item><title>Fetched story</title><link>https://x.test/1</link></item></channel></rss>"
+        self.http_get.side_effect = None
+        self.http_get.return_value = mock.Mock(raise_for_status=lambda: None, text=rss)
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await app.fetch_feeds()
+            self.assertEqual((app.wire.total, app.wire.checked, app.wire.sweeping), (1, 1, False))
+            self.assertEqual(app.last_arrivals, [])  # The session's first check is the baseline
+
+    async def test_clicking_the_sound_setting_changes_it_and_not_the_view(self):
+        app = self.make_app()
+        with mock.patch.object(cybrwire.sound, "play"):
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.settle(pilot)
+                app.wire_tick()
+                await pilot.click("#ticker", offset=(150, 2))
+                await self.settle(pilot)
+                self.assertEqual(app.sound, "pc")
+
+    async def test_sound_cycles_saves_and_stays_off_by_default(self):
+        app = self.make_app()
+        with mock.patch.object(cybrwire.sound, "play") as play:
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.settle(pilot)
+                self.assertEqual(app.sound, "off")
+                app.announce_arrivals([alert("z", severity="zeroday")])
+                play.assert_not_called()
+                await pilot.press("b")
+                self.assertEqual(app.sound, "pc")
+                play.assert_called_once()  # A preview of the choice
+                self.assertEqual(cybrwire.STATE.settings["sound"], "pc")
+                play.reset_mock()
+                app.announce_arrivals([alert("routine")])
+                play.assert_not_called()
+                app.announce_arrivals([alert("z", severity="zeroday"), alert("y", severity="zeroday")])
+                play.assert_called_once()  # Once per check, however many arrived
 
     async def test_clicking_outside_a_card_closes_it_and_buttons_work(self):
         app = self.make_app()
