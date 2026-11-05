@@ -668,6 +668,18 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             self.assertEqual(app.screen_stack[-1].__class__.__name__, "Screen")
 
+    async def test_watchlist_card_opens_from_the_footer_and_it_all_fits_at_120_columns(self):
+        cybrwire.alert_queue[:] = [alert(f"Story {i}") for i in range(2500)]
+        app = self.make_app()
+        async with app.run_test(size=(120, 45)) as pilot:
+            await self.settle(pilot)
+            footer = app.query_one(cybrwire.CybrWireFooter)
+            self.assertLess(footer.regions[-1][1], 120)  # The last command is still on screen
+            first = next(r[0] for r in footer.regions if r[2] == "edit_watchlist")
+            await pilot.click(cybrwire.CybrWireFooter, offset=(first + 1, 0))
+            await self.settle(pilot)
+            self.assertIsInstance(app.screen, WatchCard)
+
     async def test_clicking_outside_a_card_closes_it_and_buttons_work(self):
         app = self.make_app()
         async with app.run_test(size=(160, 45)) as pilot:

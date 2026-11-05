@@ -3,6 +3,7 @@ Duplicate grouping, history, notifications, digest and secret handling tests.
 No network, no AI calls, and the real state and history files are never touched.
 """
 
+import json
 import logging
 import os
 import stat
@@ -221,6 +222,37 @@ class Secrets(unittest.TestCase):
                             sources=[{"headers": {"X-Key": "header-value"}}])
         config._remember_secrets(cfg)
         self.assertEqual(config.SECRETS, {"https://discord.test/secret-hook", "aikey-value", "enrich-value", "header-value"})
+
+
+class TelegramTests(unittest.IsolatedAsyncioTestCase):
+    async def send(self, settings, status=200, title="T", body="B"):
+        self.sent = []
+
+        def handler(request):
+            self.sent.append(request)
+            return httpx.Response(status, json={"ok": status == 200})
+        real = httpx.AsyncClient
+        with mock.patch.object(notify.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)):
+            return await notify.send(settings, title, body)
+
+    async def test_sends_plain_text_that_cannot_ping_anyone(self):
+        results = await self.send({"telegram_token": "123:abc", "telegram_chat_id": "-100"}, body="Hi @someone " + "x" * 5000)
+        self.assertEqual(results, {"telegram": None})
+        self.assertEqual(self.sent[0].url.path, "/bot123:abc/sendMessage")
+        payload = json.loads(self.sent[0].content)
+        self.assertEqual(payload["chat_id"], "-100")
+        self.assertNotIn("parse_mode", payload)
+        self.assertNotIn("@someone", payload["text"])
+        self.assertEqual(len(payload["text"]), notify.TELEGRAM_MAX_MESSAGE)
+
+    async def test_a_failure_never_reports_the_token(self):
+        results = await self.send({"telegram_token": "123:abc", "telegram_chat_id": "-100"}, status=401)
+        self.assertEqual(results, {"telegram": "HTTP 401"})
+
+    def test_needs_both_parts(self):
+        self.assertFalse(notify.is_configured({"telegram_token": "a"}))
+        self.assertFalse(notify.is_configured({"telegram_chat_id": "b"}))
+        self.assertTrue(notify.is_configured({"telegram_token": "a", "telegram_chat_id": "b"}))
 
 
 class PushoverTests(unittest.IsolatedAsyncioTestCase):

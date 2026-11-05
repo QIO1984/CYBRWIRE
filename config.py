@@ -88,6 +88,7 @@ def _remember_secrets(config: "Config") -> None:
     values = [entry.get("api_key") for entry in config.enrichment.values()]
     values.append(config.ai.get("api_key"))
     values += [config.notifications.get(k) for k in ("ntfy_url", "ntfy_token", "pushover_token", "pushover_user",
+                                                     "telegram_token", "telegram_chat_id",
                                                      "discord_webhook", "slack_webhook")]
     values += [*config.ai_keys.values(), *config.feed_keys.values()]
     for src in config.sources:
