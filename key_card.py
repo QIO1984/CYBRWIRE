@@ -71,13 +71,12 @@ class KeyCard(ModalScreen):
             text.append(f"New keys go to the system keychain ({store.keychain_name})\n", style=p.muted)
         else:
             text.append(f"⚠ No keychain: {store.problem}.\n", style=f"bold {p.warn}")
-            text.append(f"  New keys go to {SECRETS_FILE}, readable only by your user but NOT encrypted.\n", style=p.warn)
-            text.append("  In containers and on servers, prefer environment variables like CYBRWIRE_NVD_API_KEY.\n", style=p.muted)
+            text.append(f"  New keys go to {SECRETS_FILE}: your user only, but NOT encrypted.\n", style=p.warn)
+            text.append("  On servers, environment variables are better. See the README.\n", style=p.muted)
         movable = store.movable()
         if movable:
             place = "the keychain" if store.keychain_available else "the restricted file"
-            text.append(f"⚠ {len(movable)} stored outside {place}. Press m to move ", style=f"bold {p.warn}")
-            text.append("them there and clear the old copies.\n", style=f"bold {p.warn}")
+            text.append(f"⚠ {len(movable)} outside {place}. Press m to move them and clear the old copies.\n", style=f"bold {p.warn}")
         return text
 
     def render_card(self) -> Text:
@@ -95,11 +94,14 @@ class KeyCard(ModalScreen):
             value = self.config.key_value(slot.id)
             source = self.config.key_sources.get(slot.id)
             text.append("› " if selected else "  ", style=f"bold {p.accent}{bg}")
-            text.append(f"{slot.label:<18}", style=f"bold {p.text}{bg}")
+            label = slot.label
+            if slot.id == "ai_api_key" and self.config.ai.get("provider"):
+                label = f"AI: {self.config.ai['provider']}"[:17]
+            text.append(f"{label:<18}", style=f"bold {p.text}{bg}")
             text.append(f"{mask(value) if value else 'not set':<16}", style=f"{p.text if value else p.muted}{bg}")
-            label = SOURCE_LABELS.get(source, "") if value else ""
+            where = SOURCE_LABELS.get(source, "") if value else ""
             weak = source == YAML or source == FILE
-            text.append(f"{label:<22}", style=f"{p.warn if weak else p.muted}{bg}")
+            text.append(f"{where:<22}", style=f"{p.warn if weak else p.muted}{bg}")
             result = self.results.get(slot.id)
             if result:
                 mark = {key_check.OK: ("✓ works", p.good), key_check.REJECTED: ("✗ rejected", p.bad)}.get(

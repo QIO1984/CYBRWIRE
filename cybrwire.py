@@ -36,8 +36,10 @@ from digest import build_digest
 from history import History
 import notify
 from textual.app import App, Screen, ComposeResult
-from textual.widgets import Static, Header
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.coordinate import Coordinate
+from textual.css.query import NoMatches
+from textual.widgets import DataTable, Input, Static, Header
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import Theme as TextualTheme
@@ -510,6 +512,31 @@ class StyledHeader(Header):
         # If app has cold_war_mode, we'll style it via the watcher instead
         return header_str
 
+class FeedTable(DataTable, can_focus=False):
+    """The alert list. The app routes keys to it, so typing never lands here by accident."""
+    
+    def on_resize(self) -> None:
+        self.app.call_later(self.app.update_display)  # Column widths follow the panel
+    
+    def _on_click(self, event: events.Click) -> None:
+        # Textual then runs DataTable's own handler, which opens on a click at the cursor's
+        # exact cell. Any column of the selected row should count, so line the column up first.
+        meta = event.style.meta
+        if "column" in meta and meta["column"] >= 0:
+            self.cursor_coordinate = Coordinate(self.cursor_row, meta["column"])
+        self.app.panel_focus = "main"
+
+
+class SearchBox(Input):
+    """Single-key commands are off for as long as this has focus"""
+    
+    def on_focus(self) -> None:
+        self.app.prompt = "search"
+    
+    def on_blur(self) -> None:
+        self.app.prompt = None
+
+
 class CybrWireFooter(Static):
     """Custom footer that shows dynamic state indicators for data age and filter type"""
     
@@ -614,7 +641,57 @@ class CybrWireApp(App):
     #feeds-container {
         width: 3fr;
         height: 100%;
-        overflow-y: auto;
+    }
+    
+    #alerts-view {
+        height: 100%;
+        padding: 1 2;
+        border: round $primary;
+        border-title-align: center;
+        border-subtitle-align: center;
+    }
+    
+    #other-view {
+        height: 100%;
+    }
+    
+    #search-row {
+        height: 1;
+        margin-bottom: 1;
+    }
+    
+    #search-prefix {
+        width: 2;
+        color: $accent;
+        text-style: bold;
+    }
+    
+    #search-box {
+        width: 1fr;
+        background: transparent;
+    }
+    
+    FeedTable {
+        height: 1fr;
+        background: $background;
+        scrollbar-size-vertical: 1;
+    }
+    
+    FeedTable > .datatable--cursor, FeedTable > .datatable--hover {
+        background: $panel;
+        color: $foreground;
+        text-style: none;
+    }
+    
+    FeedTable > .datatable--header {
+        background: $background;
+        color: $text-muted;
+        text-style: bold;
+    }
+    
+    #alert-preview {
+        margin-top: 1;
+        height: auto;
     }
     
     #feeds {
@@ -658,7 +735,6 @@ class CybrWireApp(App):
     cold_war_mode = reactive(False)
     next_refresh = reactive(datetime.now(timezone.utc))
     is_loading = reactive(True)
-    feed_page_offset = reactive(0)  # Pagination for alerts feed panel
     incident_page_offset = reactive(0)  # Pagination for incidents panel
     dashboard_page_offset = reactive(0)  # Pagination for dashboard panel
     panel_focus = reactive("main")  # "main" or "dashboard" - which panel gets paged by arrows
@@ -679,13 +755,14 @@ class CybrWireApp(App):
         self.recency_hours = recency
         self.data_age_index = {24: 0, 48: 1, 168: 2}.get(recency, 0)
         self.refresher_task = None
-        self.alert_urls = []
-        self.page_alerts = []  # Alerts shown on the current feed page, in row order
+        self.feed_rows = []         # Alerts in the table, in row order
+        self.feed_signature = None  # What the table is showing, to skip needless rebuilds
+        self.feed_at_top = False    # Return to the first row at the next redraw
+        self.marked_row = None      # Row currently drawn as selected
         self.breach_urls = []
-        self.feed_page_offset = 0
+        self.feed_at_top = True
         self.incident_page_offset = 0
         self.hover_row = -1
-        self.rows_per_page = 20
         self.theme_mode = saved.get("theme") if saved.get("theme") in PALETTES else DEFAULT_PALETTE
         for p in (*PALETTES.values(), COLD_WAR):
             self.register_theme(TextualTheme(
@@ -702,7 +779,6 @@ class CybrWireApp(App):
         self.watch_only = bool(saved.get("watch_only", False))
         self.search_query = ""     # Active search; narrows the feed until cleared with Esc
         self.prompt = None         # Text being typed: "search" or None
-        self.prompt_buffer = ""
         self.history_cache = (None, [])  # Last history search: (query, results)
         self.group_dupes = bool(saved.get("group_dupes", True))
         self.groups = group_duplicates([])
@@ -1138,8 +1214,15 @@ class CybrWireApp(App):
         
         # Always create both layouts, use CSS to control visibility
         with Horizontal(id="main-layout"):
-            with VerticalScroll(id="feeds-container"):
-                yield Static(id="feeds", expand=True)
+            with Container(id="feeds-container"):
+                with Vertical(id="alerts-view"):
+                    with Horizontal(id="search-row"):
+                        yield Static("/ ", id="search-prefix")
+                        yield SearchBox(id="search-box", placeholder="Search all feeds and history", compact=True)
+                    yield FeedTable(id="feed-table", cursor_type="row", show_header=False)
+                    yield Static(id="alert-preview")
+                with VerticalScroll(id="other-view"):
+                    yield Static(id="feeds", expand=True)
             yield Static(id="dashboard", expand=True)
         
         yield CybrWireFooter()
@@ -1283,16 +1366,17 @@ class CybrWireApp(App):
             self.animate_ticker(advance=False)
             
             # Update feeds table, incidents panel, or API tools (toggled with key v)
-            feeds_widget = self.query_one("#feeds", Static)
-            if self.main_view_mode == "alerts":
-                feeds_content = self.make_feeds_table()
-            elif self.main_view_mode == "incidents":
-                feeds_content = self.make_incidents_panel()
-            else:  # "api_tools"
-                feeds_content = self.make_api_tools_panel()
-            feeds_widget.update(feeds_content)
-            # Force the widget to update its virtual size for scrolling
-            feeds_widget.refresh(layout=True)
+            alerts_shown = self.main_view_mode == "alerts"
+            self.query_one("#alerts-view").display = alerts_shown
+            self.query_one("#other-view").display = not alerts_shown
+            if alerts_shown:
+                self.sync_feed_view()
+            else:
+                feeds_widget = self.query_one("#feeds", Static)
+                feeds_content = self.make_incidents_panel() if self.main_view_mode == "incidents" else self.make_api_tools_panel()
+                feeds_widget.update(feeds_content)
+                # Force the widget to update its virtual size for scrolling
+                feeds_widget.refresh(layout=True)
             
             # Update dashboard panel
             try:
@@ -1387,6 +1471,10 @@ class CybrWireApp(App):
         # Simple rule: INFO = blog post, everything else = alert
         return item["severity"] != "info"
     
+    METRICS_WIDTH = 19  # Dashboard label plus its count
+    AUTO_FOCUS = ""  # Keys go through on_key; only the search box ever takes focus
+    NARROW_FEED = 84  # Table width below which dates shorten
+    FEED_TITLE_COLUMN = 3
     PREVIEW_LINES = 8  # Lines reserved under the alert table for the selected-alert preview
     
     def filtered_alerts(self):
@@ -1434,9 +1522,11 @@ class CybrWireApp(App):
         return [a for a in self.history_cache[1] if alert_key(a) not in loaded_keys]
     
     def selected_alert(self):
-        if 0 <= self.hover_row < len(self.page_alerts):
-            return self.page_alerts[self.hover_row]
-        return None
+        try:
+            row = self.query_one("#feed-table", FeedTable).cursor_row
+        except NoMatches:
+            return None
+        return self.feed_rows[row] if 0 <= row < len(self.feed_rows) else None
     
     def cve_scores(self, cve, scores_only=False):
         """'CVE-x KEV CVSS 9.8 EPSS 12.3%' with each score colored by how bad it is"""
@@ -1507,7 +1597,7 @@ class CybrWireApp(App):
         p = self.palette
         text = Text()
         if not alert:
-            text.append("Select an alert with ↑/↓ or a click to see its summary here.", style=p.muted)
+            text.append("Nothing to preview.", style=p.muted)
             return text
         
         if alert.get("kind") == "indicators":
@@ -1587,145 +1677,170 @@ class CybrWireApp(App):
             text.append(f" {desc}", style=p.muted)
         return text
     
-    def make_feeds_table(self):
-        """Create feeds table with pagination and a preview of the selected alert"""
+    def feed_columns(self, indicators_view, width):
+        """(label, width) per feed column; the title or indicator takes what's left"""
+        date_width = 7 if self.palette.military_time else 6 if width < self.NARROW_FEED else 10
+        cols = [("SEEN", date_width), ("AGE", 3)]
+        if indicators_view:
+            cols += [("TYPE", 5), ("INDICATOR", 0), ("THREAT", 18), ("SOURCE", 18)]
+        else:
+            cols += [("", 12), ("", 0)]
+        used = sum(w for _, w in cols) + 2 * len(cols)  # Each cell has one space of padding either side
+        return [(label, w or max(10, width - used - 1)) for label, w in cols]  # -1 for the scrollbar
+    
+    def feed_title_cell(self, a, selected):
+        """The cell that changes with selection: NEW badge and title, or the indicator"""
         p = self.palette
-        try:
-            container_height = self.query_one("#feeds-container").size.height
-        except Exception:
-            container_height = self.size.height - 8
-        # Panel borders + padding (4) and the spacer above the preview (1)
-        self.rows_per_page = max(5, container_height - 5 - self.PREVIEW_LINES)
-        prompt_bar = self.make_prompt_bar()
-        if prompt_bar:
-            self.rows_per_page = max(5, self.rows_per_page - 1)
+        urgent = a["severity"] in ("critical", "zeroday")
+        title_style = f"bold {p.focus}" if selected and p.monochrome else f"bold {p.text}" if urgent or selected else p.text
+        watched = bool(self.watchlist.hits(a))
+        title = Text(no_wrap=True, overflow="ellipsis")
+        if self.active_kind == "indicators":
+            title.append(("★ " if watched else "") + (a.get("ioc") or a["title"]), style=title_style)
+            return title
+        if watched:
+            title.append("★ ", style=f"bold {p.warn}")
+        others = self.duplicate_groups().others.get(alert_key(a), []) if self.group_dupes else []
+        if others:
+            title.append(f"+{len(others)} ", style=f"bold {p.accent}")
+        if STATE.is_new(a):
+            title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
+            title.append(" ")
+        title.append(a["title"], style=title_style)
+        if selected and p.monochrome:
+            title.append(" █", style=f"blink {p.focus}")  # teletype cursor
+        return title
+    
+    def feed_row(self, a, narrow):
+        p = self.palette
+        sev = a["severity"]
+        short_date = f"{a['ts']:%d %b}" if narrow and not p.military_time else p.stamp(a["ts"])
+        cells = [Text(short_date, style=p.muted),
+                 Text("—" if a.get("undated") else age(a["ts"]), style=p.muted, justify="right")]
+        if self.active_kind == "indicators":
+            return cells + [Text((a.get("ioc_type") or "").upper(), style=f"bold {p.accent}"),
+                            self.feed_title_cell(a, False),
+                            Text(a.get("threat") or "", style=p.text, no_wrap=True, overflow="ellipsis"),
+                            Text(a["source"], style=p.muted, no_wrap=True, overflow="ellipsis")]
+        urgent = sev in ("critical", "zeroday")
+        return cells + [Text(f" {p.severity_name(sev)} " if urgent else p.severity_name(sev), style=p.badge(sev)),
+                        self.feed_title_cell(a, False)]
+    
+    def empty_feed_reason(self):
+        if self.watch_only and not self.watchlist.terms:
+            return "Your watchlist is empty: press W to add a vendor, product or keyword"
+        if self.watch_only:
+            return "No watchlist hits under these filters: press w to show everything"
+        if self.search_query:
+            return "Nothing matches this search under the f and 4 filters"
+        return "Nothing matches the current filters"
+    
+    def sync_feed_view(self):
+        """Bring the alert table, search box, preview and frame up to date"""
+        p = self.palette
+        table = self.query_one("#feed-table", FeedTable)
+        view = self.query_one("#alerts-view")
+        self.query_one("#search-row").display = bool(self.prompt or self.search_query)
         
         indicators_view = self.active_kind == "indicators"
-        table = Table(box=None, show_header=indicators_view, header_style=f"bold {p.muted}",
-                      padding=(0, 1), expand=True)
-        narrow = self.size.width < 120
-        date_width = 7 if p.military_time else 6 if narrow else 10
-        table.add_column("SEEN", width=date_width, min_width=date_width, no_wrap=True)  # published date
-        table.add_column("AGE", width=3, min_width=3, no_wrap=True, justify="right")    # age
-        if indicators_view:
-            table.add_column("TYPE", width=5, min_width=5, no_wrap=True)
-            table.add_column("INDICATOR", ratio=3, no_wrap=True, overflow="ellipsis")
-            table.add_column("THREAT", ratio=1, no_wrap=True, overflow="ellipsis")
-            table.add_column("SOURCE", width=18, min_width=18, no_wrap=True, overflow="ellipsis")
-            if table.show_header:
-                self.rows_per_page -= 1
-        else:
-            table.add_column(width=12, min_width=12, no_wrap=True)                  # severity tag
-            table.add_column(ratio=1, no_wrap=True, overflow="ellipsis")            # NEW badge + title
-        
+        width = table.size.width or max(40, self.size.width * 3 // 4 - 6)
+        narrow = width < self.NARROW_FEED
         filtered_alerts = self.filtered_alerts()
-        total_pages = max(1, (len(filtered_alerts) + self.rows_per_page - 1) // self.rows_per_page)
-        self.feed_page_offset = max(0, min(self.feed_page_offset, (total_pages - 1) * self.rows_per_page))
-        self.page_alerts = filtered_alerts[self.feed_page_offset:self.feed_page_offset + self.rows_per_page]
-        self.alert_urls = [a.get("url", "") for a in self.page_alerts]
-        self.hover_row = min(self.hover_row, len(self.page_alerts) - 1)
+        previous = self.selected_alert()
+        rows = [self.feed_row(a, narrow) for a in filtered_alerts]
+        if not rows:
+            reason = [Text("NO ALERTS", style=p.warn), Text(self.empty_feed_reason(), style=p.muted)]
+            rows = [[Text(""), Text(""), *reason, *[Text("")] * (2 if indicators_view else 0)]]
         
-        for row_idx, a in enumerate(self.page_alerts):
-            selected = row_idx == self.hover_row
-            sev = a["severity"]
-            title = Text()
-            watched = bool(self.watchlist.hits(a))
-            if watched:
-                title.append("★ ", style=f"bold {p.warn}")
-            others = self.duplicate_groups().others.get(alert_key(a), []) if self.group_dupes else []
-            if others:
-                title.append(f"+{len(others)} ", style=f"bold {p.accent}")
-            if STATE.is_new(a):
-                title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
-                title.append(" ")
-            urgent = sev in ("critical", "zeroday")
-            title_style = f"bold {p.focus}" if selected and p.monochrome else f"bold {p.text}" if urgent or selected else p.text
-            title.append(a["title"], style=title_style)
-            if selected and p.monochrome:
-                title.append(" █", style=f"blink {p.focus}")  # teletype cursor
-            short_date = f"{a['ts']:%d %b}" if narrow and not p.military_time else p.stamp(a["ts"])
-            row_style = f"on {p.surface}" if selected else None
-            if indicators_view:
-                table.add_row(
-                    Text(short_date, style=p.muted),
-                    Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
-                    Text((a.get("ioc_type") or "").upper(), style=f"bold {p.accent}"),
-                    Text(("★ " if watched else "") + (a.get("ioc") or a["title"]), style=title_style),
-                    Text(a.get("threat") or "", style=p.text),
-                    Text(a["source"], style=p.muted),
-                    style=row_style,
-                )
-                continue
-            table.add_row(
-                Text(short_date, style=p.muted),
-                Text("—" if a.get("undated") else age(a["ts"]), style=p.muted),
-                Text(f" {p.severity_name(sev)} " if urgent else p.severity_name(sev), style=p.badge(sev)),
-                title,
-                style=row_style,
-            )
+        # Rebuilding every row is wasted work if nothing visible changed, and would lose the scroll position
+        signature = (p.key, indicators_view, width, tuple(tuple(c.plain for c in row) for row in rows))
+        old_row, old_scroll = table.cursor_row, table.scroll_y
+        self.feed_rows = filtered_alerts
+        rebuilt = signature != self.feed_signature
+        if rebuilt:
+            self.feed_signature = signature
+            self.marked_row = None
+            table.clear(columns=True)
+            table.show_header = indicators_view
+            for label, column_width in self.feed_columns(indicators_view, width):
+                table.add_column(label, width=column_width)
+            table.add_rows(rows)
+        table.show_cursor = bool(filtered_alerts)
         
-        if not self.page_alerts:
-            if self.watch_only and not self.watchlist.terms:
-                reason = "Your watchlist is empty: press W to add a vendor, product or keyword"
-            elif self.watch_only:
-                reason = "No watchlist hits under these filters: press w to show everything"
-            elif self.search_query:
-                reason = "Nothing matches this search under the f and 4 filters"
-            else:
-                reason = "Nothing matches the current filters"
-            empty = [Text("NO ALERTS", style=p.warn), Text(reason, style=p.muted)]
-            table.add_row("", "", *empty, *([""] * (len(table.columns) - 4)))
+        # Stay on the same alert, at the same height on screen, when rows arrive above it
+        keys = {alert_key(a): i for i, a in enumerate(filtered_alerts)}
+        row = 0 if self.feed_at_top else keys.get(alert_key(previous), old_row) if previous else old_row
+        row = max(0, min(row, len(rows) - 1))
+        at_top, self.feed_at_top = self.feed_at_top, False
+        scroll = 0 if at_top else max(0, row - (old_row - old_scroll))
+        table.move_cursor(row=row, animate=False, scroll=False)
+        if rebuilt or at_top:
+            # Never touch the scroll otherwise: an arrow key's own scrolling may still be under way
+            visible = max(1, table.size.height - (1 if indicators_view else 0))
+            scroll = max(scroll, row - visible + 1)
+            table.call_after_refresh(table.scroll_to, y=min(scroll, row), animate=False)
+        self.mark_selected_row(row)
+        self.update_preview()
         
         rem = int((self.next_refresh - datetime.now(timezone.utc)).total_seconds())
         uptime = datetime.now(timezone.utc) - start_time
-        current_page = self.feed_page_offset // self.rows_per_page + 1
         status = Text(f" refresh in {max(rem, 0) // 60 + 1}m · up {int(uptime.total_seconds() // 3600)}h"
                       f"{int(uptime.total_seconds() % 3600 // 60):02d}m   ", style=p.muted)
-        hints = [("↑↓", "select"), ("Enter", "open"), ("i", "CVE"), ("a", "explain")]
-        if total_pages > 1:
-            hints.append(("←→", "pages"))
+        if self.prompt:
+            hints = [("Enter", "keep"), ("Esc", "clear")]
+        else:
+            hints = [("↑↓", "select"), ("Enter", "open"), ("i", "CVE"), ("a", "explain"), ("←→", "page")]
+            if self.search_query:
+                hints = [("/", "edit"), ("Esc", "clear")] + hints
         status.append_text(self.hint_bar(hints))
         status.append(" ")
         
-        page = f" · page {current_page}/{total_pages}" if total_pages > 1 else ""
         kind_label = "" if self.active_kind == "all" else f" · {CONTENT_KINDS[self.kind_index][1].upper()}"
         watch_label = " · WATCHLIST" if self.watch_only else ""
-        title_text, border = self.frame(f"GLOBAL THREAT FEED{kind_label}{watch_label} ({len(filtered_alerts)}){page}", self.panel_focus == "main")
-        
-        preview = Panel(self.make_alert_preview(self.selected_alert()), border_style=p.border, box=box.ROUNDED,
-                        padding=(0, 1), height=self.PREVIEW_LINES)
-        body = [prompt_bar, table, Text(""), preview] if prompt_bar else [table, Text(""), preview]
-        return Panel(Group(*body),
-                     title=title_text, subtitle=status, border_style=border, box=box.ROUNDED,
-                     padding=(1, 2))
+        title_text, border = self.frame(f"GLOBAL THREAT FEED{kind_label}{watch_label} ({len(filtered_alerts)})", self.panel_focus == "main")
+        view.border_title = title_text
+        view.border_subtitle = status
+        view.styles.border = ("round", border)
     
-    def make_prompt_bar(self):
-        """The search or watchlist input line above the feed, when there is one"""
-        p = self.palette
-        bar = Text(no_wrap=True, overflow="ellipsis")
-        if self.prompt == "search":
-            bar.append("/ ", style=f"bold {p.accent}")
-            bar.append(self.prompt_buffer + "█", style=f"bold {p.text}")
-            bar.append("  Enter keep · Esc clear", style=p.muted)
-        elif self.search_query:
-            bar.append("/ ", style=f"bold {p.accent}")
-            bar.append(self.search_query, style=f"bold {p.text}")
-            bar.append("  all feeds and history · / edit · Esc clear", style=p.muted)
-        else:
-            return None
-        return bar
+    def mark_selected_row(self, row):
+        """Selected rows get a brighter title, and the teletype cursor in Cold War"""
+        if row == self.marked_row or not self.feed_rows:
+            return
+        table = self.query_one("#feed-table", FeedTable)
+        if self.marked_row is not None and self.marked_row < len(self.feed_rows):
+            table.update_cell_at(Coordinate(self.marked_row, self.FEED_TITLE_COLUMN), self.feed_title_cell(self.feed_rows[self.marked_row], False))
+        if row < len(self.feed_rows):
+            table.update_cell_at(Coordinate(row, self.FEED_TITLE_COLUMN), self.feed_title_cell(self.feed_rows[row], True))
+        self.marked_row = row
+    
+    def update_preview(self):
+        self.query_one("#alert-preview", Static).update(
+            Panel(self.make_alert_preview(self.selected_alert()), border_style=self.palette.border, box=box.ROUNDED,
+                  padding=(0, 1), height=self.PREVIEW_LINES))
+    
+    def on_data_table_row_highlighted(self, event):
+        self.mark_selected_row(event.cursor_row)
+        self.update_preview()
+    
+    def on_data_table_row_selected(self, event):
+        """Clicking the selected row opens it"""
+        self.action_open_selected_link()
     
     def show_feed_from_top(self):
         """Back to the first page of the alerts view after the filters change"""
         self.main_view_mode = "alerts"
-        self.feed_page_offset = 0
+        self.feed_at_top = True
         self.hover_row = -1
     
     def action_start_search(self):
         """Search everything loaded, filtering as you type"""
         self.show_feed_from_top()
+        self.query_one("#search-row").display = True
+        box = self.query_one("#search-box", SearchBox)
+        box.value = self.search_query
+        box.action_end()
+        box.focus()
         self.prompt = "search"
-        self.prompt_buffer = self.search_query
         self.update_display()
     
     def action_edit_watchlist(self):
@@ -1779,7 +1894,7 @@ class CybrWireApp(App):
     def action_toggle_grouping(self):
         """Collapse the same story from several feeds into one row, or list every report"""
         self.group_dupes = not self.group_dupes
-        self.feed_page_offset = 0
+        self.feed_at_top = True
         self.hover_row = -1
         self.save_settings()
         self.notify("Duplicate reports " + ("grouped" if self.group_dupes else "shown separately"), timeout=2)
@@ -1796,38 +1911,29 @@ class CybrWireApp(App):
         self.save_settings()
         self.update_display()
     
+    def finish_typing(self):
+        self.prompt = None
+        self.set_focus(None)
+    
     def clear_search(self):
         self.search_query = ""
-        self.prompt = None
-        self.prompt_buffer = ""
+        self.query_one("#search-box", SearchBox).value = ""
+        self.finish_typing()
         self.show_feed_from_top()
         self.update_display()
     
-    def set_prompt_text(self, text):
-        """Update the input; a search filters the feed as it changes"""
-        self.prompt_buffer = text
-        if self.prompt == "search":
-            self.search_query = text.strip()
-            self.feed_page_offset = 0
-            self.hover_row = -1
-        self.update_display()
-    
-    def handle_prompt_key(self, event) -> bool:
-        """Keys while typing a search. False = not used here (arrows pass through)."""
-        if event.key == "escape":
-            self.clear_search()
-        elif event.key == "enter":
-            self.prompt = None
-            self.hover_row = 0  # Enter again opens the top result
+    def on_input_changed(self, event):
+        """A search filters the feed as it changes"""
+        if event.input.id == "search-box" and event.value.strip() != self.search_query:
+            self.search_query = event.value.strip()
+            self.feed_at_top = True
             self.update_display()
-        elif event.key == "backspace":
-            self.set_prompt_text(self.prompt_buffer[:-1])
-        elif event.key in ("up", "down"):
-            self.prompt = None  # Arrow keys move from typing into the results
-            return False
-        elif event.character and event.character.isprintable():
-            self.set_prompt_text(self.prompt_buffer + event.character)
-        return True
+    
+    def on_input_submitted(self, event):
+        if event.input.id == "search-box":
+            self.finish_typing()
+            self.feed_at_top = True  # Enter again opens the top result
+            self.update_display()
     
     def check_action(self, action, parameters):
         """Single-key commands are off while typing, so 'q' in a search doesn't quit"""
@@ -1884,17 +1990,20 @@ class CybrWireApp(App):
         source_counts = Counter(a.get("source_file", "curated") for a in window_alerts)
         total_sources = sum(source_counts.values()) or 1
         sources_right = [Text("SOURCES", style=f"bold {p.accent}")]
+        panel_width = self.query_one("#dashboard").size.width - 4
+        meter_width = max(3, min(12, panel_width - self.METRICS_WIDTH - 9))  # 9: table padding and " 100%"
         for key, label in (("curated", "Curated"), ("custom", "Custom"), ("community", "Community")):
             n = source_counts.get(key, 0)
             line = Text(f"{label} ", style=p.text if n else p.muted)
             line.append(str(n), style=p.muted)
             sources_right.append(line)
-            meter = self.bar(n / total_sources * 100, p.accent if n else p.muted, width=12)
+            meter = self.bar(n / total_sources * 100, p.accent if n else p.muted, width=meter_width)
             meter.append(f" {int(n / total_sources * 100)}%", style=p.muted)
             sources_right.append(meter)
         
+        # The labels and counts get a fixed width, so a narrow panel shrinks the meters instead of hiding the numbers
         metrics_table = Table(show_header=False, box=None, expand=True, padding=(0, 1))
-        metrics_table.add_column(no_wrap=True, ratio=1)
+        metrics_table.add_column(no_wrap=True, width=self.METRICS_WIDTH)
         metrics_table.add_column(no_wrap=True, ratio=1)
         for i in range(max(len(metrics_list), len(sources_right))):
             left = Text()
@@ -2255,7 +2364,7 @@ class CybrWireApp(App):
                 content.append(f"  {info['name']}: {info['accepts']}\n", style=p.muted)
                 if tier_note:
                     content.append(f"    {tier_note}\n", style=p.muted)
-            content.append("\nTo enable: Add API keys to cybrwire_local.yaml and restart.\n", style=p.muted)
+            content.append("\nTo enable: press Shift+K to add API keys.\n", style=p.muted)
             content.append("\nNote: Free/limited tier accounts have restrictions on indicator types.\n", style=p.warn)
             content.append("      Upgrade to paid plans for full IOC database access.\n", style=p.warn)
             
@@ -2393,7 +2502,7 @@ class CybrWireApp(App):
         time_windows = [24, 48, 168]  # 24h, 48h, 7d (168 hours)
         self.data_age_index = (self.data_age_index + 1) % len(time_windows)
         self.recency_hours = time_windows[self.data_age_index]
-        self.feed_page_offset = 0  # Reset to first page
+        self.feed_at_top = True
         self.hover_row = -1
         self.save_settings()
         self.call_later(self.update_display)
@@ -2403,7 +2512,7 @@ class CybrWireApp(App):
         filter_modes = ["all", "alerts", "posts"]
         self.filter_type_index = (self.filter_type_index + 1) % len(filter_modes)
         self.filter_mode = filter_modes[self.filter_type_index]
-        self.feed_page_offset = 0  # Reset to first page
+        self.feed_at_top = True
         self.hover_row = -1
         self.save_settings()
         self.call_later(self.update_display)
@@ -2421,7 +2530,7 @@ class CybrWireApp(App):
     def action_cycle_feeds(self):
         """Cycle content types: All → Advisories → News & Research → Ransomware → Indicators"""
         self.kind_index = (self.kind_index + 1) % len(CONTENT_KINDS)
-        self.feed_page_offset = 0
+        self.feed_at_top = True
         self.hover_row = -1
         if self.main_view_mode != "alerts":
             self.main_view_mode = "alerts"
@@ -2565,7 +2674,7 @@ class CybrWireApp(App):
         if self.ai_briefing_error:
             lines.append(Text(self.ai_briefing_error, style=f"bold {p.bad}"))
             if self.ai_problem:
-                lines.append(Text("Configure the ai: section in cybrwire_local.yaml (see readme), then restart.", style=dim))
+                lines.append(Text("Set ai.provider in cybrwire_local.yaml (see readme) and restart, then add its key with Shift+K.", style=dim))
         if self.ai_briefing:
             lines.append(Text(f"Generated {age(self.ai_briefing_time)} ago ({self.ai_briefing_time:%a %d %b %H:%M} UTC) • press g to refresh", style=dim))
             for line in self.ai_briefing.split("\n"):
@@ -2706,9 +2815,16 @@ class CybrWireApp(App):
             return  # The CVE card handles its own keys
         
         if self.prompt:
-            event.prevent_default()
-            if self.handle_prompt_key(event):
-                return
+            if event.key == "escape":
+                event.prevent_default()
+                self.clear_search()
+            elif event.key in ("up", "down"):
+                event.prevent_default()  # Arrow keys move from typing into the results
+                self.finish_typing()
+                self.update_display()
+            elif event.key == "tab":
+                event.prevent_default()
+            return  # Everything else belongs to the search box
         
         if event.key == "escape" and self.search_query and self.main_view_mode == "alerts":
             event.prevent_default()
@@ -2798,15 +2914,18 @@ class CybrWireApp(App):
         elif event.key == "up":
             event.prevent_default()
             # Navigate up in alerts/incidents view to highlight previous row
-            if self.main_view_mode in ["alerts", "incidents"]:
+            if self.main_view_mode == "alerts":
+                self.query_one("#feed-table", FeedTable).action_cursor_up()
+            elif self.main_view_mode == "incidents":
                 self.hover_row = max(-1, self.hover_row - 1)
                 self.call_later(self.update_display)
         elif event.key == "down":
             event.prevent_default()
             # Navigate down in alerts/incidents view to highlight next row
-            if self.main_view_mode in ["alerts", "incidents"]:
-                max_row = len(self.page_alerts) - 1 if self.main_view_mode == "alerts" else len(self.incident_rows) - 1
-                self.hover_row = min(max_row, self.hover_row + 1)
+            if self.main_view_mode == "alerts":
+                self.query_one("#feed-table", FeedTable).action_cursor_down()
+            elif self.main_view_mode == "incidents":
+                self.hover_row = min(len(self.incident_rows) - 1, self.hover_row + 1)
                 self.call_later(self.update_display)
         elif event.key == "left":
             event.prevent_default()
@@ -2814,14 +2933,23 @@ class CybrWireApp(App):
         elif event.key == "right":
             event.prevent_default()
             self.action_focused_next_page()
+        elif event.key in ("pageup", "pagedown") and self.main_view_mode != "alerts":
+            event.prevent_default()
+            view = self.query_one("#other-view")
+            view.scroll_page_up() if event.key == "pageup" else view.scroll_page_down()
+        elif event.key == "pageup":
+            event.prevent_default()
+            self.query_one("#feed-table", FeedTable).action_page_up()
+        elif event.key == "pagedown":
+            event.prevent_default()
+            self.query_one("#feed-table", FeedTable).action_page_down()
 
     def on_paste(self, event: events.Paste) -> None:
         """Handle paste events for input buffers - allows users to paste large IOCs without typing"""
         pasted_text = event.text.strip()
         
         if self.prompt:
-            self.set_prompt_text(self.prompt_buffer + pasted_text)
-            return
+            return  # The search box takes its own paste
         
         # If in API Tools view, append pasted text to input buffer
         if self.main_view_mode == "api_tools" and self.api_tools_input_mode:
@@ -2833,7 +2961,7 @@ class CybrWireApp(App):
         """Next page in the focused panel (main or dashboard)"""
         if self.panel_focus == "main":
             if self.main_view_mode == "alerts":
-                self.feed_page_offset += self.rows_per_page
+                self.query_one("#feed-table", FeedTable).action_page_down()
             elif self.main_view_mode == "incidents":
                 self.incident_page_offset += 1
             else:  # api_tools view
@@ -2849,7 +2977,7 @@ class CybrWireApp(App):
         """Previous page in the focused panel (main or dashboard)"""
         if self.panel_focus == "main":
             if self.main_view_mode == "alerts":
-                self.feed_page_offset = max(0, self.feed_page_offset - self.rows_per_page)
+                self.query_one("#feed-table", FeedTable).action_page_up()
             elif self.main_view_mode == "incidents":
                 self.incident_page_offset = max(0, self.incident_page_offset - 1)
             else:  # api_tools view
@@ -2890,36 +3018,15 @@ class CybrWireApp(App):
         self.notify(f"Theme: {self.palette.name}", timeout=2)
         self.call_later(self.update_display)
     
-    def action_page_up(self):
-        """Move to previous page of feeds"""
-        self.feed_page_offset = max(0, self.feed_page_offset - self.rows_per_page)
-        self.call_later(self.update_display)
-    
-    def action_page_down(self):
-        """Move to next page of feeds"""
-        # Calculate filtered alerts count
-        now = datetime.now(timezone.utc)
-        cutoff_time = now - timedelta(hours=self.recency_hours)
-        filtered_count = len([a for a in alert_queue if a.get("ts", now) >= cutoff_time])
-        max_offset = max(0, filtered_count - self.rows_per_page)
-        self.feed_page_offset = min(self.feed_page_offset + self.rows_per_page, max_offset)
-        self.call_later(self.update_display)
-    
     def on_click(self, event) -> None:
-        """Click a row to select it; click the selected row again to open it"""
-        if self.main_view_mode not in ("alerts", "incidents") or getattr(event.widget, "id", None) != "feeds":
+        """Click an incident to select it; click it again to open it. The alert table does this itself."""
+        if self.main_view_mode != "incidents" or getattr(event.widget, "id", None) != "feeds":
             return
-        if self.main_view_mode == "alerts":
-            # Outer panel border + top padding = 2 rows before the first alert (+1 header in Indicators)
-            row = event.y - 2 - (1 if self.active_kind == "indicators" else 0) - (1 if self.prompt or self.search_query else 0)
-            if not 0 <= row < len(self.page_alerts):
-                return
-        else:
-            # Outer panel border + padding = 2 rows before the first incident line
-            line = event.y - 2
-            row = next((i for i, (_, first, last) in enumerate(self.incident_rows) if first <= line <= last), None)
-            if row is None:
-                return
+        # Outer panel border + padding = 2 rows before the first incident line
+        line = event.y - 2
+        row = next((i for i, (_, first, last) in enumerate(self.incident_rows) if first <= line <= last), None)
+        if row is None:
+            return
         self.panel_focus = "main"
         if row == self.hover_row:
             self.action_open_selected_link()

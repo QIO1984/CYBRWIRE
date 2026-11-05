@@ -46,9 +46,41 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 ## Screenshots
 
 ### Main Dashboard (Synthwave, the default theme)
-The live threat feed with a preview of the selected alert, and the dashboard: severity counts, heat meters, recent breaches, threat insights, 24-hour activity and the most-reported CVEs.
+The live threat feed with a preview of the selected alert, and the dashboard: severity counts, heat meters, threat insights, 24-hour activity and the most-reported CVEs.
 
-![CybrWire main dashboard in the Synthwave theme](screenshots/dashboard_synthwave.png)
+![CybrWire main dashboard in the Synthwave theme](screenshots/dashboard.png)
+
+### Search (Amber CRT)
+Press `/` to search every loaded feed and a year of history as you type. Search ignores the Data Age window.
+
+![Searching all feeds and history](screenshots/search.png)
+
+### Watchlist (Retro Warm, Synthwave)
+Star the vendors and products you care about, then press `w` to see only those. `Shift+W` lists every term and what it catches.
+
+![The feed filtered to watchlist hits](screenshots/watchlist.png)
+
+![The watchlist card](screenshots/watchlist_card.png)
+
+### CVE Card (Amber CRT)
+Press `i` on any alert for severity, EPSS, known exploitation, CISA's required action, affected products and references.
+
+![The CVE detail card](screenshots/cve_card.png)
+
+### Grouped Duplicates (Amber CRT)
+The same story from several feeds becomes one row marked `+N`. Press `u` to list every report.
+
+![A grouped story in the feed](screenshots/duplicates.png)
+
+### API Keys (Synthwave)
+Press `Shift+K` to enter and test keys. They go to your system keychain and never appear in full.
+
+![The API key card](screenshots/key_card.png)
+
+### Indicators (Retro Warm)
+Malicious IPs, URLs and C2 servers get their own view. Press `Enter` on one to look it up in API Tools.
+
+![The Indicators view](screenshots/indicators.png)
 
 ### Incidents and War Room
 Alerts correlated into incidents when independent sources report the same CVE, IP, hash or threat actor, next to an AI briefing in the War Room.
@@ -60,6 +92,8 @@ A green phosphor terminal: FLASH / IMMEDIATE / PRIORITY / ROUTINE message preced
 
 ![Cold War mode](screenshots/cold_war.png)
 
+![Searching in Cold War mode](screenshots/cold_war_search.png)
+
 ![Cold War secure-line boot sequence](screenshots/cold_war_boot.png)
 
 ### API Tools
@@ -67,12 +101,7 @@ Look up an IP, file hash, domain or URL across every configured enrichment provi
 
 ![API Tools enrichment lookup](screenshots/api_tools.png)
 
-### More Themes
-Press `t` to cycle themes. Your choice is remembered between runs.
-
-| Retro Warm | Amber CRT |
-|---|---|
-| ![Retro Warm theme](screenshots/theme_retro_warm.png) | ![Amber CRT theme](screenshots/theme_amber_crt.png) |
+Press `t` to cycle themes. Your choice is remembered between runs. To retake these from live feeds, run `venv/bin/python tools/screenshots.py`.
 
 ## Installation & Usage
 
