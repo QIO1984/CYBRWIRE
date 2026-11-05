@@ -182,7 +182,7 @@ Press `Shift+K` to enter, test and remove API keys, notification targets and fee
 | `cybrwire_secrets.yaml` | Only when no keychain works, and the app warns you | Your user only, **not encrypted** |
 | `usrwire.yaml` | Old setups still work, but the app asks you to move them: press `m` in the card | Plaintext |
 
-Variable names are `CYBRWIRE_` plus `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `ABUSEIPDB_API_KEY`, `VIRUSTOTAL_API_KEY`, `PULSEDIVE_API_KEY`, `ABUSE_CH_API_KEY`, `NVD_API_KEY`, `NTFY_URL`, `NTFY_TOKEN`, `PUSHOVER_TOKEN`, `PUSHOVER_USER`, `DISCORD_WEBHOOK` or `SLACK_WEBHOOK`. A feed's key uses `FEED_` plus its name, such as `CYBRWIRE_FEED_MY_FEED`. Set `CYBRWIRE_KEYCHAIN=off` to skip the keychain.
+Variable names are `CYBRWIRE_` plus `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `ABUSEIPDB_API_KEY`, `VIRUSTOTAL_API_KEY`, `PULSEDIVE_API_KEY`, `ABUSE_CH_API_KEY`, `NVD_API_KEY`, `NTFY_URL`, `NTFY_TOKEN`, `PUSHOVER_TOKEN`, `PUSHOVER_USER`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `DISCORD_WEBHOOK` or `SLACK_WEBHOOK`. A feed's key uses `FEED_` plus its name, such as `CYBRWIRE_FEED_MY_FEED`. Set `CYBRWIRE_KEYCHAIN=off` to skip the keychain.
 
 A keychain protects keys from other users, backups and accidental commits. It can't stop malware running as you, because the app itself has to be able to read them.
 
@@ -254,7 +254,7 @@ watchlist:
   - CVE-2024-3400
 ```
 
-Notifications can go to ntfy, Pushover, Discord or Slack. Targets are added with `Shift+K`, because their URLs work like passwords. Which events
+Notifications can go to ntfy, Pushover, Telegram, Discord or Slack. Targets are added with `Shift+K`, because their URLs work like passwords. Which events
 send one is set in a `notifications:` section (see `usrwire.yaml`). Run `python3 cybrwire.py --test-notify` to check them.
 
 Every alert is saved to `cybrwire_history.db` for a year, so search can find items that feeds have dropped.

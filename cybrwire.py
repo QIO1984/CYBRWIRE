@@ -538,27 +538,38 @@ class CybrWireFooter(Static):
         # Count of what the feed panel is showing
         count = len(app.filtered_alerts()) if not app.is_loading else 0
         
-        commands = [
-            ("r", "Refresh", "refresh"),
-            ("d", f"Age {data_age_label}", "cycle_data_age"),
-            ("f", f"{filter_label} ({count})", "cycle_filter_type"),
-            ("4", f"Type {CONTENT_KINDS[app.kind_index][1]}", "cycle_feeds"),
-            ("/", "Search", "start_search"),
-            ("w", f"Watch {'On' if app.watch_only else 'Off'}", "toggle_watch_only"),
-            ("tab", "Panel", "toggle_panel_focus"),
-            ("v", "View", "toggle_view"),
-            ("K", "Keys", "manage_keys"),
-            ("c", "CW", "toggle_cold_war"),
-            ("t", "Theme", "cycle_theme"),
-            ("h", "Help", "show_help"),
-            ("q", "Quit", "quit"),
-        ]
+        kind_label = CONTENT_KINDS[app.kind_index][1].replace("News & Research", "News")
+        
+        def commands_for(compact):
+            return [
+                ("r", "Refresh", "refresh"),
+                ("d", data_age_label if compact else f"Age {data_age_label}", "cycle_data_age"),
+                ("f", f"{filter_label} ({count})", "cycle_filter_type"),
+                ("4", kind_label if compact else f"Type {kind_label}", "cycle_feeds"),
+                ("/", "Search", "start_search"),
+                ("w", f"Watch {'On' if app.watch_only else 'Off'}", "toggle_watch_only"),
+                ("W", "Terms", "edit_watchlist"),
+                ("tab", "Panel", "toggle_panel_focus"),
+                ("v", "View", "toggle_view"),
+                ("K", "Keys", "manage_keys"),
+                ("c", "CW", "toggle_cold_war"),
+                ("t", "Theme", "cycle_theme"),
+                ("h", "Help", "show_help"),
+                ("q", "Quit", "quit"),
+            ]
+        
+        def length(commands, gap):
+            return sum(len(k) + 1 + len(label) for k, label, _ in commands) + gap * (len(commands) - 1)
+        
+        # Roomiest layout that fits: wider gaps first, then shorter labels
+        width = self.size.width
+        commands = commands_for(False)
+        gap = " " * (2 if length(commands, 2) <= width else 1)
+        if length(commands, len(gap)) > width:
+            commands = commands_for(True)
         key_color = f"bold {app.palette.accent}"
         desc_color = app.palette.muted
         footer_text = Text(no_wrap=True, overflow="ellipsis")
-        # Commands sit two spaces apart, or one when that's what it takes to fit them all
-        full_length = sum(len(k) + 1 + len(label) for k, label, _ in commands) + 2 * (len(commands) - 1)
-        gap = "  " if full_length <= self.size.width else " "
         self.regions = []  # (first column, last column, action), so each command is clickable
         for i, (key, label, action) in enumerate(commands):
             start = footer_text.cell_len

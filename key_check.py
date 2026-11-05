@@ -22,7 +22,10 @@ UNKNOWN = "unknown"  # Couldn't tell: network trouble, rate limit, provider erro
 TIMEOUT = 15
 ANTHROPIC_VERSION = "2023-06-01"
 INVALID_STATUSES = {401, 403}
+PAIRED_TARGETS = {"pushover": ("Pushover", "pushover_token", "pushover_user", "the app token and the user key"),
+                  "telegram": ("Telegram", "telegram_token", "telegram_chat_id", "the bot token and the chat ID")}
 NOTIFICATION_SLOTS = {"ntfy_url": "ntfy", "ntfy_token": "ntfy", "pushover_token": "pushover", "pushover_user": "pushover",
+                      "telegram_token": "telegram", "telegram_chat_id": "telegram",
                       "discord_webhook": "discord", "slack_webhook": "slack"}
 
 
@@ -78,16 +81,17 @@ async def _check_notification(slot_id: str, value: str, settings: Dict) -> Check
         target = {"ntfy_url": settings.get("ntfy_url"), "ntfy_token": settings.get("ntfy_token"), **target}
         if not target["ntfy_url"]:
             return CheckResult(UNKNOWN, "Set the ntfy topic URL first; the token is tested against it")
-    if name == "pushover":
-        target = {"pushover_token": settings.get("pushover_token"), "pushover_user": settings.get("pushover_user"), **target}
-        if not (target["pushover_token"] and target["pushover_user"]):
-            return CheckResult(UNKNOWN, "Pushover needs both the app token and the user key. Add the other one to test them")
+    if name in PAIRED_TARGETS:
+        label, first, second, parts = PAIRED_TARGETS[name]
+        target = {first: settings.get(first), second: settings.get(second), **target}
+        if not (target[first] and target[second]):
+            return CheckResult(UNKNOWN, f"{label} needs both {parts}. Add the other one to test them")
     results = await notify.send(target, "CybrWire test", "Notifications are working.")
     error = results.get(name)
     if error is None:
         return CheckResult(OK, "Test message sent. Check that it arrived")
-    # Pushover answers bad credentials with 400
-    if error in ("HTTP 401", "HTTP 403", "HTTP 404") or (name == "pushover" and error == "HTTP 400"):
+    # Pushover and Telegram answer bad credentials or an unknown chat with 400
+    if error in ("HTTP 401", "HTTP 403", "HTTP 404") or (name in PAIRED_TARGETS and error == "HTTP 400"):
         return CheckResult(REJECTED, f"Rejected ({error})")
     return CheckResult(UNKNOWN, f"Couldn't deliver ({error})")
 

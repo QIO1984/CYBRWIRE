@@ -320,6 +320,15 @@ class CheckTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.status, status)
             self.assertEqual(send.await_args.args[0], {"pushover_token": KEY, "pushover_user": "user-key"})
 
+    async def test_telegram_needs_both_parts_and_a_400_means_rejected(self):
+        result = await key_check.check_key("telegram_chat_id", "-100", {}, {})
+        self.assertIn("both", result.message)
+        for error, status in ((None, key_check.OK), ("HTTP 400", key_check.REJECTED), ("HTTP 401", key_check.REJECTED)):
+            with mock.patch.object(key_check.notify, "send", mock.AsyncMock(return_value={"telegram": error})) as send:
+                result = await key_check.check_key("telegram_chat_id", "-100", {}, {"telegram_token": "123:abc"})
+            self.assertEqual(result.status, status)
+            self.assertEqual(send.await_args.args[0], {"telegram_token": "123:abc", "telegram_chat_id": "-100"})
+
     async def test_feed_key_is_tested_against_the_feed_itself(self):
         slot = keystore.add_feed_slot({"name": "Check Me", "url": "https://x.test/feed", "key_header": "X-Key"})
         self.addCleanup(lambda: (keystore.SLOTS.remove(slot), keystore.SLOTS_BY_ID.pop(slot.id)))

@@ -1,5 +1,5 @@
 """
-Push notifications for CybrWire: ntfy, Pushover, Discord and Slack
+Push notifications for CybrWire: ntfy, Pushover, Telegram, Discord and Slack
 
 Off until a target is configured. Each refresh sends at most one message per
 target, summarizing what's new, so a busy day can't flood a phone or channel.
@@ -22,10 +22,14 @@ TRIGGERS = ("watchlist", "kev", "zeroday")
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_MAX_TITLE = 250
 PUSHOVER_MAX_MESSAGE = 1024
+TELEGRAM_API = "https://api.telegram.org"
+TELEGRAM_MAX_MESSAGE = 4096
 
 
 def is_configured(settings: Dict) -> bool:
-    return any(settings.get(k) for k in TARGET_KEYS) or bool(settings.get("pushover_token") and settings.get("pushover_user"))
+    return (any(settings.get(k) for k in TARGET_KEYS)
+            or bool(settings.get("pushover_token") and settings.get("pushover_user"))
+            or bool(settings.get("telegram_token") and settings.get("telegram_chat_id")))
 
 
 def triggered_by(alert: Dict, watch_hits: List[str], triggers: List[str]) -> Optional[str]:
@@ -69,6 +73,11 @@ def _escape_slack(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _defuse_telegram(text: str) -> str:
+    # Telegram links any @name in plain text, which can ping that person; a zero-width space stops it
+    return text.replace("@", "@\u200b")
+
+
 async def send(settings: Dict, title: str, body: str) -> Dict[str, Optional[str]]:
     """Send to every configured target. Returns target name -> error (None = delivered)."""
     results: Dict[str, Optional[str]] = {}
@@ -96,6 +105,11 @@ async def send(settings: Dict, title: str, body: str) -> Dict[str, Optional[str]
             await post("pushover", PUSHOVER_URL,
                        data={"token": settings["pushover_token"], "user": settings["pushover_user"],
                              "title": title[:PUSHOVER_MAX_TITLE], "message": body[:PUSHOVER_MAX_MESSAGE]})
+        if settings.get("telegram_token") and settings.get("telegram_chat_id"):
+            # Telegram puts the token in the URL. post() never reports or logs the URL.
+            text = _defuse_telegram(f"{title}\n{body}")[:TELEGRAM_MAX_MESSAGE]
+            await post("telegram", f"{TELEGRAM_API}/bot{settings['telegram_token']}/sendMessage",
+                       json={"chat_id": settings["telegram_chat_id"], "text": text, "disable_web_page_preview": True})
         if settings.get("discord_webhook"):
             await post("discord", settings["discord_webhook"],
                        json={"content": f"**{title}**\n{body}"[:2000], "allowed_mentions": {"parse": []}})
