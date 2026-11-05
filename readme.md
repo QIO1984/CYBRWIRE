@@ -32,7 +32,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **NEW badges** – alerts first seen since your last launch stay marked until you open them
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
-- **Live scrolling ticker** displaying latest threats and alerts
+- **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
 - **Retro themes** – Synthwave (default), Retro Warm and Amber CRT; press `t` to cycle
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
 - **Customizable recency window** (24h / 48h / 7 days)
@@ -71,6 +71,11 @@ Press `i` on any alert for severity, EPSS, known exploitation, CISA's required a
 The same story from several feeds becomes one row marked `+N`. Press `u` to list every report.
 
 ![A grouped story in the feed](screenshots/duplicates.png)
+
+### Live Wire (Retro Warm)
+The bar across the top follows each feed check as it runs and announces what's new. Between arrivals, the most severe current items take turns.
+
+![The Live Wire announcing an arrival during a feed check](screenshots/live_wire.png)
 
 ### API Keys (Synthwave)
 Press `Shift+K` to enter and test keys. They go to your system keychain and never appear in full.
@@ -156,6 +161,14 @@ Press `Shift+K` to choose a provider and model, then add its key. AI stays off u
 
 You can keep a Primary and an Alternate provider and model, and switch between them in the card with `a` or a click. Each provider keeps its own key, so switching never sends one provider's key to another.
 
+## Live Wire
+
+The bar across the top shows what the app is really doing. Its title follows each feed check as it runs, then counts down to the next one. Anything first seen while the app is open is announced as `JUST IN`, most severe first, and wears a `LIVE` badge in the feed for 90 seconds. When nothing is arriving, the most severe current items take turns, with your watchlist hits first. Press `l` or click the bar to jump to the alert on show.
+
+Feeds are checked every 5 minutes, so an alert can't appear sooner than its source publishes it and the next check finds it.
+
+Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for a new zero-day or watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
+
 ## Keyboard or Mouse
 
 Everything for reading and moving around works both ways, so you only need the keyboard to type a search or a key.
@@ -168,6 +181,7 @@ Everything for reading and moving around works both ways, so you only need the k
 | Open a row | `Enter` | Click the selected row, or the Open button |
 | Turn War Room and Feed Status pages | `←` `→` | Wheel, or Prev and Next under the panel |
 | Commands in the footer | Their keys | Click them |
+| Go to the alert on the Live Wire | `l` | Click the bar |
 
 Some terminals keep right-click for their own menu. If yours does, look for a setting that passes it to the application.
 
