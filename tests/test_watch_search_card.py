@@ -7,6 +7,7 @@ No network, no AI calls, and the real state file is never touched.
 """
 
 import asyncio
+import io
 import os
 import sqlite3
 import sys
@@ -16,6 +17,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+from rich.console import Console
 from textual import events
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +32,8 @@ import cybrwire  # noqa: E402
 import feeds  # noqa: E402
 from config import Config  # noqa: E402
 from cve_card import CveCard, exploit_status  # noqa: E402
-from livewire import Shown  # noqa: E402
+from livewire import Shown, WireItem  # noqa: E402
+import evidence  # noqa: E402
 from watch_card import WatchCard  # noqa: E402
 from watchlist import Watchlist, matches_search  # noqa: E402
 
@@ -196,7 +199,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(interval.stop)
         cybrwire.STATE.cvss.clear()
         cybrwire.CONFIG = Config(sources=[], watchlist=["Fortinet"])
-        cybrwire.STATE.settings = {}
+        cybrwire.STATE.settings = {"filter_type_index": 0, "alerts_default": True}  # Most tests are about everything loaded
         cybrwire.STATE.watchlist = []
         cybrwire.STATE.notified = {}
         cybrwire.alert_queue[:] = SAMPLE
@@ -689,7 +692,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await pilot.press("slash", *"openssl", "enter")
             await self.settle(pilot)
             target = next(a for a in SAMPLE if a["title"].startswith("CitrixBleed"))
-            app.wire.shown = Shown(target, False, time.monotonic())
+            app.wire.shown = Shown(WireItem("REPORTED", target["title"], "", target), False, time.monotonic())
             app.wire_tick()
             await pilot.click("#ticker", offset=(30, 1))
             await self.settle(pilot)
@@ -702,7 +705,8 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             wire = app.wire
             wire.end_sweep([], app.watchlist, {}, 0.0)  # The first check only sets the baseline
-            fresh = alert("Brand new zero-day", severity="zeroday")
+            fresh = alert("Vendor fixes zero-day flaw", severity="zeroday")
+            evidence.apply_evidence([fresh])
             cybrwire.alert_queue.insert(0, fresh)
             clock = time.monotonic()
             wire.end_sweep([fresh], app.watchlist, {}, clock)
@@ -711,10 +715,48 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             panel = app.query_one("#ticker")
             self.assertIn("JUST IN", panel.drawn[3])
-            self.assertIn("Brand new zero-day", panel.drawn[3])
+            self.assertIn("Vendor fixes zero-day flaw", panel.drawn[3])
+            self.assertIn("REPORTED", panel.drawn[3])
             self.assertIn("1 new this session", panel.drawn[2])
             table = app.query_one("#feed-table")
             self.assertIn("LIVE", table.get_row_at(app.feed_rows.index(fresh))[3].plain)
+
+    async def test_a_stale_arrival_is_new_but_not_just_in(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            wire = app.wire
+            wire.end_sweep([], app.watchlist, {}, 0.0)
+            late = alert("Vendor fixes zero-day flaw", severity="zeroday", hours=23)
+            late["ts"] = datetime.now(timezone.utc) - timedelta(hours=23)
+            evidence.apply_evidence([late])
+            cybrwire.alert_queue.insert(0, late)
+            wire.end_sweep([late], app.watchlist, {}, time.monotonic())
+            app.wire_tick()
+            await self.settle(pilot)
+            body = app.query_one("#ticker").drawn[3]
+            self.assertNotIn("JUST IN", body)
+            self.assertIn(" NEW ", body)
+
+    async def test_blocklists_do_not_read_as_exploitation_on_the_dashboard(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            now = datetime.now(timezone.utc)
+            listed = [alert(f"TOP MALICIOUS IP: 198.51.100.{i}", source="Blocklist", kind="indicators", severity="exploit")
+                      for i in range(50)]
+            story = alert("LockBit claims another hospital", severity="ransomware")
+            for a in [*listed, story]:
+                a["ts"] = now - timedelta(minutes=5)
+            cybrwire.alert_queue[:] = [*listed, story]
+            console = Console(width=60, record=True, file=io.StringIO())
+            console.print(app.make_dashboard())
+            drawn = " ".join(console.export_text().split())
+            self.assertIn("Items Seen 51", drawn)
+            self.assertIn("IOCs Listed 50", drawn)
+            self.assertIn("Exploits 0", drawn)
+            self.assertIn("Ransomware wave", drawn)
+            self.assertNotIn("Exploitation wave", drawn)
 
     async def test_live_wire_title_follows_a_real_check(self):
         app = self.make_app()
@@ -758,7 +800,9 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(160, 45)) as pilot:
                 await self.settle(pilot)
                 self.assertEqual(app.sound, "off")
-                app.announce_arrivals([alert("z", severity="zeroday")])
+                urgent = alert("Vendor fixes zero-day flaw")
+                evidence.apply_evidence([urgent])
+                app.announce_arrivals([urgent])
                 play.assert_not_called()
                 await pilot.press("b")
                 self.assertEqual(app.sound, "pc")
@@ -767,7 +811,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
                 play.reset_mock()
                 app.announce_arrivals([alert("routine")])
                 play.assert_not_called()
-                app.announce_arrivals([alert("z", severity="zeroday"), alert("y", severity="zeroday")])
+                app.announce_arrivals([urgent, urgent])
                 play.assert_called_once()  # Once per check, however many arrived
 
     async def test_clicking_outside_a_card_closes_it_and_buttons_work(self):

@@ -21,6 +21,9 @@ MAX_TITLE_LEN = 200  # The feed table truncates to fit the screen
 KEV_CATALOG = {}
 # CVE ID -> the full KEV record (vendor, product, dates, required action) for the CVE card
 KEV_DETAILS = {}
+EUVD_EXPLOITED = {}    # CVE -> when ENISA says exploitation began
+CIRCL_EXPLOITED = set()  # CVEs with a reported sighting of exploitation
+CIRCL_POC = set()        # CVEs with public exploit code reported
 MAX_SUMMARY_LEN = 300
 
 # Marketing, events and other non-intel posts. Only applied to RSS items with
@@ -102,6 +105,14 @@ async def fetch_doomsday_seconds() -> int:
     return int(value * 60 if match.group(2).lower() == "minutes" else value)
 
 
+def product_name(vendor, product):
+    """'WordPress' + 'WordPress Core' reads as 'WordPress Core', not the vendor twice"""
+    vendor, product = (vendor or "").strip(), (product or "").strip()
+    if vendor and product.lower().startswith(vendor.lower()):
+        return product
+    return " ".join(x for x in (vendor, product) if x)
+
+
 def parse_cisa(data, source_name, source_file):
     KEV_CATALOG.update({v["cveID"]: v.get("shortDescription", "") for v in data.get("vulnerabilities", []) if v.get("cveID")})
     KEV_DETAILS.update({v["cveID"]: v for v in data.get("vulnerabilities", []) if v.get("cveID")})
@@ -112,8 +123,9 @@ def parse_cisa(data, source_name, source_file):
             ts = datetime.fromisoformat(date_added + "T00:00:00+00:00") if date_added else datetime.now(timezone.utc)
         except Exception:
             ts = datetime.now(timezone.utc)
+        product = product_name(v.get("vendorProject"), v.get("product"))
         items.append({
-            "title": f"KEV ACTIVE → {v['cveID']}",
+            "title": f"KEV ACTIVE → {v['cveID']}" + (f": {product}" if product else ""),
             "summary": v.get("shortDescription", "")[:MAX_SUMMARY_LEN],
             "published": ts.strftime("%a, %d %b"),
             "severity": "critical",
@@ -124,6 +136,42 @@ def parse_cisa(data, source_name, source_file):
             "kind": "advisory",
         })
     return items
+
+def parse_circl(data, source_name, source_file):
+    """
+    CIRCL sightings are signals only. On their own they're a bare CVE number with no
+    product, often years old, so they raise the stories that mention them instead.
+    """
+    for sighting in data.get("data", []):
+        cve = (sighting.get("vulnerability") or "").upper()
+        if cve.startswith("CVE-"):
+            if sighting.get("type") == "published-proof-of-concept":
+                CIRCL_POC.add(cve)
+            elif sighting.get("type") == "exploited":
+                CIRCL_EXPLOITED.add(cve)
+    return []
+
+
+def parse_euvd(data, source_name, source_file):
+    """ENISA's list of exploited vulnerabilities"""
+    items = []
+    for v in data if isinstance(data, list) else data.get("items", []):
+        cve = next((a.strip().upper() for a in (v.get("aliases") or "").split("\n") if a.strip().upper().startswith("CVE-")), None)
+        if not cve:
+            continue
+        ts = None
+        raw = (v.get("exploitedSince") or "").replace("\u202f", " ")
+        try:
+            ts = datetime.strptime(raw, "%b %d, %Y, %I:%M:%S %p").replace(tzinfo=timezone.utc)
+        except ValueError:
+            ts = datetime.now(timezone.utc)
+        EUVD_EXPLOITED[cve] = ts
+        items.append({"title": f"Exploited (ENISA) → {cve}", "summary": clean_html(v.get("description") or "")[:MAX_SUMMARY_LEN],
+                      "published": ts.strftime("%a, %d %b"), "severity": "critical", "source": source_name,
+                      "source_file": source_file, "url": f"https://euvd.enisa.europa.eu/vulnerability/{v.get('id', '')}",
+                      "ts": ts, "kind": "advisory", "signal_cve": cve})
+    return items
+
 
 # Formats feedparser doesn't recognize but some vendors publish
 EXTRA_DATE_FORMATS = ["%b %d, %Y %H:%M:%S%z", "%B %d, %Y %H:%M:%S%z", "%b %d, %Y", "%B %d, %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]

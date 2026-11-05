@@ -18,10 +18,11 @@
 #   - CVE-2024-3400
 
 # NOTIFICATIONS: which events send a message to the targets set with Shift+K.
-# Any of: watchlist (the default), kev, zeroday
+# Any of: watchlist, confirmed (newly on an official exploited list), kev, zeroday
+# The default is watchlist and confirmed.
 #
 # notifications:
-#   triggers: [watchlist, kev]
+#   triggers: [watchlist, confirmed, zeroday]
 
 # AI: only for what the app doesn't ask for. true = a new briefing at every launch,
 # which is one paid call each time.

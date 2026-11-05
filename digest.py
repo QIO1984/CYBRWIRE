@@ -17,7 +17,14 @@ SEVERITY_LABELS = [("critical", "Critical/KEV"), ("zeroday", "Zero-day"), ("rans
 
 
 def _line(alert: Dict) -> str:
-    return f"  [{alert['severity'].upper():<10}] {alert['title'][:110]}\n      {age(alert['ts'])} ago, {alert['source']}  {alert.get('url') or ''}".rstrip()
+    ev = alert.get("evidence")
+    label = ev.tier if ev else alert["severity"].upper()
+    text = f"  [{label:<10}] {alert['title'][:110]}\n      {age(alert['ts'])} ago, {alert['source']}  {alert.get('url') or ''}".rstrip()
+    if ev:
+        text += "\n      Why: " + ", ".join(ev.reasons)
+        if ev.action:
+            text += f"\n      Action: {ev.action[:200]}"
+    return text
 
 
 def _section(lines: List[str], heading: str, items: List[Dict]) -> None:
@@ -40,10 +47,13 @@ def build_digest(alerts: List[Dict], hours: int, watchlist, kev_catalog: Dict, f
              f"({len(groups.leader_of)} duplicate reports merged)",
              "  ".join(f"{label} {counts[sev]}" for sev, label in SEVERITY_LABELS)]
 
+    _section(lines, "EXPLOITATION EVIDENCE", sorted((a for a in stories if a.get("evidence")),
+                                                    key=lambda a: -a["evidence"].score))
     if watchlist.terms:
         _section(lines, "WATCHLIST HITS", [a for a in stories if watchlist.hits(a)])
-    _section(lines, "NEW IN CISA KEV", [a for a in stories if a["title"].startswith("KEV ACTIVE")])
-    _section(lines, "ZERO-DAYS", [a for a in stories if a["severity"] == "zeroday"])
+    claims = sum(1 for a in stories if a["title"].startswith("RANSOMWARE VICTIM"))
+    if claims:
+        lines += ["", f"RANSOMWARE CLAIMS: {claims}"]
 
     incidents = build_incidents(window, kev_catalog)
     lines += ["", f"TOP INCIDENTS ({len(incidents)})"]

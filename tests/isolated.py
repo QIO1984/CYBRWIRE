@@ -1,5 +1,6 @@
 """Import first in any test that loads cybrwire: keeps tests away from the real keychain, YAML, state and history."""
 
+import logging
 import os
 import sys
 import tempfile
@@ -12,6 +13,8 @@ import history  # noqa: E402
 import state  # noqa: E402
 
 TMP = tempfile.TemporaryDirectory()
+# Claims the root logger first, so the app's own setup can't send test noise to the real cybrwire.log
+logging.basicConfig(filename=os.path.join(TMP.name, "test.log"), level=logging.WARNING)
 config.APP_DIR = TMP.name  # load_config can create and convert the user's YAML, so never let it see the real one
 state.STATE_PATH = os.path.join(TMP.name, "state.json")
 history.HISTORY_PATH = os.path.join(TMP.name, "history.db")
