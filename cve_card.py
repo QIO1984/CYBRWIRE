@@ -10,7 +10,7 @@ from typing import List
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.screen import ModalScreen
+from widgets import Card
 from textual.widgets import Static
 
 import cve_intel
@@ -31,7 +31,7 @@ def exploit_status(kev: dict, detail: dict) -> tuple:
     return "muted", "No known exploitation in CISA KEV and no exploit links on NVD"
 
 
-class CveCard(ModalScreen):
+class CveCard(Card):
     """One CVE at a time; left/right steps through the CVEs named in the alert"""
 
     DEFAULT_CSS = """

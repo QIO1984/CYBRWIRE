@@ -1,5 +1,5 @@
 """
-Push notifications for CybrWire: ntfy, Discord and Slack
+Push notifications for CybrWire: ntfy, Pushover, Discord and Slack
 
 Off until a target is configured. Each refresh sends at most one message per
 target, summarizing what's new, so a busy day can't flood a phone or channel.
@@ -19,10 +19,13 @@ MAX_AGE = timedelta(hours=48)   # A feed that resurfaces old items shouldn't ale
 TIMEOUT = 15
 TARGET_KEYS = ("ntfy_url", "discord_webhook", "slack_webhook")
 TRIGGERS = ("watchlist", "kev", "zeroday")
+PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
+PUSHOVER_MAX_TITLE = 250
+PUSHOVER_MAX_MESSAGE = 1024
 
 
 def is_configured(settings: Dict) -> bool:
-    return any(settings.get(k) for k in TARGET_KEYS)
+    return any(settings.get(k) for k in TARGET_KEYS) or bool(settings.get("pushover_token") and settings.get("pushover_user"))
 
 
 def triggered_by(alert: Dict, watch_hits: List[str], triggers: List[str]) -> Optional[str]:
@@ -88,6 +91,11 @@ async def send(settings: Dict, title: str, body: str) -> Dict[str, Optional[str]
             token = settings.get("ntfy_token")
             await post("ntfy", base + "/", json={"topic": topic, "title": title, "message": body},
                        headers={"Authorization": f"Bearer {token}"} if token else {})
+        if settings.get("pushover_token") and settings.get("pushover_user"):
+            # Form fields, so the token stays out of the URL
+            await post("pushover", PUSHOVER_URL,
+                       data={"token": settings["pushover_token"], "user": settings["pushover_user"],
+                             "title": title[:PUSHOVER_MAX_TITLE], "message": body[:PUSHOVER_MAX_MESSAGE]})
         if settings.get("discord_webhook"):
             await post("discord", settings["discord_webhook"],
                        json={"content": f"**{title}**\n{body}"[:2000], "allowed_mentions": {"parse": []}})

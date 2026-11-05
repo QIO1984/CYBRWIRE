@@ -174,10 +174,10 @@ class MoveTests(Base):
     def test_move_to_keychain_clears_yaml_and_keeps_settings(self):
         chain = FakeKeychain()
         store = self.store(chain)
-        self.assertEqual(store.movable(), ["ai_api_key", "nvd_api_key"])
+        self.assertEqual(store.movable(), ["anthropic_api_key", "nvd_api_key"])
         moved, problems = store.move_all()
-        self.assertEqual((moved, problems), (["ai_api_key", "nvd_api_key"], []))
-        self.assertEqual(chain.data[("cybrwire", "ai_api_key")], KEY)
+        self.assertEqual((moved, problems), (["anthropic_api_key", "nvd_api_key"], []))
+        self.assertEqual(chain.data[("cybrwire", "anthropic_api_key")], KEY)
         text = open(self.local).read()
         self.assertNotIn(KEY, text)
         self.assertNotIn("nvd-secret-value", text)
@@ -190,24 +190,24 @@ class MoveTests(Base):
         store = self.store(FakeKeychain(lossy=True))
         moved, problems = store.move_all()
         self.assertEqual(problems, [])
-        self.assertEqual(store.resolve_all(store.read_yaml_values())["ai_api_key"], (KEY, FILE))
+        self.assertEqual(store.resolve_all(store.read_yaml_values())["anthropic_api_key"], (KEY, FILE))
         self.assertNotIn(KEY, open(self.local).read())
 
     def test_uneditable_yaml_is_reported_and_key_still_works(self):
-        self.write("cybrwire_local.yaml", f'ai: {{provider: x, api_key: "{KEY}"}}\n')
+        self.write("cybrwire_local.yaml", f'ai: {{provider: anthropic, api_key: "{KEY}"}}\n')
         chain = FakeKeychain()
         store = self.store(chain)
         moved, problems = store.move_all()
         self.assertEqual(moved, [])
         self.assertIn("by hand", problems[0])
-        self.assertEqual(store.resolve_all(store.read_yaml_values())["ai_api_key"][0], KEY)
+        self.assertEqual(store.resolve_all(store.read_yaml_values())["anthropic_api_key"][0], KEY)
 
     def test_stale_yaml_copy_does_not_overwrite_a_newer_keychain_key(self):
         chain = FakeKeychain()
-        chain.data[("cybrwire", "ai_api_key")] = "newer-key-in-keychain"
+        chain.data[("cybrwire", "anthropic_api_key")] = "newer-key-in-keychain"
         store = self.store(chain)
         store.move_all()
-        self.assertEqual(chain.data[("cybrwire", "ai_api_key")], "newer-key-in-keychain")
+        self.assertEqual(chain.data[("cybrwire", "anthropic_api_key")], "newer-key-in-keychain")
         self.assertNotIn(KEY, open(self.local).read())
 
     def test_file_keys_move_back_once_a_keychain_returns(self):
@@ -281,7 +281,7 @@ class CheckTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_claude_key_test_only_lists_models(self):
         seen = []
-        await self.check("ai_api_key", 200, {"provider": "anthropic"}, seen)
+        await self.check("anthropic_api_key", 200, {"provider": "anthropic"}, seen)
         self.assertEqual(seen[0].method, "GET")
         self.assertEqual(seen[0].url.path, "/v1/models")
         self.assertEqual(seen[0].headers["x-api-key"], KEY)
@@ -291,13 +291,13 @@ class CheckTests(unittest.IsolatedAsyncioTestCase):
                                ({"provider": "openrouter"}, "/api/v1/key"),
                                ({"provider": "openai_compatible", "base_url": "http://x.test/v1/"}, "/v1/models")):
             seen = []
-            await self.check("ai_api_key", 200, settings, seen)
+            await self.check(f"{settings['provider']}_api_key", 200, settings, seen)
             self.assertEqual((seen[0].method, seen[0].url.path), ("GET", path))
 
-    async def test_ai_key_without_provider_cannot_be_tested(self):
-        result = await key_check.check_key("ai_api_key", KEY, {}, {})
+    async def test_compatible_server_needs_a_url_before_testing(self):
+        result = await key_check.check_key("openai_compatible_api_key", KEY, {}, {})
         self.assertEqual(result.status, key_check.UNKNOWN)
-        self.assertIn("ai.provider", result.message)
+        self.assertIn("server URL", result.message)
 
     async def test_notification_only_contacts_the_slot_under_test(self):
         calls = {}
@@ -309,6 +309,26 @@ class CheckTests(unittest.IsolatedAsyncioTestCase):
             result = await key_check.check_key("discord_webhook", "https://d.test/h", {}, {"slack_webhook": "https://s.test"})
         self.assertEqual(result.status, key_check.OK)
         self.assertEqual(calls, {"discord_webhook": "https://d.test/h"})
+
+    async def test_pushover_needs_both_parts_and_a_400_means_rejected(self):
+        result = await key_check.check_key("pushover_token", KEY, {}, {})
+        self.assertIn("both", result.message)
+        for error, status in ((None, key_check.OK), ("HTTP 400", key_check.REJECTED), ("ConnectError", key_check.UNKNOWN)):
+            with mock.patch.object(key_check.notify, "send", mock.AsyncMock(return_value={"pushover": error})) as send:
+                result = await key_check.check_key("pushover_token", KEY, {}, {"pushover_user": "user-key"})
+            self.assertEqual(result.status, status)
+            self.assertEqual(send.await_args.args[0], {"pushover_token": KEY, "pushover_user": "user-key"})
+
+    async def test_feed_key_is_tested_against_the_feed_itself(self):
+        slot = keystore.add_feed_slot({"name": "Check Me", "url": "https://x.test/feed", "key_header": "X-Key"})
+        self.addCleanup(lambda: (keystore.SLOTS.remove(slot), keystore.SLOTS_BY_ID.pop(slot.id)))
+        sources = [{"name": "Check Me", "url": "https://x.test/feed", "key_header": "X-Key", "key_slot": slot.id, "type": "json"}]
+        seen = []
+        with self.patched_client(transport_for(200, seen)):
+            result = await key_check.check_key(slot.id, KEY, {}, {}, sources)
+        self.assertEqual(result.status, key_check.OK)
+        self.assertEqual(seen[0].headers["X-Key"], KEY)
+        self.assertEqual(str(seen[0].url), "https://x.test/feed")
 
     async def test_ntfy_token_needs_a_url(self):
         result = await key_check.check_key("ntfy_token", KEY, {}, {})
@@ -362,7 +382,9 @@ class CardTests(unittest.IsolatedAsyncioTestCase):
         await self.wait(pilot, card)
 
     def card_text(self, card):
-        return str(card.query_one("#key-card").render()) + str(card.query_one("#key-card-status").render())
+        table = card.query_one("#key-table")
+        rows = " ".join(" ".join(c.plain for c in table.get_row_at(i)) for i in range(table.row_count))
+        return " ".join([rows, str(card.query_one("#key-notice").render()), str(card.query_one("#key-status").render())])
 
     async def test_valid_key_is_saved_applied_and_masked(self):
         app = cybrwire.CybrWireApp()
@@ -464,6 +486,7 @@ class CardTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 45)) as pilot:
             card = await self.open_card(pilot)
             self.assertIn("Press m", self.card_text(card))
+            self.assertIn("1234", self.card_text(card))
             await pilot.press("m")
             self.assertIn(KEY, open(path).read())
             await pilot.press("m")
@@ -499,12 +522,224 @@ class ConfigTests(Base):
         self.assertIn("from-keychain-value", config.SECRETS)
 
 
+class ProviderKeyTests(Base):
+    def test_each_provider_has_its_own_key(self):
+        cfg = config.Config(ai={"provider": "anthropic"})
+        cfg.set_key_value("anthropic_api_key", "anthropic-secret-key", KEYCHAIN)
+        self.assertEqual(cfg.ai["api_key"], "anthropic-secret-key")
+        cfg.choose_ai("openai", "gpt-x")
+        self.assertNotIn("api_key", cfg.ai)  # The Anthropic key must never reach OpenAI
+        cfg.set_key_value("openai_api_key", "openai-secret-key", KEYCHAIN)
+        self.assertEqual(cfg.ai["api_key"], "openai-secret-key")
+        cfg.choose_ai("anthropic")
+        self.assertEqual(cfg.ai["api_key"], "anthropic-secret-key")
+        cfg.choose_ai(None)
+        self.assertEqual(cfg.ai, {})
+
+    def test_old_single_ai_key_goes_to_the_provider_in_use(self):
+        chain = FakeKeychain()
+        chain.data[("cybrwire", keystore.LEGACY_AI_SLOT)] = KEY
+        store = self.store(chain)
+        store.adopt_legacy_ai_key("anthropic")
+        self.assertEqual(chain.data, {("cybrwire", "anthropic_api_key"): KEY})
+        self.assertEqual(store.resolve_all({})["anthropic_api_key"], (KEY, KEYCHAIN))
+
+    def test_old_ai_key_waits_if_no_provider_is_known(self):
+        chain = FakeKeychain()
+        chain.data[("cybrwire", keystore.LEGACY_AI_SLOT)] = KEY
+        self.store(chain).adopt_legacy_ai_key(None)
+        self.store(chain).adopt_legacy_ai_key("ollama")
+        self.assertEqual(chain.data, {("cybrwire", keystore.LEGACY_AI_SLOT): KEY})
+
+    def test_yaml_key_only_counts_for_the_provider_next_to_it(self):
+        path = self.write("usrwire.yaml", f'ai:\n  provider: gemini\n  api_key: "{KEY}"\n')
+        store = self.store(FakeKeychain())
+        self.assertEqual(store.read_yaml_values(), {"gemini_api_key": KEY})
+        store.save("anthropic_api_key", "other-key-value-0000")
+        self.assertIn(KEY, open(path).read())  # Saving another provider's key leaves this one alone
+        store.save("gemini_api_key", "new-gemini-value-000")
+        self.assertNotIn(KEY, open(path).read())
+
+
+class FeedKeyTests(Base):
+    INLINE = ('custom:\n  # my feed\n  - name: "OTX Feed"\n    url: https://x.test/a?limit=1\n    type: json\n'
+              f'    headers:\n      X-OTX-API-KEY: "{KEY}"\n  - name: Other\n    url: https://x.test/b\n    type: rss\n')
+
+    def setUp(self):
+        super().setUp()
+        self.slots_before = list(keystore.SLOTS)
+        self.ids_before = dict(keystore.SLOTS_BY_ID)
+        self.addCleanup(lambda: (keystore.SLOTS.__setitem__(slice(None), self.slots_before),
+                                 keystore.SLOTS_BY_ID.clear(), keystore.SLOTS_BY_ID.update(self.ids_before)))
+
+    def load(self, chain):
+        with mock.patch.object(config, "APP_DIR", self.dir), mock.patch.object(
+                config, "KeyStore", lambda d: KeyStore(d, backend=chain, env={})):
+            return config.load_config()
+
+    def test_inline_header_key_is_found_used_and_moved(self):
+        path = self.write("usrwire.yaml", self.INLINE)
+        chain = FakeKeychain()
+        cfg = self.load(chain)
+        feed = next(s for s in cfg.sources if s["name"] == "OTX Feed")
+        slot = "feed_otx_feed"
+        self.assertEqual(cfg.key_value(slot), KEY)
+        self.assertEqual(cfg.key_sources[slot], YAML)
+        self.assertEqual(cfg.feed_request_parts(feed), {"headers": {"X-OTX-API-KEY": KEY}, "params": {}})
+        self.assertIn(slot, cfg.keys.movable())
+        moved, problems = cfg.keys.move_all()
+        self.assertEqual((moved, problems), ([slot], []))
+        text = open(path).read()
+        self.assertNotIn(KEY, text)
+        self.assertIn("# my feed", text)
+        data = yaml.safe_load(text)
+        self.assertEqual(data["custom"][0], {"name": "OTX Feed", "url": "https://x.test/a?limit=1", "type": "json",
+                                             "key_header": "X-OTX-API-KEY"})
+        self.assertEqual(data["custom"][1]["name"], "Other")
+        again = self.load(chain)
+        self.assertEqual(again.key_value(slot), KEY)
+        self.assertEqual(again.key_sources[slot], KEYCHAIN)
+
+    def test_other_headers_survive_the_move(self):
+        path = self.write("usrwire.yaml", 'custom:\n  - name: F\n    url: https://x.test\n    type: json\n'
+                                          f'    headers:\n      Accept: text/json\n      Api-Token: "{KEY}"\n')
+        self.assertTrue(keystore.rewrite_feed_header(path, "F", "Api-Token"))
+        entry = yaml.safe_load(open(path))["custom"][0]
+        self.assertEqual(entry["headers"], {"Accept": "text/json"})
+        self.assertEqual(entry["key_header"], "Api-Token")
+
+    def test_key_param_and_waiting_for_a_key(self):
+        self.write("usrwire.yaml", "custom:\n  - name: P\n    url: https://x.test\n    type: json\n    key_param: token\n")
+        cfg = self.load(FakeKeychain())
+        feed = next(s for s in cfg.sources if s["name"] == "P")
+        self.assertFalse(cfg.feed_is_ready(feed))
+        cfg.set_key_value("feed_p", KEY, KEYCHAIN)
+        self.assertTrue(cfg.feed_is_ready(feed))
+        self.assertEqual(cfg.feed_request_parts(feed)["params"], {"token": KEY})
+
+    def test_feeds_without_a_key_are_always_ready(self):
+        cfg = config.Config()
+        self.assertTrue(cfg.feed_is_ready({"name": "x", "url": "u"}))
+
+
+class FileLayoutTests(Base):
+    OLD = ('# my notes\n# api_key: "commented-out-secret"\nai:\n  provider: anthropic\n  api_key: ""\n  model: claude-haiku-5-5\n'
+           'enrichment:\n  nvd_api_key: ""\nwatchlist:\n  - Fortinet\ncustom:\n  - name: F\n    url: https://x.test\n    type: rss\n')
+
+    def setUp(self):
+        super().setUp()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, keystore.EXAMPLE_FILE)) as f:
+            self.write(keystore.EXAMPLE_FILE, f.read())
+
+    def test_old_file_converts_and_is_kept_aside(self):
+        self.write(keystore.OLD_USER_FILE, self.OLD)
+        self.assertTrue(keystore.convert_user_file(self.dir))
+        new = os.path.join(self.dir, keystore.USER_FILE)
+        old = os.path.join(self.dir, keystore.OLD_COPY)
+        self.assertEqual(stat.S_IMODE(os.stat(new).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(old).st_mode), 0o600)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, keystore.OLD_USER_FILE)))
+        data = yaml.safe_load(open(new))
+        self.assertEqual(data, {"ai": {"provider": "anthropic", "model": "claude-haiku-5-5"}, "watchlist": ["Fortinet"],
+                                "custom": [{"name": "F", "url": "https://x.test", "type": "rss"}]})
+        self.assertNotIn("commented-out-secret", open(new).read())
+        self.assertIn("commented-out-secret", open(old).read())  # Not ours to destroy
+        self.assertTrue(self.store(FakeKeychain()).old_copy_exists)
+
+    def test_conversion_is_one_time_and_never_overwrites(self):
+        self.write(keystore.USER_FILE, "watchlist: [Mine]\n")
+        self.write(keystore.OLD_USER_FILE, self.OLD)
+        self.assertFalse(keystore.convert_user_file(self.dir))
+        self.assertEqual(yaml.safe_load(open(os.path.join(self.dir, keystore.USER_FILE))), {"watchlist": ["Mine"]})
+        self.assertTrue(os.path.exists(os.path.join(self.dir, keystore.OLD_USER_FILE)))
+
+    def test_broken_old_file_is_left_alone(self):
+        self.write(keystore.OLD_USER_FILE, "ai: [unclosed\n")
+        self.assertFalse(keystore.convert_user_file(self.dir))
+        self.assertTrue(os.path.exists(os.path.join(self.dir, keystore.OLD_USER_FILE)))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, keystore.USER_FILE)))
+
+    def test_first_run_starts_from_the_template(self):
+        keystore.create_user_file(self.dir)
+        path = os.path.join(self.dir, keystore.USER_FILE)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertIn("Keys never go in here", open(path).read())
+
+
+class ProviderCardTests(CardTests):
+    async def test_picking_a_provider_shows_its_key_row_and_persists(self):
+        app = cybrwire.CybrWireApp()
+        async with app.run_test(size=(120, 50)) as pilot:
+            card = await self.open_card(pilot)
+            self.assertFalse(any(s.section == "ai" for s in card.rows))
+            with mock.patch.object(cybrwire.STATE, "save"):
+                card.query_one("#ai-provider").value = "openai"
+                await pilot.pause()
+                await pilot.pause()
+            self.assertEqual(self.cfg.ai["provider"], "openai")
+            self.assertEqual(cybrwire.STATE.settings["ai"]["provider"], "openai")
+            self.assertEqual([s.id for s in card.rows if s.section == "ai"], ["openai_api_key"])
+            self.assertTrue(card.query_one("#ai-details").display)
+            self.assertFalse(card.query_one("#ai-url-row").display)
+            self.assertIn("provider 'openai'", app.ai_problem)
+            app.save_settings()
+            self.assertEqual(cybrwire.STATE.settings["ai"]["provider"], "openai")  # Saved settings keep the choice
+            cybrwire.STATE.settings.pop("ai")
+
+    async def test_model_is_saved_and_url_only_for_servers(self):
+        app = cybrwire.CybrWireApp()
+        async with app.run_test(size=(120, 50)) as pilot:
+            card = await self.open_card(pilot)
+            card.query_one("#ai-provider").value = "openai_compatible"
+            await pilot.pause()
+            await pilot.pause()
+            self.assertTrue(card.query_one("#ai-url-row").display)
+            card.query_one("#ai-model").value = "my-model"
+            card.query_one("#ai-url").value = "http://localhost:1234/v1"
+            card.query_one("#ai-model").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(self.cfg.ai["model"], "my-model")
+            self.assertEqual(self.cfg.ai["base_url"], "http://localhost:1234/v1")
+            cybrwire.STATE.settings.pop("ai", None)
+
+    async def test_p_opens_the_provider_list_and_escape_backs_out(self):
+        app = cybrwire.CybrWireApp()
+        async with app.run_test(size=(120, 50)) as pilot:
+            card = await self.open_card(pilot)
+            await pilot.press("p")
+            await pilot.pause()
+            self.assertIs(card.focused, card.query_one("#ai-provider"))
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertIs(app.screen, card)
+            self.assertIsNone(card.focused)
+
+    async def test_buttons_do_what_the_keys_do(self):
+        self.cfg.set_key_value("nvd_api_key", KEY, YAML)
+        app = cybrwire.CybrWireApp()
+        async with app.run_test(size=(120, 50)) as pilot:
+            card = await self.open_card(pilot)
+            await self.select(pilot, card, "nvd_api_key")
+            await pilot.click("#key-set")
+            await pilot.pause()
+            self.assertTrue(card.editing)
+            await pilot.press("escape")
+            with self.result(key_check.OK, "Key accepted"):
+                await pilot.click("#key-test")
+                await self.wait(pilot, card)
+            self.assertIn("Key accepted", self.card_text(card))
+            await pilot.click("#key-close")
+            await pilot.pause()
+            self.assertIsNot(app.screen, card)
+
+
 class TemplateTests(unittest.TestCase):
     def test_tracked_template_holds_no_key_fields(self):
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "usrwire.yaml")
-        data = yaml.safe_load(open(path)) or {}
-        self.assertNotIn("enrichment", data)
-        self.assertNotIn("ai", data)
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.assertEqual(yaml.safe_load(open(os.path.join(root, keystore.EXAMPLE_FILE))), None)  # All comments
 
 
 if __name__ == "__main__":

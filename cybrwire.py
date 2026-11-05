@@ -22,7 +22,7 @@ from collections import Counter
 from enrichment import enrichment_engine, initialize_enrichment
 import ai
 from config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
-from keystore import FILE, SECRETS_FILE
+from keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
 from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, fetch_doomsday_seconds
 from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 import cve_intel
@@ -38,7 +38,8 @@ import notify
 from textual.app import App, Screen, ComposeResult
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
-from textual.widgets import DataTable, Input, Static, Header
+from textual.widgets import Input, Static, Header
+from widgets import IndicatorBox, SearchBox, ViewTable
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -159,8 +160,8 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  [GENERAL]\n", style=f"bold {accent}")
         help_text.append("│    ↑/↓           Select an alert or incident (the alert preview shows its summary)\n", style=color)
-        help_text.append("│    Click         Select a row; click it again to open it\n", style=color)
-        help_text.append("│    ← →           Change pages in paginated views (Feed, Incidents, War Room)\n", style=color)
+        help_text.append("│    Click         Select a row, click it again to open it. Footer commands are clickable\n", style=color)
+        help_text.append("│    ← →           Jump a screen in the Feed and Incidents, change page in the War Room\n", style=color)
         help_text.append("│    Enter         Open the selected alert (or an incident's latest report) in your browser\n", style=color)
         help_text.append("│    Shift+K       Enter, test and secure API keys and notification URLs\n", style=color)
         help_text.append("│    A             Explain the selected alert with AI (shown in the preview pane)\n", style=color)
@@ -255,9 +256,9 @@ class HelpScreen(Screen):
         help_text.append("│    G             Generate or refresh the briefing (also jumps to the War Room panel)\n", style=color)
         help_text.append("│    Tab, then V   Reach the War Room panel manually; ← → to page through it\n", style=color)
         help_text.append("│\n", style=accent)
-        help_text.append("│  [PROVIDERS] (ai: section of cybrwire_local.yaml)\n", style=f"bold {accent}")
+        help_text.append("│  [PROVIDERS] (Shift+K)\n", style=f"bold {accent}")
         help_text.append("│    anthropic, gemini, openai, openrouter, ollama (local), openai_compatible\n", style=color)
-        help_text.append("│    Set one provider in the ai: section of cybrwire_local.yaml, then add its key with Shift+K\n", style=color)
+        help_text.append("│    Press Shift+K to choose a provider and add its key\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("└" + "─" * 98 + "┘\n\n", style=accent)
         
@@ -512,33 +513,10 @@ class StyledHeader(Header):
         # If app has cold_war_mode, we'll style it via the watcher instead
         return header_str
 
-class FeedTable(DataTable, can_focus=False):
-    """The alert list. The app routes keys to it, so typing never lands here by accident."""
-    
-    def on_resize(self) -> None:
-        self.app.call_later(self.app.update_display)  # Column widths follow the panel
-    
-    def _on_click(self, event: events.Click) -> None:
-        # Textual then runs DataTable's own handler, which opens on a click at the cursor's
-        # exact cell. Any column of the selected row should count, so line the column up first.
-        meta = event.style.meta
-        if "column" in meta and meta["column"] >= 0:
-            self.cursor_coordinate = Coordinate(self.cursor_row, meta["column"])
-        self.app.panel_focus = "main"
-
-
-class SearchBox(Input):
-    """Single-key commands are off for as long as this has focus"""
-    
-    def on_focus(self) -> None:
-        self.app.prompt = "search"
-    
-    def on_blur(self) -> None:
-        self.app.prompt = None
-
-
 class CybrWireFooter(Static):
     """Custom footer that shows dynamic state indicators for data age and filter type"""
+    
+    regions = []
     
     def render(self) -> Text:
         """Build and render footer text with dynamic state indicators"""
@@ -554,67 +532,53 @@ class CybrWireFooter(Static):
         # Count of what the feed panel is showing
         count = len(app.filtered_alerts()) if not app.is_loading else 0
         
-        # Build custom footer text with proper styling
-        footer_text = Text()
-        
-        # Determine color based on cold war mode
+        commands = [
+            ("r", "Refresh", "refresh"),
+            ("d", f"Age {data_age_label}", "cycle_data_age"),
+            ("f", f"{filter_label} ({count})", "cycle_filter_type"),
+            ("4", f"Type {CONTENT_KINDS[app.kind_index][1]}", "cycle_feeds"),
+            ("/", "Search", "start_search"),
+            ("w", f"Watch {'On' if app.watch_only else 'Off'}", "toggle_watch_only"),
+            ("tab", "Panel", "toggle_panel_focus"),
+            ("v", "View", "toggle_view"),
+            ("K", "Keys", "manage_keys"),
+            ("c", "CW", "toggle_cold_war"),
+            ("t", "Theme", "cycle_theme"),
+            ("h", "Help", "show_help"),
+            ("q", "Quit", "quit"),
+        ]
         key_color = f"bold {app.palette.accent}"
         desc_color = app.palette.muted
-        
-        # Force Refresh
-        footer_text.append("r ", style=key_color)
-        footer_text.append("Refresh  ", style=desc_color)
-        
-        # Data Age with value
-        footer_text.append("d ", style=key_color)
-        footer_text.append(f"Age: {data_age_label}  ", style=desc_color)
-        
-        # Filter with type and count
-        footer_text.append("f ", style=key_color)
-        footer_text.append(f"{filter_label} - ({count})  ", style=desc_color)
-        
-        # Cycle Feeds
-        footer_text.append("4 ", style=key_color)
-        footer_text.append(f"Type: {CONTENT_KINDS[app.kind_index][1]}  ", style=desc_color)
-        
-        # Search and watchlist
-        footer_text.append("/ ", style=key_color)
-        footer_text.append("Search  ", style=desc_color)
-        footer_text.append("w ", style=key_color)
-        footer_text.append(f"Watch: {'On' if app.watch_only else 'Off'}  ", style=desc_color)
-        
-        # Switch Panel
-        footer_text.append("tab ", style=key_color)
-        footer_text.append("Panel  ", style=desc_color)
-        
-        # Toggle View
-        footer_text.append("v ", style=key_color)
-        footer_text.append("View  ", style=desc_color)
-        
-        # Cold War Mode
-        footer_text.append("c ", style=key_color)
-        footer_text.append("CW  ", style=desc_color)
-        
-        # Cycle Theme
-        footer_text.append("t ", style=key_color)
-        footer_text.append("Theme  ", style=desc_color)
-        
-        # Help
-        footer_text.append("h ", style=key_color)
-        footer_text.append("Help  ", style=desc_color)
-        
-        # Quit
-        footer_text.append("q ", style=key_color)
-        footer_text.append("Quit", style=desc_color)
-        
+        footer_text = Text(no_wrap=True, overflow="ellipsis")
+        # Commands sit two spaces apart, or one when that's what it takes to fit them all
+        full_length = sum(len(k) + 1 + len(label) for k, label, _ in commands) + 2 * (len(commands) - 1)
+        gap = "  " if full_length <= self.size.width else " "
+        self.regions = []  # (first column, last column, action), so each command is clickable
+        for i, (key, label, action) in enumerate(commands):
+            start = footer_text.cell_len
+            footer_text.append(f"{key} ", style=key_color)
+            footer_text.append(label, style=desc_color)
+            self.regions.append((start, footer_text.cell_len - 1, action))
+            if i < len(commands) - 1:
+                footer_text.append(gap)
         return footer_text
+    
+    def on_click(self, event) -> None:
+        action = next((a for first, last, a in self.regions if first <= event.x <= last), None)
+        if not action:
+            return
+        event.stop()
+        self.app.finish_typing()
+        result = getattr(self.app, f"action_{action}")()
+        if asyncio.iscoroutine(result):
+            asyncio.ensure_future(result)
 
 class CybrWireApp(App):
     """Textual-based CybrWire threat intelligence dashboard"""
     
     # Colors come from the active palette, registered as a Textual theme (see apply_theme)
     CSS = """
-    Screen, #main-layout, #feeds-container, #feeds, #dashboard, #ticker {
+    Screen, #main-layout, #feeds-container, #dashboard, #ticker {
         background: $background;
         color: $foreground;
     }
@@ -643,7 +607,7 @@ class CybrWireApp(App):
         height: 100%;
     }
     
-    #alerts-view {
+    .view {
         height: 100%;
         padding: 1 2;
         border: round $primary;
@@ -651,8 +615,25 @@ class CybrWireApp(App):
         border-subtitle-align: center;
     }
     
-    #other-view {
-        height: 100%;
+    #indicator-row {
+        height: 1;
+        margin-bottom: 1;
+    }
+    
+    #indicator-prefix {
+        width: 11;
+        color: $accent;
+        text-style: bold;
+    }
+    
+    #indicator-box {
+        width: 1fr;
+        background: transparent;
+    }
+    
+    #api-results {
+        height: 1fr;
+        scrollbar-size-vertical: 1;
     }
     
     #search-row {
@@ -671,19 +652,19 @@ class CybrWireApp(App):
         background: transparent;
     }
     
-    FeedTable {
+    ViewTable {
         height: 1fr;
         background: $background;
         scrollbar-size-vertical: 1;
     }
     
-    FeedTable > .datatable--cursor, FeedTable > .datatable--hover {
+    ViewTable > .datatable--cursor, ViewTable > .datatable--hover {
         background: $panel;
         color: $foreground;
         text-style: none;
     }
     
-    FeedTable > .datatable--header {
+    ViewTable > .datatable--header {
         background: $background;
         color: $text-muted;
         text-style: bold;
@@ -692,10 +673,6 @@ class CybrWireApp(App):
     #alert-preview {
         margin-top: 1;
         height: auto;
-    }
-    
-    #feeds {
-        width: 100%;
     }
     
     #dashboard {
@@ -735,10 +712,8 @@ class CybrWireApp(App):
     cold_war_mode = reactive(False)
     next_refresh = reactive(datetime.now(timezone.utc))
     is_loading = reactive(True)
-    incident_page_offset = reactive(0)  # Pagination for incidents panel
     dashboard_page_offset = reactive(0)  # Pagination for dashboard panel
     panel_focus = reactive("main")  # "main" or "dashboard" - which panel gets paged by arrows
-    hover_row = reactive(-1)
     filter_mode = reactive("all")  # all, alerts, posts
     theme_mode = reactive("default")  # default, dark, blue, purple, matrix
     kind_index = reactive(0)  # Index into CONTENT_KINDS
@@ -761,8 +736,9 @@ class CybrWireApp(App):
         self.marked_row = None      # Row currently drawn as selected
         self.breach_urls = []
         self.feed_at_top = True
-        self.incident_page_offset = 0
-        self.hover_row = -1
+        self.incident_list = []         # Incidents in the table, in row order
+        self.incident_signature = None
+        self.incident_marked = None
         self.theme_mode = saved.get("theme") if saved.get("theme") in PALETTES else DEFAULT_PALETTE
         for p in (*PALETTES.values(), COLD_WAR):
             self.register_theme(TextualTheme(
@@ -793,7 +769,6 @@ class CybrWireApp(App):
         # Incidents for the current data window, rebuilt only when inputs change
         self.incidents = []
         self.incidents_key = None
-        self.incident_rows = []  # (incident, first line, last line) for the current page
         
         # Threat summary (local keyword analysis) shown under the AI briefing
         self.threat_summary = None
@@ -804,6 +779,9 @@ class CybrWireApp(App):
         self.threat_summary_page = 0  # Current page
         
         # AI analysis (any configured provider)
+        if STATE.settings.get("ai"):  # What was picked in the app beats any ai: section in YAML
+            choice = STATE.settings["ai"]
+            CONFIG.choose_ai(choice.get("provider"), choice.get("model", ""), choice.get("base_url", ""))
         self.ai_settings = CONFIG.ai
         self.ai_problem = ai.configuration_problem(self.ai_settings)
         # Restore the last briefing so launching the app doesn't cost an AI call
@@ -823,11 +801,9 @@ class CybrWireApp(App):
         self.doomsday_seconds = STATE.doomsday.get("seconds", DOOMSDAY_DEFAULT_SECONDS)
         
         # Initialize API Tools panel state
-        self.api_tools_input_buffer = ""  # User input for IOC query
         self.api_tools_last_query = ""  # Last queried indicator
         self.api_tools_last_results = {}  # Results from all providers {provider: EnrichmentData}
         self.api_tools_loading = False  # Is query in progress
-        self.api_tools_input_mode = True  # Always in input mode in this panel
         
         # Initialize next refresh time
         self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
@@ -845,6 +821,7 @@ class CybrWireApp(App):
             "watch_only": self.watch_only,
             "group_dupes": self.group_dupes,
             "notifications_started": STATE.settings.get("notifications_started", False),
+            "ai": STATE.settings.get("ai"),
         }
         STATE.save()
     
@@ -1215,14 +1192,22 @@ class CybrWireApp(App):
         # Always create both layouts, use CSS to control visibility
         with Horizontal(id="main-layout"):
             with Container(id="feeds-container"):
-                with Vertical(id="alerts-view"):
+                with Vertical(id="alerts-view", classes="view"):
                     with Horizontal(id="search-row"):
                         yield Static("/ ", id="search-prefix")
-                        yield SearchBox(id="search-box", placeholder="Search all feeds and history", compact=True)
-                    yield FeedTable(id="feed-table", cursor_type="row", show_header=False)
+                        yield SearchBox(id="search-box", compact=True,
+                                        placeholder="Type keywords to search alert titles, descriptions, sources and indicators")
+                    yield ViewTable(id="feed-table", cursor_type="row", show_header=False)
                     yield Static(id="alert-preview")
-                with VerticalScroll(id="other-view"):
-                    yield Static(id="feeds", expand=True)
+                with Vertical(id="incidents-view", classes="view"):
+                    yield ViewTable(id="incident-table", cursor_type="row", show_header=False)
+                with Vertical(id="api-view", classes="view"):
+                    with Horizontal(id="indicator-row"):
+                        yield Static("Indicator: ", id="indicator-prefix")
+                        yield IndicatorBox(id="indicator-box", compact=True,
+                                           placeholder="Paste an IP, file hash, domain or URL, then press Enter")
+                    with VerticalScroll(id="api-results"):
+                        yield Static(id="api-content", expand=True)
             yield Static(id="dashboard", expand=True)
         
         yield CybrWireFooter()
@@ -1237,7 +1222,7 @@ class CybrWireApp(App):
 
         abusech_key = (CONFIG.enrichment.get("abusech") or {}).get("api_key")
         # ThreatFox needs the abuse.ch Auth-Key; without one it is skipped rather than failing
-        all_sources = [s for s in CONFIG.sources if s['name'] not in disabled_feeds
+        all_sources = [s for s in CONFIG.sources if s['name'] not in disabled_feeds and CONFIG.feed_is_ready(s)
                        and (s["type"] not in ("threatfox", "urlhaus") or abusech_key)]
         parsers = {"json": lambda r, n, f: parse_json(r.json(), n, f),
                    "rss": lambda r, n, f: parse_rss(r.text, n, f),
@@ -1256,8 +1241,7 @@ class CybrWireApp(App):
                 elif src["type"] == "urlhaus":
                     r = await c.get(src["url"], headers={"Auth-Key": abusech_key})
                 else:
-                    # Optional per-feed headers in YAML (e.g. API keys that must not go in the URL)
-                    r = await c.get(src["url"], headers=src.get("headers"))
+                    r = await c.get(src["url"], **CONFIG.feed_request_parts(src))
                 r.raise_for_status()
                 # Parse in a thread so large feeds don't freeze the UI
                 return await asyncio.to_thread(parsers[src["type"]], r, src['name'], src.get("source_file", "curated"))
@@ -1366,17 +1350,16 @@ class CybrWireApp(App):
             self.animate_ticker(advance=False)
             
             # Update feeds table, incidents panel, or API tools (toggled with key v)
-            alerts_shown = self.main_view_mode == "alerts"
-            self.query_one("#alerts-view").display = alerts_shown
-            self.query_one("#other-view").display = not alerts_shown
-            if alerts_shown:
+            mode = self.main_view_mode
+            self.query_one("#alerts-view").display = mode == "alerts"
+            self.query_one("#incidents-view").display = mode == "incidents"
+            self.query_one("#api-view").display = mode == "api_tools"
+            if mode == "alerts":
                 self.sync_feed_view()
+            elif mode == "incidents":
+                self.sync_incident_view()
             else:
-                feeds_widget = self.query_one("#feeds", Static)
-                feeds_content = self.make_incidents_panel() if self.main_view_mode == "incidents" else self.make_api_tools_panel()
-                feeds_widget.update(feeds_content)
-                # Force the widget to update its virtual size for scrolling
-                feeds_widget.refresh(layout=True)
+                self.sync_api_view()
             
             # Update dashboard panel
             try:
@@ -1521,9 +1504,16 @@ class CybrWireApp(App):
             self.history_cache = (self.search_query, HISTORY.search(self.search_query))
         return [a for a in self.history_cache[1] if alert_key(a) not in loaded_keys]
     
+    def selected_incident(self):
+        try:
+            row = self.query_one("#incident-table", ViewTable).cursor_row
+        except NoMatches:
+            return None
+        return self.incident_list[row] if 0 <= row < len(self.incident_list) else None
+    
     def selected_alert(self):
         try:
-            row = self.query_one("#feed-table", FeedTable).cursor_row
+            row = self.query_one("#feed-table", ViewTable).cursor_row
         except NoMatches:
             return None
         return self.feed_rows[row] if 0 <= row < len(self.feed_rows) else None
@@ -1579,8 +1569,8 @@ class CybrWireApp(App):
                 self.notify("Select an alert with ↑/↓ first", timeout=2)
                 return
             cves = self.alert_cves(alert)
-        elif self.main_view_mode == "incidents" and 0 <= self.hover_row < len(self.incident_rows):
-            inc = self.incident_rows[self.hover_row][0]
+        elif self.main_view_mode == "incidents" and self.selected_incident():
+            inc = self.selected_incident()
             cves = [inc.value] if inc.kind == "cve" else list(dict.fromkeys(c for a in inc.alerts for c in self.alert_cves(a)))
         elif self.main_view_mode == "incidents":
             self.notify("Select an incident with ↑/↓ first", timeout=2)
@@ -1738,7 +1728,7 @@ class CybrWireApp(App):
     def sync_feed_view(self):
         """Bring the alert table, search box, preview and frame up to date"""
         p = self.palette
-        table = self.query_one("#feed-table", FeedTable)
+        table = self.query_one("#feed-table", ViewTable)
         view = self.query_one("#alerts-view")
         self.query_one("#search-row").display = bool(self.prompt or self.search_query)
         
@@ -1806,7 +1796,7 @@ class CybrWireApp(App):
         """Selected rows get a brighter title, and the teletype cursor in Cold War"""
         if row == self.marked_row or not self.feed_rows:
             return
-        table = self.query_one("#feed-table", FeedTable)
+        table = self.query_one("#feed-table", ViewTable)
         if self.marked_row is not None and self.marked_row < len(self.feed_rows):
             table.update_cell_at(Coordinate(self.marked_row, self.FEED_TITLE_COLUMN), self.feed_title_cell(self.feed_rows[self.marked_row], False))
         if row < len(self.feed_rows):
@@ -1819,21 +1809,28 @@ class CybrWireApp(App):
                   padding=(0, 1), height=self.PREVIEW_LINES))
     
     def on_data_table_row_highlighted(self, event):
-        self.mark_selected_row(event.cursor_row)
-        self.update_preview()
+        if event.data_table.id == "feed-table":
+            self.mark_selected_row(event.cursor_row)
+            self.update_preview()
+        elif event.data_table.id == "incident-table":
+            self.mark_selected_incident(event.cursor_row)
     
     def on_data_table_row_selected(self, event):
         """Clicking the selected row opens it"""
-        self.action_open_selected_link()
+        if event.data_table.id in ("feed-table", "incident-table"):
+            self.action_open_selected_link()
     
     def show_feed_from_top(self):
         """Back to the first page of the alerts view after the filters change"""
         self.main_view_mode = "alerts"
         self.feed_at_top = True
-        self.hover_row = -1
     
     def action_start_search(self):
-        """Search everything loaded, filtering as you type"""
+        """Search everything loaded, filtering as you type. In API Tools, / goes to its box instead."""
+        if self.main_view_mode == "api_tools" and enrichment_engine.providers:
+            self.focus_indicator_box()
+            self.update_display()
+            return
         self.show_feed_from_top()
         self.query_one("#search-row").display = True
         box = self.query_one("#search-box", SearchBox)
@@ -1857,10 +1854,21 @@ class CybrWireApp(App):
     def key_config(self):
         return CONFIG
     
+    def choose_ai(self, provider, model, base_url):
+        """Use the provider picked in the key card, now and at the next launch"""
+        CONFIG.choose_ai(provider, model, base_url)
+        STATE.settings["ai"] = {"provider": provider, "model": model, "base_url": base_url}
+        STATE.save()
+        self.ai_problem = ai.configuration_problem(self.ai_settings)
+        self.mark_dirty()
+    
     def key_changed(self, slot_id):
         """Put a key changed in the card to use right away, without a restart"""
-        if slot_id == "ai_api_key":
+        slot = SLOTS_BY_ID[slot_id]
+        if slot.section == "ai":
             self.ai_problem = ai.configuration_problem(self.ai_settings)
+        elif slot.feed:
+            force_event.set()  # A feed that was waiting for its key can load now
         elif slot_id == "nvd_api_key":
             self.nvd.api_key = CONFIG.key_value(slot_id)
         elif slot_id in ENRICHMENT_KEYS:
@@ -1878,6 +1886,8 @@ class CybrWireApp(App):
         elif FILE in CONFIG.key_sources.values():
             self.notify(f"No keychain ({store.problem}). Keys are in {SECRETS_FILE}: your user only, not encrypted",
                         severity="warning", timeout=10)
+        if store.old_copy_exists:
+            self.notify(f"{OLD_COPY} may hold plaintext keys. Press K for details, then delete it", severity="warning", timeout=10)
     
     def save_watchlist(self):
         STATE.watchlist = list(self.watchlist.added)
@@ -1895,7 +1905,6 @@ class CybrWireApp(App):
         """Collapse the same story from several feeds into one row, or list every report"""
         self.group_dupes = not self.group_dupes
         self.feed_at_top = True
-        self.hover_row = -1
         self.save_settings()
         self.notify("Duplicate reports " + ("grouped" if self.group_dupes else "shown separately"), timeout=2)
         self.update_display()
@@ -1934,6 +1943,8 @@ class CybrWireApp(App):
             self.finish_typing()
             self.feed_at_top = True  # Enter again opens the top result
             self.update_display()
+        elif event.input.id == "indicator-box":
+            self.run_api_lookup(event.value.strip())
     
     def check_action(self, action, parameters):
         """Single-key commands are off while typing, so 'q' in a search doesn't quit"""
@@ -2263,55 +2274,61 @@ class CybrWireApp(App):
         lines.append(Text(""))
         return lines
     
-    def make_incidents_panel(self):
+    def incident_cell(self, inc, incidents, width, now, selected):
+        return Text("\n", no_wrap=True, overflow="ellipsis").join(self.incident_block(inc, incidents, width, now, selected))
+    
+    def sync_incident_view(self):
         """Correlated incidents with the context needed to act on them"""
         now = datetime.now(timezone.utc)
         incidents = self.current_incidents()
         p = self.palette
+        table = self.query_one("#incident-table", ViewTable)
+        view = self.query_one("#incidents-view")
+        width = table.size.width or max(40, self.size.width * 3 // 4 - 6)
+        text_width = max(30, width - 3)  # Cell padding and the scrollbar
+        self.incident_cell_args = (incidents, text_width, now)
         
-        try:
-            available = max(12, self.query_one("#feeds-container").size.height - 6)
-        except Exception:
-            available = 30
-        width = max(40, self.size.width * 3 // 4 - 10)
-        
-        # Fill pages by actual block height so the panel isn't left half empty
-        heights = [len(self.incident_block(inc, incidents, width, now, False)) for inc in incidents]
-        pages, current, used = [], [], 0
-        for i, h in enumerate(heights):
-            if current and used + h > available:
-                pages.append(current)
-                current, used = [], 0
-            current.append(i)
-            used += h
-        pages.append(current)
-        total_pages = len(pages)
-        self.incident_page_offset = max(0, min(self.incident_page_offset, total_pages - 1))
-        page = [incidents[i] for i in pages[self.incident_page_offset]]
-        self.hover_row = min(self.hover_row, len(page) - 1)
-        
-        lines = []
-        self.incident_rows = []
-        for idx, inc in enumerate(page):
-            start = len(lines)
-            lines.extend(self.incident_block(inc, incidents, width, now, idx == self.hover_row))
-            self.incident_rows.append((inc, start, len(lines) - 1))
-        
-        if not page:
-            lines.append(Text("No correlated incidents in this window.", style=f"bold {p.text}"))
-            lines.append(Text("An incident needs the same CVE, IP or hash reported by two or more sources,", style=p.muted))
-            lines.append(Text("or a named threat actor appearing in several alerts. Try a longer data age (d).", style=p.muted))
+        previous = self.selected_incident()
+        old_row = table.cursor_row
+        cells = [self.incident_cell(inc, incidents, text_width, now, False) for inc in incidents]
+        if not cells:
+            cells = [Text("\n").join([Text("No correlated incidents in this window.", style=f"bold {p.text}"),
+                                      Text("An incident needs the same CVE, IP or hash reported by two or more sources,", style=p.muted),
+                                      Text("or a named threat actor appearing in several alerts. Try a longer data age (d).", style=p.muted)])]
+        signature = (p.key, text_width, tuple(c.plain for c in cells))
+        self.incident_list = incidents
+        keys = {inc.value: i for i, inc in enumerate(incidents)}
+        row = keys.get(previous.value, old_row) if previous else old_row
+        row = max(0, min(row, len(cells) - 1))
+        if signature != self.incident_signature:
+            self.incident_signature = signature
+            self.incident_marked = None
+            table.clear(columns=True)
+            table.add_column("", width=text_width)
+            for cell in cells:
+                table.add_row(cell, height=None)  # As tall as the incident's text
+        table.show_cursor = bool(incidents)
+        table.move_cursor(row=row, animate=False)
+        self.mark_selected_incident(row)
         
         status = Text(f" {len(incidents)} incidents from {len(self.filtered_alerts())} alerts   ", style=p.muted)
-        hints = [("↑↓", "select"), ("Enter", "open latest report")]
-        if total_pages > 1:
-            hints.append(("←→", f"page {self.incident_page_offset + 1}/{total_pages}"))
-        status.append_text(self.hint_bar(hints))
+        status.append_text(self.hint_bar([("↑↓", "select"), ("Enter", "open latest report"), ("i", "CVE"), ("←→", "page")]))
         status.append(" ")
-        
         title_text, border = self.frame("CORRELATED INCIDENTS", self.panel_focus == "main")
-        return Panel(Group(*lines), title=title_text, subtitle=status,
-                     border_style=border, box=box.ROUNDED, padding=(1, 2))
+        view.border_title = title_text
+        view.border_subtitle = status
+        view.styles.border = ("round", border)
+    
+    def mark_selected_incident(self, row):
+        """The selected incident gets the arrow and a brighter name"""
+        if row == self.incident_marked or not self.incident_list or row >= len(self.incident_list):
+            return
+        table = self.query_one("#incident-table", ViewTable)
+        incidents, width, now = self.incident_cell_args
+        if self.incident_marked is not None and self.incident_marked < len(self.incident_list):
+            table.update_cell_at(Coordinate(self.incident_marked, 0), self.incident_cell(self.incident_list[self.incident_marked], incidents, width, now, False))
+        table.update_cell_at(Coordinate(row, 0), self.incident_cell(self.incident_list[row], incidents, width, now, True))
+        self.incident_marked = row
     
     def action_refresh(self):
         """Force refresh feeds"""
@@ -2321,8 +2338,41 @@ class CybrWireApp(App):
         """Show help screen"""
         self.push_screen(HelpScreen(self.palette))
     
-    def make_api_tools_panel(self) -> Panel:
-        """Display unified API enrichment tools for multiple providers - interactive query panel"""
+    def sync_api_view(self):
+        """The indicator box, the lookup results and the frame around them"""
+        p = self.palette
+        view = self.query_one("#api-view")
+        self.query_one("#indicator-row").display = bool(enrichment_engine.providers)
+        self.query_one("#api-content", Static).update(self.make_api_tools_content())
+        if self.prompt == "indicator":
+            hints = [("Enter", "look up"), ("Esc", "clear"), ("v", "next view when empty")]
+        elif enrichment_engine.providers:
+            hints = [("/", "type an indicator"), ("↑↓", "scroll"), ("v", "next view")]
+        else:
+            hints = [("Shift+K", "add keys"), ("v", "next view")]
+        status = self.hint_bar(hints)
+        title_text, border = self.frame("API TOOLS · IOC ENRICHMENT", self.panel_focus == "main")
+        view.border_title = title_text
+        view.border_subtitle = status
+        view.styles.border = ("round", border)
+    
+    def focus_indicator_box(self):
+        if enrichment_engine.providers:
+            box = self.query_one("#indicator-box", IndicatorBox)
+            box.focus()
+            self.prompt = box.prompt_name
+    
+    def run_api_lookup(self, indicator):
+        if self.api_tools_loading or not indicator or not enrichment_engine.providers:
+            return
+        self.api_tools_last_query = indicator
+        self.api_tools_last_results = {}
+        self.api_tools_loading = True
+        asyncio.create_task(self._run_api_tools_query(indicator))
+        self.update_display()
+    
+    def make_api_tools_content(self) -> Text:
+        """Provider status and lookup results for the API Tools view"""
         p = self.palette
         content = Text()
         
@@ -2369,16 +2419,8 @@ class CybrWireApp(App):
             content.append("      Upgrade to paid plans for full IOC database access.\n", style=p.warn)
             
         else:
-            # Show input field
-            content.append("ENRICHMENT QUERY\n", style=f"bold {p.accent}")
-            
             if self.api_tools_loading:
-                content.append(f"[⏳ Querying] {self.api_tools_input_buffer}\n\n", style=f"bold {p.warn}")
-            else:
-                # Input prompt
-                input_style = f"bold {p.accent}"
-                cursor = "█" if len(self.api_tools_input_buffer) > 0 or self.api_tools_input_mode else ""
-                content.append(f"Indicator: {self.api_tools_input_buffer}{cursor}\n", style=input_style)
+                content.append(f"Looking up {self.api_tools_last_query}...\n", style=f"bold {p.warn}")
             
             # Provider status line
             provider_line = "Providers: "
@@ -2390,7 +2432,7 @@ class CybrWireApp(App):
             if unconfigured:
                 provider_line += f"[disabled: {', '.join([providers_info[p]['name'] for p in unconfigured])}]"
             
-            content.append(f"\n{provider_line}\n", style=p.muted)
+            content.append(f"{provider_line}\n\n", style=p.muted)
             
             # Results section
             if self.api_tools_last_query and self.api_tools_last_results:
@@ -2482,8 +2524,7 @@ class CybrWireApp(App):
                 content.append("USAGE\n\n", style=f"bold {p.accent}")
                 content.append("Type an indicator (IP, hash, domain, URL) and press ENTER to query all configured providers.\n", style=p.text)
                 content.append("Results will display below with threat scores from each provider.\n", style=p.text)
-                content.append("\nPress ESC to clear the query buffer.\n", style=p.muted)
-                content.append("Press Ctrl+Shift+V to paste from clipboard.\n", style=p.muted)
+                content.append("\nPress Esc to clear the box and use other commands. Press / or click the box to type again.\n", style=p.muted)
                 
                 # Add API tier limitation note
                 content.append("\nAPI TIER INFORMATION\n", style=f"bold {p.accent}")
@@ -2494,8 +2535,7 @@ class CybrWireApp(App):
                 content.append("  Abuse.ch:         Free Auth-Key (hashes via MalwareBazaar; URLs/IPs/domains via URLhaus)\n", style=p.muted)
                 content.append("\nCLEAN means the provider has no record of the indicator, not that it is safe.\n", style=p.muted)
             
-        title_text, border = self.frame("API TOOLS · IOC ENRICHMENT", self.panel_focus == "main")
-        return Panel(content, title=title_text, border_style=border, box=box.ROUNDED, padding=(1, 2))
+        return content
     
     def action_cycle_data_age(self):
         """Cycle data age window: 24h → 48h → 7d → 24h"""
@@ -2503,7 +2543,6 @@ class CybrWireApp(App):
         self.data_age_index = (self.data_age_index + 1) % len(time_windows)
         self.recency_hours = time_windows[self.data_age_index]
         self.feed_at_top = True
-        self.hover_row = -1
         self.save_settings()
         self.call_later(self.update_display)
     
@@ -2513,7 +2552,6 @@ class CybrWireApp(App):
         self.filter_type_index = (self.filter_type_index + 1) % len(filter_modes)
         self.filter_mode = filter_modes[self.filter_type_index]
         self.feed_at_top = True
-        self.hover_row = -1
         self.save_settings()
         self.call_later(self.update_display)
     
@@ -2531,7 +2569,6 @@ class CybrWireApp(App):
         """Cycle content types: All → Advisories → News & Research → Ransomware → Indicators"""
         self.kind_index = (self.kind_index + 1) % len(CONTENT_KINDS)
         self.feed_at_top = True
-        self.hover_row = -1
         if self.main_view_mode != "alerts":
             self.main_view_mode = "alerts"
         self.save_settings()
@@ -2674,7 +2711,7 @@ class CybrWireApp(App):
         if self.ai_briefing_error:
             lines.append(Text(self.ai_briefing_error, style=f"bold {p.bad}"))
             if self.ai_problem:
-                lines.append(Text("Set ai.provider in cybrwire_local.yaml (see readme) and restart, then add its key with Shift+K.", style=dim))
+                lines.append(Text("Press Shift+K to choose an AI provider and add its key.", style=dim))
         if self.ai_briefing:
             lines.append(Text(f"Generated {age(self.ai_briefing_time)} ago ({self.ai_briefing_time:%a %d %b %H:%M} UTC) • press g to refresh", style=dim))
             for line in self.ai_briefing.split("\n"):
@@ -2729,7 +2766,7 @@ class CybrWireApp(App):
     def lookup_indicator(self, alert):
         """Send an indicator from the Indicators view to API Tools and run the lookup"""
         if not enrichment_engine.providers:
-            self.notify("No enrichment providers configured (see usrwire.yaml)", timeout=4)
+            self.notify("No enrichment providers yet. Press Shift+K to add keys", timeout=4)
             return
         value = alert.get("ioc") or ""
         if alert.get("ioc_type") == "cidr":
@@ -2737,12 +2774,8 @@ class CybrWireApp(App):
             self.notify("Looking up the network address of this range", timeout=3)
         STATE.mark_read(alert)
         self.main_view_mode = "api_tools"
-        self.api_tools_input_mode = True
-        self.api_tools_input_buffer = value
-        self.api_tools_last_query = value
-        self.api_tools_last_results = {}
-        self.api_tools_loading = True
-        asyncio.create_task(self._run_api_tools_query(value))
+        self.query_one("#indicator-box", IndicatorBox).value = value
+        self.run_api_lookup(value)
         self.update_display()
     
     async def _run_api_tools_query(self, indicator: str):
@@ -2763,8 +2796,10 @@ class CybrWireApp(App):
             views = ["alerts", "incidents", "api_tools"]
             current_idx = views.index(self.main_view_mode) if self.main_view_mode in views else 0
             self.main_view_mode = views[(current_idx + 1) % len(views)]
-#            logging.info(f"Main view toggled to: {self.main_view_mode}")
+            self.finish_typing()
             self.update_display()
+            if self.main_view_mode == "api_tools":
+                self.focus_indicator_box()
         else:
             # Cycle through all dashboard views in right panel (0-5: metrics, war room, AI correlation, AI risk ranking, enrichment, failed feeds)
             self.dashboard_panel_index = (self.dashboard_panel_index + 1) % 3
@@ -2801,8 +2836,8 @@ class CybrWireApp(App):
                 self.notify("No link for this alert (phishing URLs are never opened)", timeout=3)
             self.mark_dirty()
         elif self.main_view_mode == "incidents":
-            if 0 <= self.hover_row < len(self.incident_rows):
-                inc = self.incident_rows[self.hover_row][0]
+            inc = self.selected_incident()
+            if inc:
                 if inc.url:
                     webbrowser.open(inc.url)
                     self.notify("Opening latest report in browser...")
@@ -2814,7 +2849,7 @@ class CybrWireApp(App):
         if isinstance(self.screen, ModalScreen):
             return  # The CVE card handles its own keys
         
-        if self.prompt:
+        if self.prompt == "search":
             if event.key == "escape":
                 event.prevent_default()
                 self.clear_search()
@@ -2826,23 +2861,28 @@ class CybrWireApp(App):
                 event.prevent_default()
             return  # Everything else belongs to the search box
         
+        if self.prompt == "indicator":
+            results = self.query_one("#api-results")
+            if event.key == "escape":
+                event.prevent_default()
+                self.query_one("#indicator-box", IndicatorBox).value = ""
+                self.finish_typing()
+                self.update_display()
+            elif event.key == "tab":
+                event.prevent_default()
+                self.finish_typing()
+                self.action_toggle_panel_focus()
+            elif event.key in ("up", "pageup"):
+                event.prevent_default()
+                results.scroll_up() if event.key == "up" else results.scroll_page_up()
+            elif event.key in ("down", "pagedown"):
+                event.prevent_default()
+                results.scroll_down() if event.key == "down" else results.scroll_page_down()
+            return  # Everything else belongs to the indicator box
+        
         if event.key == "escape" and self.search_query and self.main_view_mode == "alerts":
             event.prevent_default()
             self.clear_search()
-            return
-        
-        # PRIORITY: Check for 'v' key FIRST to allow exiting input mode and cycling views
-        # This ensures 'v' always works to cycle views, even when in input mode
-        typing_indicator = self.main_view_mode == "api_tools" and self.api_tools_input_mode and self.api_tools_input_buffer
-        if event.key == "v" and not typing_indicator:
-            event.prevent_default()
-            # Exit input modes if active
-            if self.api_tools_input_mode:
-                self.api_tools_input_mode = False
-                self.api_tools_input_buffer = ""
-#                logging.info("Exited API Tools input mode via 'v' key")
-            # Now cycle the view
-            self.action_toggle_view()
             return
         
         if event.key == "a" and self.main_view_mode == "alerts":
@@ -2856,116 +2896,47 @@ class CybrWireApp(App):
             self.action_open_selected_link()
             return
         
-        # If in API Tools view AND in input mode, capture input for enrichment query
-        if self.main_view_mode == "api_tools" and self.api_tools_input_mode:
-            if event.key == "enter":
-                # Submit the indicator for enrichment query
-                event.prevent_default()
-                indicator = self.api_tools_input_buffer.strip()
-                
-                if indicator and enrichment_engine.providers:
-                    # Clear results and start query
-                    self.api_tools_last_query = indicator
-                    self.api_tools_last_results = {}
-                    self.api_tools_loading = True
-                    self.call_later(self.update_display)
-                    
-                    # Run async enrichment query
-                    asyncio.create_task(self._run_api_tools_query(indicator))
-                
-                return
-            
-            elif event.key == "escape":
-                # Exit input mode and clear the input buffer
-                event.prevent_default()
-#                logging.info(f"ESC pressed in API Tools input mode - exiting. Buffer was: {self.api_tools_input_buffer}")
-                self.api_tools_input_buffer = ""
-                self.api_tools_input_mode = False
-                self.call_later(self.update_display)
-                return
-            
-            elif event.key == "backspace":
-                # Remove last character from input buffer
-                event.prevent_default()
-                self.api_tools_input_buffer = self.api_tools_input_buffer[:-1]
-                self.call_later(self.update_display)
-                return
-            
-            elif event.character and len(event.character) == 1 and event.character.isprintable():
-                # Add character to input buffer
-                event.prevent_default()
-                self.api_tools_input_buffer += event.character
-                self.call_later(self.update_display)
-                return
-        
-        # If in API Tools view but NOT in input mode, any printable character enters input mode
-        if self.main_view_mode == "api_tools" and not self.api_tools_input_mode:
-            if event.character and len(event.character) == 1 and event.character.isprintable():
-                event.prevent_default()
-                self.api_tools_input_mode = True
-                self.api_tools_input_buffer = event.character
-                self.call_later(self.update_display)
-                return
+        if event.key == "enter" and self.main_view_mode == "api_tools":
+            event.prevent_default()
+            self.focus_indicator_box()
+            self.update_display()
+            return
         
         # Normal key handling
         if event.key == "tab":
             event.prevent_default()
             self.action_toggle_panel_focus()
-        elif event.key == "up":
+        elif event.key in ("up", "down", "pageup", "pagedown"):
             event.prevent_default()
-            # Navigate up in alerts/incidents view to highlight previous row
-            if self.main_view_mode == "alerts":
-                self.query_one("#feed-table", FeedTable).action_cursor_up()
-            elif self.main_view_mode == "incidents":
-                self.hover_row = max(-1, self.hover_row - 1)
-                self.call_later(self.update_display)
-        elif event.key == "down":
-            event.prevent_default()
-            # Navigate down in alerts/incidents view to highlight next row
-            if self.main_view_mode == "alerts":
-                self.query_one("#feed-table", FeedTable).action_cursor_down()
-            elif self.main_view_mode == "incidents":
-                self.hover_row = min(len(self.incident_rows) - 1, self.hover_row + 1)
-                self.call_later(self.update_display)
+            table = self.active_table()
+            if table:
+                {"up": table.action_cursor_up, "down": table.action_cursor_down,
+                 "pageup": table.action_page_up, "pagedown": table.action_page_down}[event.key]()
+            else:
+                results = self.query_one("#api-results")
+                {"up": results.scroll_up, "down": results.scroll_down,
+                 "pageup": results.scroll_page_up, "pagedown": results.scroll_page_down}[event.key]()
         elif event.key == "left":
             event.prevent_default()
             self.action_focused_prev_page()
         elif event.key == "right":
             event.prevent_default()
             self.action_focused_next_page()
-        elif event.key in ("pageup", "pagedown") and self.main_view_mode != "alerts":
-            event.prevent_default()
-            view = self.query_one("#other-view")
-            view.scroll_page_up() if event.key == "pageup" else view.scroll_page_down()
-        elif event.key == "pageup":
-            event.prevent_default()
-            self.query_one("#feed-table", FeedTable).action_page_up()
-        elif event.key == "pagedown":
-            event.prevent_default()
-            self.query_one("#feed-table", FeedTable).action_page_down()
-
-    def on_paste(self, event: events.Paste) -> None:
-        """Handle paste events for input buffers - allows users to paste large IOCs without typing"""
-        pasted_text = event.text.strip()
-        
-        if self.prompt:
-            return  # The search box takes its own paste
-        
-        # If in API Tools view, append pasted text to input buffer
-        if self.main_view_mode == "api_tools" and self.api_tools_input_mode:
-            self.api_tools_input_buffer += pasted_text
-            self.call_later(self.update_display)
-            return
+    
+    def active_table(self):
+        """The row list in the current main view, if it has one"""
+        tables = {"alerts": "#feed-table", "incidents": "#incident-table"}
+        selector = tables.get(self.main_view_mode)
+        return self.query_one(selector, ViewTable) if selector else None
     
     def action_focused_next_page(self):
         """Next page in the focused panel (main or dashboard)"""
         if self.panel_focus == "main":
-            if self.main_view_mode == "alerts":
-                self.query_one("#feed-table", FeedTable).action_page_down()
-            elif self.main_view_mode == "incidents":
-                self.incident_page_offset += 1
-            else:  # api_tools view
-                pass  # API tools doesn't use pagination
+            table = self.active_table()
+            if table:
+                table.action_page_down()
+            else:
+                self.query_one("#api-results").scroll_page_down()
         else:  # dashboard focus
             if self.dashboard_panel_index == 1 and self.threat_summary_pages:
                 self.threat_summary_page = min(self.threat_summary_page + 1, len(self.threat_summary_pages) - 1)
@@ -2976,12 +2947,11 @@ class CybrWireApp(App):
     def action_focused_prev_page(self):
         """Previous page in the focused panel (main or dashboard)"""
         if self.panel_focus == "main":
-            if self.main_view_mode == "alerts":
-                self.query_one("#feed-table", FeedTable).action_page_up()
-            elif self.main_view_mode == "incidents":
-                self.incident_page_offset = max(0, self.incident_page_offset - 1)
-            else:  # api_tools view
-                pass  # API tools doesn't use pagination
+            table = self.active_table()
+            if table:
+                table.action_page_up()
+            else:
+                self.query_one("#api-results").scroll_page_up()
         else:  # dashboard focus
             if self.dashboard_panel_index == 1 and self.threat_summary_pages:
                 self.threat_summary_page = max(0, self.threat_summary_page - 1)
@@ -3019,20 +2989,17 @@ class CybrWireApp(App):
         self.call_later(self.update_display)
     
     def on_click(self, event) -> None:
-        """Click an incident to select it; click it again to open it. The alert table does this itself."""
-        if self.main_view_mode != "incidents" or getattr(event.widget, "id", None) != "feeds":
+        """Clicking a panel selects it. Tables and text boxes handle their own clicks."""
+        if isinstance(self.screen, ModalScreen):
             return
-        # Outer panel border + padding = 2 rows before the first incident line
-        line = event.y - 2
-        row = next((i for i, (_, first, last) in enumerate(self.incident_rows) if first <= line <= last), None)
-        if row is None:
-            return
-        self.panel_focus = "main"
-        if row == self.hover_row:
-            self.action_open_selected_link()
-        else:
-            self.hover_row = row
-            self.update_display()
+        node = getattr(event, "widget", None)
+        while node is not None and node.id not in ("dashboard", "feeds-container"):
+            node = node.parent
+        if node is not None:
+            self.panel_focus = "dashboard" if node.id == "dashboard" else "main"
+            if self.prompt and node.id == "dashboard":
+                self.finish_typing()
+            self.mark_dirty()
 
 def main():
     """Main entry point"""

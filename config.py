@@ -1,9 +1,9 @@
 """
 Configuration loading for CybrWire
 
-All YAML files are read once here. Precedence for AI settings:
-cybrwire_local.yaml (private, gitignored) > usrwire.yaml.
-Keys come from keystore.py, which still honors any left in those files.
+cybrwire.yaml and comwire.yaml ship with the app. usrwire.yaml is the user's own,
+created from usrwire.example.yaml and ignored by git. Keys come from keystore.py,
+and the AI provider chosen in the app overrides any ai: section.
 """
 
 import logging
@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from keystore import SLOTS_BY_ID, KeyStore
+from keystore import (SLOTS_BY_ID, KeyStore, add_feed_slot, convert_user_file, create_user_file,
+                      feed_key_spec)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -74,6 +75,8 @@ def secure_file(path: str) -> None:
     try:
         if stat.S_IMODE(os.stat(path).st_mode) & 0o077:
             os.chmod(path, 0o600)
+    except FileNotFoundError:
+        pass
     except OSError as e:
         logging.warning(f"Could not restrict permissions on {path}: {e}")
 
@@ -81,7 +84,9 @@ def secure_file(path: str) -> None:
 def _remember_secrets(config: "Config") -> None:
     values = [entry.get("api_key") for entry in config.enrichment.values()]
     values.append(config.ai.get("api_key"))
-    values += [config.notifications.get(k) for k in ("ntfy_url", "ntfy_token", "discord_webhook", "slack_webhook")]
+    values += [config.notifications.get(k) for k in ("ntfy_url", "ntfy_token", "pushover_token", "pushover_user",
+                                                     "discord_webhook", "slack_webhook")]
+    values += [*config.ai_keys.values(), *config.feed_keys.values()]
     for src in config.sources:
         values += list((src.get("headers") or {}).values())
     SECRETS.update(str(v) for v in values if v and len(str(v)) >= MIN_SECRET_LEN)
@@ -96,12 +101,16 @@ class Config:
     notifications: Dict[str, Any] = field(default_factory=dict)
     keys: Optional[KeyStore] = None
     key_sources: Dict[str, str] = field(default_factory=dict)  # slot id -> where its value came from
+    ai_keys: Dict[str, str] = field(default_factory=dict)      # slot id -> key, one per AI provider
+    feed_keys: Dict[str, str] = field(default_factory=dict)    # slot id -> key, one per feed
 
     def key_value(self, slot_id: str) -> Optional[str]:
         """The value the app is using for a key slot"""
         slot = SLOTS_BY_ID[slot_id]
         if slot.section == "ai":
-            return self.ai.get(slot.yaml_key)
+            return self.ai_keys.get(slot_id)
+        if slot.section == "feeds":
+            return self.feed_keys.get(slot_id)
         if slot.section == "notifications":
             return self.notifications.get(slot.yaml_key)
         provider = ENRICHMENT_KEYS[slot.yaml_key][0]
@@ -116,18 +125,58 @@ class Config:
                 self.enrichment[provider] = {"api_key": value}
             else:
                 self.enrichment.pop(provider, None)
-        else:
-            block = self.ai if slot.section == "ai" else self.notifications
+        elif slot.section in ("ai", "feeds"):
+            block = self.ai_keys if slot.section == "ai" else self.feed_keys
             if value:
-                block[slot.yaml_key] = value
+                block[slot_id] = value
             else:
-                block.pop(slot.yaml_key, None)
+                block.pop(slot_id, None)
+            self.refresh_ai_key()
+        else:
+            if value:
+                self.notifications[slot.yaml_key] = value
+            else:
+                self.notifications.pop(slot.yaml_key, None)
         if value and source:
             self.key_sources[slot_id] = source
             if len(value) >= MIN_SECRET_LEN:
                 SECRETS.add(value)
         else:
             self.key_sources.pop(slot_id, None)
+
+    def refresh_ai_key(self) -> None:
+        """ai.api_key is always the key of the chosen provider, and only that one"""
+        key = self.ai_keys.get(f"{self.ai.get('provider')}_api_key")
+        if key:
+            self.ai["api_key"] = key
+        else:
+            self.ai.pop("api_key", None)
+
+    def choose_ai(self, provider: Optional[str], model: str = "", base_url: str = "") -> None:
+        """Apply the provider picked in the app; None turns AI off"""
+        for name, value in (("provider", provider), ("model", model), ("base_url", base_url)):
+            if value:
+                self.ai[name] = value
+            else:
+                self.ai.pop(name, None)
+        self.refresh_ai_key()
+
+    def feed_request_parts(self, src: Dict[str, Any]) -> Dict[str, Any]:
+        """Headers and URL parameters for one feed, with its key added"""
+        headers = dict(src.get("headers") or {})
+        params = {}
+        spec = feed_key_spec(src)
+        key = self.feed_keys.get(src.get("key_slot")) if spec else None
+        if key:
+            if spec[0] == "header":
+                headers[spec[1]] = key
+            else:
+                params[spec[1]] = key
+        return {"headers": headers, "params": params}
+
+    def feed_is_ready(self, src: Dict[str, Any]) -> bool:
+        """A feed that needs a key is skipped until it has one"""
+        return not src.get("key_slot") or bool(self.feed_keys.get(src["key_slot"]))
 
     @property
     def configured_api_names(self) -> List[str]:
@@ -151,8 +200,24 @@ def _read_yaml(filename: str) -> Dict[str, Any]:
         return {}
 
 
+def _prepare_feed(src: Dict[str, Any], source_file: str) -> Dict[str, Any]:
+    """Feeds that need a key get a slot in the key card; a key written inline moves there"""
+    feed = {**src, "source_file": source_file}
+    slot = add_feed_slot(feed)
+    if slot:
+        feed["key_slot"] = slot.id
+        spec = feed_key_spec(feed)
+        if spec[0] == "header" and not feed.get("key_header"):
+            feed["key_header"] = spec[1]
+        feed["headers"] = {k: v for k, v in (feed.get("headers") or {}).items() if k != spec[1]}
+    return feed
+
+
 def load_config() -> Config:
-    secure_file(os.path.join(APP_DIR, "cybrwire_local.yaml"))
+    convert_user_file(APP_DIR)
+    create_user_file(APP_DIR)
+    for name in ("usrwire.yaml", "cybrwire_local.yaml"):
+        secure_file(os.path.join(APP_DIR, name))
     files = {name: _read_yaml(name) for name, _ in FEED_FILES}
     config = Config()
 
@@ -162,7 +227,7 @@ def load_config() -> Config:
                 continue
             for src in value:
                 if isinstance(src, dict) and src.get("name") and src.get("url"):
-                    config.sources.append({**src, "source_file": key if key in ("curated", "custom", "community") else category})
+                    config.sources.append(_prepare_feed(src, key if key in ("curated", "custom", "community") else category))
 
     if not config.sources:
         logging.warning("No YAML sources loaded, using fallback sources")
@@ -192,8 +257,10 @@ def load_config() -> Config:
 
     # Keys found in the YAML above are replaced by whatever outranks them in the key store
     config.keys = KeyStore(APP_DIR)
+    config.keys.adopt_legacy_ai_key(config.ai.get("provider"))
     for slot_id, (value, source) in config.keys.resolve_all(config.keys.read_yaml_values()).items():
         config.set_key_value(slot_id, value, source)
 
+    config.refresh_ai_key()
     _remember_secrets(config)
     return config

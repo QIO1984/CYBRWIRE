@@ -310,7 +310,9 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(160, 45)) as pilot:
                 await self.settle(pilot)
                 await pilot.press("W", *"qr", "backspace", "backspace", *"ivanti", "enter", *"citrix*", "enter")
-                card = app.screen.render_card().plain
+                table = app.screen.query_one("#watch-table")
+                rows = [" ".join(c.plain for c in table.get_row_at(i)) for i in range(table.row_count)]
+                card = " ".join(rows) + str(app.screen.query_one("#watch-title").render())
                 for expected in ("3 terms", "Fortinet", "from YAML", "ivanti", "citrix*"):
                     self.assertIn(expected, card)
                 self.assertRegex(card, r"ivanti\s+1 loaded")
@@ -452,20 +454,118 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             self.assertIsNone(app.prompt)
 
-    async def test_api_tools_typing_still_goes_to_its_input(self):
+    async def api_app(self, pilot, app):
+        await self.settle(pilot)
+        cybrwire.enrichment_engine.providers["abusech"] = mock.Mock()
+        self.addCleanup(cybrwire.enrichment_engine.providers.pop, "abusech", None)
+        await pilot.press("v", "v")
+        await self.settle(pilot)
+        self.assertEqual(app.main_view_mode, "api_tools")
+
+    async def test_api_tools_typing_goes_to_its_box_and_commands_stay_off(self):
         app = self.make_app()
         with mock.patch.object(app, "action_refresh") as refresh, mock.patch.object(app, "action_quit") as quit_:
             async with app.run_test(size=(160, 45)) as pilot:
-                await self.settle(pilot)
-                app.main_view_mode = "api_tools"
-                app.api_tools_input_mode = True
+                await self.api_app(pilot, app)
                 await pilot.press("slash", "r", "w", "i", "q")
-                self.assertEqual(app.api_tools_input_buffer, "/rwiq")
-                self.assertIsNone(app.prompt)
+                self.assertEqual(app.query_one("#indicator-box").value, "/rwiq")
+                self.assertEqual(app.prompt, "indicator")
                 self.assertFalse(app.watch_only)
-                self.assertEqual(app.screen_stack[-1].__class__.__name__, "Screen")
                 refresh.assert_not_called()
                 quit_.assert_not_called()
+                # Esc clears the box and gives the single-key commands back
+                await pilot.press("escape")
+                await self.settle(pilot)
+                self.assertEqual(app.query_one("#indicator-box").value, "")
+                self.assertIsNone(app.prompt)
+                await pilot.press("r")
+                refresh.assert_called_once()
+
+    async def test_api_tools_v_leaves_only_when_the_box_is_empty(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.api_app(pilot, app)
+            await pilot.press("a", "v")
+            self.assertEqual(app.query_one("#indicator-box").value, "av")
+            await pilot.press("escape", "slash")
+            await self.settle(pilot)
+            await pilot.press("v")
+            await self.settle(pilot)
+            self.assertEqual(app.main_view_mode, "alerts")
+            self.assertIsNone(app.prompt)
+
+    async def test_api_tools_enter_runs_the_lookup_and_paste_works(self):
+        app = self.make_app()
+        with mock.patch.object(cybrwire.enrichment_engine, "enrich", mock.AsyncMock(return_value={})) as enrich:
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.api_app(pilot, app)
+                app.query_one("#indicator-box").post_message(events.Paste("198.51.100.7"))
+                await self.settle(pilot)
+                await pilot.press("enter")
+                await self.settle(pilot)
+                enrich.assert_awaited_once_with("198.51.100.7")
+                self.assertEqual(app.api_tools_last_query, "198.51.100.7")
+                self.assertIn("NO RESULTS", str(app.query_one("#api-content").render()))
+
+    async def test_incidents_select_by_keyboard_and_mouse(self):
+        cybrwire.alert_queue[:] = [
+            alert("CVE-2099-1111 story", source="A"), alert("CVE-2099-1111 again", source="B"),
+            alert("CVE-2099-2222 story", source="A", hours=2), alert("CVE-2099-2222 again", source="B", hours=2)]
+        app = self.make_app()
+        with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.settle(pilot)
+                await pilot.press("v")
+                await self.settle(pilot)
+                table = app.query_one("#incident-table")
+                self.assertEqual(table.row_count, 2)
+                first, second = app.incident_list
+                self.assertGreater(table.rows[table.ordered_rows[0].key].height, 3)  # Rows are as tall as their text
+                self.assertIn("▶", table.get_row_at(0)[0].plain)
+                await pilot.press("down")
+                await self.settle(pilot)
+                self.assertIs(app.selected_incident(), second)
+                self.assertIn("▶", table.get_row_at(1)[0].plain)
+                self.assertNotIn("▶", table.get_row_at(0)[0].plain)
+                await pilot.click("#incident-table", offset=(10, 2))  # Inside the first, taller row
+                await self.settle(pilot)
+                self.assertIs(app.selected_incident(), first)
+                browser.assert_not_called()
+                await pilot.click("#incident-table", offset=(10, 2))
+                await self.settle(pilot)
+                browser.assert_called_once()
+
+    async def test_footer_commands_are_clickable(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            footer = app.query_one(cybrwire.CybrWireFooter)
+            first, _, _ = next(r for r in footer.regions if r[2] == "toggle_view")
+            await pilot.click(cybrwire.CybrWireFooter, offset=(first + 1, 0))
+            await self.settle(pilot)
+            self.assertEqual(app.main_view_mode, "incidents")
+
+    async def test_clicking_outside_a_card_closes_it_and_buttons_work(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("W", *"ivanti", "enter", "down")
+            await pilot.click("#watch-remove")
+            await self.settle(pilot)
+            self.assertNotIn("ivanti", app.watchlist.terms)
+            await pilot.click(offset=(1, 1))
+            await self.settle(pilot)
+            self.assertNotIsInstance(app.screen, WatchCard)
+
+    async def test_click_on_the_table_leaves_the_search_box(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash")
+            self.assertEqual(app.prompt, "search")
+            await pilot.click("#feed-table", offset=(10, 0))
+            await self.settle(pilot)
+            self.assertIsNone(app.prompt)
 
     async def test_cve_card(self):
         app = self.make_app()
