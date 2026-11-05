@@ -2,7 +2,7 @@
 AI provider layer for CybrWire
 
 One async entry point, generate(), backed by whichever provider the user
-configures under the `ai:` section of cybrwire_local.yaml / usrwire.yaml:
+picks with Shift+K in the app, or under the `ai:` section of usrwire.yaml:
 
     ai:
       provider: "anthropic"   # anthropic | gemini | openai | openrouter | ollama | openai_compatible
@@ -61,16 +61,16 @@ def configuration_problem(settings: Dict[str, Any]) -> Optional[str]:
     """Return a reason the AI settings can't work, or None if they look usable"""
     provider = settings.get("provider")
     if not provider:
-        return "No AI provider configured (see the ai: section in usrwire.yaml)"
+        return "No AI provider chosen. Press Shift+K to pick one"
     if provider not in PROVIDERS:
         return f"Unknown AI provider '{provider}'. Use one of: {', '.join(PROVIDERS)}"
     default_model, default_url = PROVIDERS[provider]
     if not (settings.get("model") or default_model):
-        return f"Set ai.model for provider '{provider}'"
+        return f"Press Shift+K to set a model for provider '{provider}'"
     if provider not in ("ollama",) and not settings.get("api_key"):
-        return f"Press K to add the key for provider '{provider}'"
+        return f"Press Shift+K to add the key for provider '{provider}'"
     if not (settings.get("base_url") or default_url) and provider != "anthropic":
-        return f"Set ai.base_url for provider '{provider}'"
+        return f"Press Shift+K to set the server URL for provider '{provider}'"
     return None
 
 

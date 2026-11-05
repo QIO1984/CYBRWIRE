@@ -11,6 +11,9 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
+from urllib.parse import parse_qs
+
+import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["CYBRWIRE_KEYCHAIN"] = "off"  # Tests must never touch the real keychain
@@ -218,6 +221,29 @@ class Secrets(unittest.TestCase):
                             sources=[{"headers": {"X-Key": "header-value"}}])
         config._remember_secrets(cfg)
         self.assertEqual(config.SECRETS, {"https://discord.test/secret-hook", "aikey-value", "enrich-value", "header-value"})
+
+
+class PushoverTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sends_form_fields_within_its_limits(self):
+        sent = []
+
+        def handler(request):
+            sent.append(request)
+            return httpx.Response(200, json={"status": 1})
+        real = httpx.AsyncClient
+        with mock.patch.object(notify.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)):
+            results = await notify.send({"pushover_token": "app-token", "pushover_user": "user-key"}, "T" * 400, "B" * 2000)
+        self.assertEqual(results, {"pushover": None})
+        self.assertEqual(str(sent[0].url), notify.PUSHOVER_URL)
+        form = parse_qs(sent[0].content.decode())
+        self.assertEqual((form["token"], form["user"]), (["app-token"], ["user-key"]))
+        self.assertEqual(len(form["title"][0]), notify.PUSHOVER_MAX_TITLE)
+        self.assertEqual(len(form["message"][0]), notify.PUSHOVER_MAX_MESSAGE)
+
+    def test_needs_both_parts(self):
+        self.assertFalse(notify.is_configured({"pushover_token": "a"}))
+        self.assertFalse(notify.is_configured({"pushover_user": "b"}))
+        self.assertTrue(notify.is_configured({"pushover_token": "a", "pushover_user": "b"}))
 
 
 if __name__ == "__main__":

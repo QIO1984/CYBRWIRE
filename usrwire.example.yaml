@@ -1,0 +1,51 @@
+# YOUR CYBRWIRE SETTINGS
+# ============================================================================
+# This file is yours: git ignores it, and it lives next to the app as usrwire.yaml.
+#
+# Keys never go in here. Press Shift+K in the app to enter and test API keys,
+# notification targets and feed keys, and to choose your AI provider.
+#
+# The feeds that ship with CybrWire are in cybrwire.yaml and comwire.yaml.
+# Uncomment any section below that you want to use.
+
+# WATCHLIST: vendors, products or keywords you care about. Matching items get a
+# star, and w shows only those. Whole words in titles and descriptions, in any case;
+# a trailing * matches a prefix. Shift+W in the app does the same without this file.
+#
+# watchlist:
+#   - Fortinet
+#   - citrix*
+#   - CVE-2024-3400
+
+# NOTIFICATIONS: which events send a message to the targets set with Shift+K.
+# Any of: watchlist (the default), kev, zeroday
+#
+# notifications:
+#   triggers: [watchlist, kev]
+
+# AI: only for what the app doesn't ask for. true = a new briefing at every launch,
+# which is one paid call each time.
+#
+# ai:
+#   auto_briefing: false
+
+# YOUR OWN FEEDS: type is rss, json or txt. kind decides where items appear:
+# advisory, news (the default), ransomware or indicators.
+# If a feed needs a key, name how it is sent and the key card gets a row for it:
+#   key_header: the HTTP header that carries the key
+#   key_param:  the URL parameter that carries the key
+#
+# custom:
+#   - name: "Security Blog"
+#     url: "https://example.com/feed.rss"
+#     type: rss
+#
+#   - name: "AlienVault OTX - Subscribed Pulses"
+#     url: "https://otx.alienvault.com/api/v1/pulses/subscribed?limit=10"
+#     type: json
+#     key_header: X-OTX-API-KEY
+#
+#   - name: "Threat API"
+#     url: "https://api.example.com/threats.json"
+#     type: json
+#     key_param: key

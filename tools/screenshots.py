@@ -19,21 +19,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ["CYBRWIRE_KEYCHAIN"] = "off"
 
+import config  # noqa: E402
 import history  # noqa: E402
 import state  # noqa: E402
 
 WORK = tempfile.mkdtemp(prefix="cybrwire-shots-")
+# Only the shipped feeds: the user's own YAML, keys and watchlist are never read
+config.APP_DIR = WORK
+for name in ("cybrwire.yaml", "comwire.yaml"):
+    shutil.copy(os.path.join(ROOT, name), WORK)
 state.STATE_PATH = os.path.join(WORK, "state.json")
 history.HISTORY_PATH = os.path.join(WORK, "history.db")
 
 import ai  # noqa: E402
-import config  # noqa: E402
 import cybrwire  # noqa: E402
 from cve_card import CveCard  # noqa: E402
 from key_card import KeyCard  # noqa: E402
 from keystore import KEYCHAIN, SLOTS, KeyStore  # noqa: E402
 
 SIZE = (150, 46)
+FIREFOX_ATTEMPTS = 3
 WATCH_TERMS = ["Fortinet", "Ivanti", "Citrix*", "Cisco", "ransomware"]
 SAMPLE_KEYS = {"virustotal_api_key": "sample000000000000000a1b2", "abuse_ch_api_key": "sample000000000000000c3d4"}
 
@@ -52,10 +57,8 @@ def neutralize_config():
     cfg.keys = KeyStore(WORK, backend=SampleKeychain(), env={})
     for slot in SLOTS:
         cfg.set_key_value(slot.id, None)
-    cfg.ai.clear()
-    cfg.ai["provider"] = "anthropic"
+    cfg.choose_ai("anthropic")
     cfg.watchlist[:] = []
-    cfg.sources[:] = [s for s in cfg.sources if s.get("source_file") != "custom"]
 
     async def no_ai(*_args, **_kwargs):
         raise ai.AIError("AI is off while taking screenshots")
@@ -169,6 +172,10 @@ async def main(output):
         await pilot.press("v")
         await pilot.pause(0.5)
         await snap("incidents", retro)
+        app.query_one("#incident-table").action_cursor_down()
+        await pilot.pause(0.3)
+        await snap("incidents", retro)
+        shots.pop()
         await pilot.press("v", "escape", "v")
         await pilot.pause(0.5)
 
@@ -197,9 +204,14 @@ def render(shots, output):
             with open(page, "w") as f:
                 f.write(f"<!doctype html><html><body style='margin:0;background:#000'>{svg}</body></html>")
             png = os.path.join(base, f"{name}.png")
-            subprocess.run(["firefox", "--headless", "--no-remote", "--profile", profile, "--window-size=1700,1075",
-                            f"--screenshot={png}", f"file://{page}"], check=True, timeout=120,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for attempt in range(FIREFOX_ATTEMPTS):  # Headless Firefox sometimes crashes on start
+                result = subprocess.run(["firefox", "--headless", "--no-remote", "--profile", profile, "--window-size=1700,1075",
+                                         f"--screenshot={png}", f"file://{page}"], timeout=120,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if result.returncode == 0:
+                    break
+            else:
+                raise RuntimeError(f"Firefox couldn't render {name}")
             shutil.copy(png, os.path.join(output, f"{name}.png"))
             print(os.path.join(output, f"{name}.png"))
     finally:
