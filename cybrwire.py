@@ -39,7 +39,7 @@ from textual.app import App, Screen, ComposeResult
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.widgets import Input, Static, Header
-from widgets import IndicatorBox, SearchBox, ViewTable
+from widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -133,7 +133,12 @@ class HelpScreen(Screen):
         self.palette = palette
     
     def compose(self) -> ComposeResult:
+        yield CardButton("Close help", id="help-close")
         yield ScrollableContainer(Static(id="help-content"))
+    
+    def on_button_pressed(self, event) -> None:
+        event.stop()
+        self.action_close_help()
     
     def on_mount(self) -> None:
         self.update_help()
@@ -161,6 +166,7 @@ class HelpScreen(Screen):
         help_text.append("│  [GENERAL]\n", style=f"bold {accent}")
         help_text.append("│    ↑/↓           Select an alert or incident (the alert preview shows its summary)\n", style=color)
         help_text.append("│    Click         Select a row, click it again to open it. Footer commands are clickable\n", style=color)
+        help_text.append("│    Right-click   In either panel, does what V does there. The wheel scrolls and turns pages\n", style=color)
         help_text.append("│    ← →           Jump a screen in the Feed and Incidents, change page in the War Room\n", style=color)
         help_text.append("│    Enter         Open the selected alert (or an incident's latest report) in your browser\n", style=color)
         help_text.append("│    Shift+K       Enter, test and secure API keys and notification URLs\n", style=color)
@@ -565,7 +571,7 @@ class CybrWireFooter(Static):
     
     def on_click(self, event) -> None:
         action = next((a for first, last, a in self.regions if first <= event.x <= last), None)
-        if not action:
+        if not action or event.button != 1:
             return
         event.stop()
         self.app.finish_typing()
@@ -675,9 +681,22 @@ class CybrWireApp(App):
         height: auto;
     }
     
-    #dashboard {
+    #dashboard-column {
         width: 1fr;
         height: 100%;
+    }
+    
+    #dashboard {
+        height: 1fr;
+    }
+    
+    #dashboard-pager {
+        height: 1;
+        content-align: center middle;
+    }
+    
+    .view-actions {
+        height: 1;
     }
     
     #loading-content {
@@ -776,12 +795,11 @@ class CybrWireApp(App):
         self.threat_summary_timestamp = None
         self.threat_summary_loading = False
         self.threat_summary_pages = []  # Paginated content
+        self.feed_status_pages = 1
         self.threat_summary_page = 0  # Current page
         
         # AI analysis (any configured provider)
-        if STATE.settings.get("ai"):  # What was picked in the app beats any ai: section in YAML
-            choice = STATE.settings["ai"]
-            CONFIG.choose_ai(choice.get("provider"), choice.get("model", ""), choice.get("base_url", ""))
+        CONFIG.load_ai_profiles(STATE.settings.get("ai"))  # What was picked in the app beats any ai: section in YAML
         self.ai_settings = CONFIG.ai
         self.ai_problem = ai.configuration_problem(self.ai_settings)
         # Restore the last briefing so launching the app doesn't cost an AI call
@@ -1199,16 +1217,26 @@ class CybrWireApp(App):
                                         placeholder="Type keywords to search alert titles, descriptions, sources and indicators")
                     yield ViewTable(id="feed-table", cursor_type="row", show_header=False)
                     yield Static(id="alert-preview")
+                    with Horizontal(classes="view-actions"):
+                        yield CardButton("Open", id="act-open")
+                        yield CardButton("CVE card", id="act-cve")
+                        yield CardButton("Explain with AI", id="act-explain")
                 with Vertical(id="incidents-view", classes="view"):
                     yield ViewTable(id="incident-table", cursor_type="row", show_header=False)
+                    with Horizontal(classes="view-actions"):
+                        yield CardButton("Open latest report", id="act-open-incident")
+                        yield CardButton("CVE card", id="act-cve-incident")
                 with Vertical(id="api-view", classes="view"):
                     with Horizontal(id="indicator-row"):
                         yield Static("Indicator: ", id="indicator-prefix")
                         yield IndicatorBox(id="indicator-box", compact=True,
                                            placeholder="Paste an IP, file hash, domain or URL, then press Enter")
+                        yield CardButton("Look up", id="act-lookup")
                     with VerticalScroll(id="api-results"):
                         yield Static(id="api-content", expand=True)
-            yield Static(id="dashboard", expand=True)
+            with Vertical(id="dashboard-column"):
+                yield DashboardPanel(id="dashboard", expand=True)
+                yield PagerBar(id="dashboard-pager")
         
         yield CybrWireFooter()
     
@@ -1378,6 +1406,9 @@ class CybrWireApp(App):
                     dashboard_content = self.make_dashboard()
                 
                 dashboard_widget.update(dashboard_content)
+                page, total = self.dashboard_pages()
+                extra = ("New briefing", self.action_ai_refresh) if self.dashboard_panel_index == 1 else None
+                self.query_one("#dashboard-pager", PagerBar).show(page, total, extra)
                 dashboard_widget.refresh()
             except Exception as e:
                 logging.error(f"Error updating dashboard: {e}")
@@ -1854,13 +1885,50 @@ class CybrWireApp(App):
     def key_config(self):
         return CONFIG
     
-    def choose_ai(self, provider, model, base_url):
-        """Use the provider picked in the key card, now and at the next launch"""
-        CONFIG.choose_ai(provider, model, base_url)
-        STATE.settings["ai"] = {"provider": provider, "model": model, "base_url": base_url}
+    def save_ai_profiles(self):
+        """Remember the key card's AI choices, and put them to use"""
+        STATE.settings["ai"] = {"active": CONFIG.active_ai_profile, "profiles": CONFIG.ai_profiles}
         STATE.save()
         self.ai_problem = ai.configuration_problem(self.ai_settings)
+        self.ai_briefing_error = None
         self.mark_dirty()
+    
+    def set_ai_profile(self, index, provider, model, base_url):
+        CONFIG.set_ai_profile(index, provider, model, base_url)
+        self.save_ai_profiles()
+    
+    def activate_ai_profile(self, index):
+        CONFIG.activate_ai_profile(index)
+        self.save_ai_profiles()
+    
+    def dashboard_pages(self):
+        """(current page, page count) of the right panel"""
+        if self.dashboard_panel_index == 1:
+            return self.threat_summary_page, max(1, len(self.threat_summary_pages))
+        if self.dashboard_panel_index == 2:
+            return self.dashboard_page_offset, self.feed_status_pages
+        return 0, 1
+    
+    def page_dashboard(self, delta):
+        """Turn the right panel's page, from a key, the pager or the mouse wheel"""
+        page, total = self.dashboard_pages()
+        page = max(0, min(page + delta, total - 1))
+        if self.dashboard_panel_index == 1:
+            self.threat_summary_page = page
+        elif self.dashboard_panel_index == 2:
+            self.dashboard_page_offset = page
+        self.update_display()
+    
+    def on_button_pressed(self, event):
+        """Mouse access to what the keys do in the main views"""
+        actions = {"act-open": self.action_open_selected_link, "act-open-incident": self.action_open_selected_link,
+                   "act-cve": self.action_open_cve_card, "act-cve-incident": self.action_open_cve_card,
+                   "act-explain": self.action_explain_alert,
+                   "act-lookup": lambda: self.run_api_lookup(self.query_one("#indicator-box", IndicatorBox).value.strip())}
+        action = actions.get(event.button.id)
+        if action:
+            self.finish_typing()
+            action()
     
     def key_changed(self, slot_id):
         """Put a key changed in the card to use right away, without a restart"""
@@ -2198,6 +2266,7 @@ class CybrWireApp(App):
         entries += [("disabled", name, msg, reason) for name, (msg, reason) in sorted(disabled_feeds.items())]
         per_page = 8
         total_pages = max(1, (len(entries) + per_page - 1) // per_page)
+        self.feed_status_pages = total_pages
         self.dashboard_page_offset = max(0, min(self.dashboard_page_offset, total_pages - 1))
         section = None
         for kind, name, msg, detail in entries[self.dashboard_page_offset * per_page:(self.dashboard_page_offset + 1) * per_page]:
@@ -2938,10 +3007,7 @@ class CybrWireApp(App):
             else:
                 self.query_one("#api-results").scroll_page_down()
         else:  # dashboard focus
-            if self.dashboard_panel_index == 1 and self.threat_summary_pages:
-                self.threat_summary_page = min(self.threat_summary_page + 1, len(self.threat_summary_pages) - 1)
-            else:
-                self.dashboard_page_offset += 1
+            self.page_dashboard(1)
         self.call_later(self.update_display)
     
     def action_focused_prev_page(self):
@@ -2953,10 +3019,7 @@ class CybrWireApp(App):
             else:
                 self.query_one("#api-results").scroll_page_up()
         else:  # dashboard focus
-            if self.dashboard_panel_index == 1 and self.threat_summary_pages:
-                self.threat_summary_page = max(0, self.threat_summary_page - 1)
-            else:
-                self.dashboard_page_offset = max(0, self.dashboard_page_offset - 1)
+            self.page_dashboard(-1)
         self.call_later(self.update_display)
     def action_panel_next_page(self):
         """Next page in main feed panel (alerts/incidents) - DEPRECATED, use action_focused_next_page"""
@@ -2989,17 +3052,22 @@ class CybrWireApp(App):
         self.call_later(self.update_display)
     
     def on_click(self, event) -> None:
-        """Clicking a panel selects it. Tables and text boxes handle their own clicks."""
+        """Clicking a panel selects it, and right-clicking it also does what v does there"""
         if isinstance(self.screen, ModalScreen):
             return
         node = getattr(event, "widget", None)
-        while node is not None and node.id not in ("dashboard", "feeds-container"):
+        while node is not None and node.id not in ("dashboard-column", "feeds-container"):
             node = node.parent
-        if node is not None:
-            self.panel_focus = "dashboard" if node.id == "dashboard" else "main"
-            if self.prompt and node.id == "dashboard":
-                self.finish_typing()
-            self.mark_dirty()
+        if node is None:
+            return
+        self.panel_focus = "dashboard" if node.id == "dashboard-column" else "main"
+        if event.button == 3:
+            self.finish_typing()
+            self.action_toggle_view()
+            return
+        if self.prompt and node.id == "dashboard-column":
+            self.finish_typing()
+        self.mark_dirty()
 
 def main():
     """Main entry point"""

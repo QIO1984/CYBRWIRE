@@ -17,6 +17,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 
+import ai  # noqa: E402
 import config  # noqa: E402
 import cybrwire  # noqa: E402
 import key_card  # noqa: E402
@@ -668,50 +669,94 @@ class FileLayoutTests(Base):
 
 
 class ProviderCardTests(CardTests):
-    async def test_picking_a_provider_shows_its_key_row_and_persists(self):
+    def setUp(self):
+        super().setUp()
+        self.cfg.load_ai_profiles(None)
+        patcher = mock.patch.object(cybrwire.STATE, "save")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(cybrwire.STATE.settings.pop, "ai", None)
+
+    async def pick(self, pilot, card, index, provider):
+        card.query_one(f"#ai-provider-{index}").value = provider
+        await pilot.pause()
+        await pilot.pause()
+
+    async def test_picking_a_provider_shows_its_key_row_and_asks_for_a_model(self):
         app = cybrwire.CybrWireApp()
         async with app.run_test(size=(120, 50)) as pilot:
             card = await self.open_card(pilot)
             self.assertFalse(any(s.section == "ai" for s in card.rows))
-            with mock.patch.object(cybrwire.STATE, "save"):
-                card.query_one("#ai-provider").value = "openai"
-                await pilot.pause()
-                await pilot.pause()
+            await self.pick(pilot, card, 0, "openai")
             self.assertEqual(self.cfg.ai["provider"], "openai")
-            self.assertEqual(cybrwire.STATE.settings["ai"]["provider"], "openai")
+            self.assertEqual(cybrwire.STATE.settings["ai"]["profiles"][0]["provider"], "openai")
             self.assertEqual([s.id for s in card.rows if s.section == "ai"], ["openai_api_key"])
-            self.assertTrue(card.query_one("#ai-details").display)
-            self.assertFalse(card.query_one("#ai-url-row").display)
-            self.assertIn("provider 'openai'", app.ai_problem)
+            self.assertTrue(card.query_one("#ai-model-0").display)
+            self.assertFalse(card.query_one("#ai-url-row-0").display)
+            self.assertIs(card.focused, card.query_one("#ai-model-0"))  # The next thing it needs
+            self.assertIn("Choose a model", app.ai_problem)
+            self.assertIn("AI is off", self.card_text(card))
             app.save_settings()
-            self.assertEqual(cybrwire.STATE.settings["ai"]["provider"], "openai")  # Saved settings keep the choice
-            cybrwire.STATE.settings.pop("ai")
+            self.assertEqual(cybrwire.STATE.settings["ai"]["profiles"][0]["provider"], "openai")
 
-    async def test_model_is_saved_and_url_only_for_servers(self):
+    async def test_changing_provider_clears_the_model(self):
         app = cybrwire.CybrWireApp()
         async with app.run_test(size=(120, 50)) as pilot:
             card = await self.open_card(pilot)
-            card.query_one("#ai-provider").value = "openai_compatible"
+            await self.pick(pilot, card, 0, "anthropic")
+            await pilot.press(*"my-model", "enter")
             await pilot.pause()
+            self.assertEqual(self.cfg.ai["model"], "my-model")
+            await self.pick(pilot, card, 0, "gemini")
+            self.assertNotIn("model", self.cfg.ai)
+            self.assertEqual(card.query_one("#ai-model-0").value, "")
+
+    async def test_alternate_profile_switches_provider_model_and_key(self):
+        self.cfg.set_key_value("anthropic_api_key", "anthropic-secret-key", KEYCHAIN)
+        self.cfg.set_key_value("openrouter_api_key", "openrouter-secret-key", KEYCHAIN)
+        app = cybrwire.CybrWireApp()
+        async with app.run_test(size=(120, 50)) as pilot:
+            card = await self.open_card(pilot)
+            await self.pick(pilot, card, 0, "anthropic")
+            await pilot.press(*"model-a", "enter")
+            await pilot.press("a")  # The alternate has no provider yet
+            self.assertEqual(self.cfg.active_ai_profile, 0)
+            self.assertIn("Choose a provider for Alternate", self.card_text(card))
+            await self.pick(pilot, card, 1, "openrouter")
+            await pilot.press(*"vendor/model-b", "enter")
             await pilot.pause()
-            self.assertTrue(card.query_one("#ai-url-row").display)
-            card.query_one("#ai-model").value = "my-model"
-            card.query_one("#ai-url").value = "http://localhost:1234/v1"
-            card.query_one("#ai-model").focus()
+            self.assertEqual(self.cfg.ai["provider"], "anthropic")  # Editing the alternate doesn't activate it
+            self.assertEqual({s.provider for s in card.rows if s.section == "ai"}, {"anthropic", "openrouter"})
+            await pilot.press("a")
             await pilot.pause()
+            self.assertEqual((self.cfg.ai["provider"], self.cfg.ai["model"], self.cfg.ai["api_key"]),
+                             ("openrouter", "vendor/model-b", "openrouter-secret-key"))
+            self.assertIsNone(app.ai_problem)
+            await pilot.click("#ai-use-0")
+            await pilot.pause()
+            self.assertEqual((self.cfg.ai["provider"], self.cfg.ai["api_key"]), ("anthropic", "anthropic-secret-key"))
+            self.assertEqual(cybrwire.STATE.settings["ai"]["active"], 0)
+
+    async def test_url_row_only_for_servers(self):
+        app = cybrwire.CybrWireApp()
+        async with app.run_test(size=(120, 50)) as pilot:
+            card = await self.open_card(pilot)
+            await self.pick(pilot, card, 0, "openai_compatible")
+            self.assertTrue(card.query_one("#ai-url-row-0").display)
+            card.query_one("#ai-model-0").value = "my-model"
+            card.query_one("#ai-url-0").value = "http://localhost:1234/v1"
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(self.cfg.ai["model"], "my-model")
             self.assertEqual(self.cfg.ai["base_url"], "http://localhost:1234/v1")
-            cybrwire.STATE.settings.pop("ai", None)
 
-    async def test_p_opens_the_provider_list_and_escape_backs_out(self):
+    async def test_tab_reaches_settings_and_escape_backs_out(self):
         app = cybrwire.CybrWireApp()
         async with app.run_test(size=(120, 50)) as pilot:
             card = await self.open_card(pilot)
-            await pilot.press("p")
+            await pilot.press("tab")
             await pilot.pause()
-            self.assertIs(card.focused, card.query_one("#ai-provider"))
+            self.assertIs(card.focused, card.query_one("#ai-provider-0"))
             await pilot.press("escape")
             await pilot.pause()
             self.assertIs(app.screen, card)
@@ -734,6 +779,30 @@ class ProviderCardTests(CardTests):
             await pilot.click("#key-close")
             await pilot.pause()
             self.assertIsNot(app.screen, card)
+
+
+class ProfileTests(unittest.TestCase):
+    def test_yaml_seeds_the_primary_and_saved_choice_wins(self):
+        cfg = config.Config(ai={"provider": "anthropic", "model": "from-yaml", "auto_briefing": True})
+        cfg.load_ai_profiles(None)
+        self.assertEqual(cfg.ai_profiles[0], {"provider": "anthropic", "model": "from-yaml", "base_url": ""})
+        self.assertEqual(cfg.ai_profiles[1], {"provider": "", "model": "", "base_url": ""})
+        cfg.load_ai_profiles({"active": 1, "profiles": [{"provider": "gemini", "model": "g"}, {"provider": "openai", "model": "o"}]})
+        self.assertEqual((cfg.ai["provider"], cfg.ai["model"], cfg.active_ai_profile), ("openai", "o", 1))
+        self.assertTrue(cfg.ai["auto_briefing"])  # Other settings aren't touched
+
+    def test_older_saved_choice_and_bad_index_still_load(self):
+        cfg = config.Config()
+        cfg.load_ai_profiles({"provider": "gemini", "model": "g", "base_url": ""})
+        self.assertEqual(cfg.ai["provider"], "gemini")
+        cfg.load_ai_profiles({"active": 9, "profiles": [{"provider": "openai", "model": "o"}]})
+        self.assertEqual(cfg.active_ai_profile, 0)
+        self.assertEqual(len(cfg.ai_profiles), config.AI_PROFILE_COUNT)
+
+    def test_no_provider_runs_without_a_model(self):
+        for provider in ai.PROVIDERS:
+            problem = ai.configuration_problem({"provider": provider, "api_key": "k", "base_url": "http://x.test"})
+            self.assertIn("Choose a model", problem)
 
 
 class TemplateTests(unittest.TestCase):

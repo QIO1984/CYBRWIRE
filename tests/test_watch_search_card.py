@@ -545,6 +545,129 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             self.assertEqual(app.main_view_mode, "incidents")
 
+    async def test_right_click_acts_like_v_in_that_panel_and_never_opens_a_row(self):
+        app = self.make_app()
+        with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.settle(pilot)
+                await pilot.click("#feed-table", offset=(10, 0), button=3)  # On the selected row
+                await self.settle(pilot)
+                self.assertEqual(app.main_view_mode, "incidents")
+                browser.assert_not_called()
+                self.assertEqual(app.dashboard_panel_index, 0)
+                await pilot.click("#dashboard", offset=(5, 5), button=3)
+                await self.settle(pilot)
+                self.assertEqual(app.panel_focus, "dashboard")
+                self.assertEqual(app.dashboard_panel_index, 1)
+                self.assertEqual(app.main_view_mode, "incidents")
+
+    async def test_right_click_leaves_the_search_box(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("slash", "x")
+            await pilot.click("#dashboard", offset=(5, 5), button=3)
+            await self.settle(pilot)
+            self.assertIsNone(app.prompt)
+            self.assertEqual(app.dashboard_panel_index, 1)
+
+    async def test_left_click_selects_a_panel_without_changing_view(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.click("#dashboard", offset=(5, 5))
+            await self.settle(pilot)
+            self.assertEqual((app.panel_focus, app.dashboard_panel_index), ("dashboard", 0))
+            await pilot.click("#feed-table", offset=(10, 2))
+            await self.settle(pilot)
+            self.assertEqual(app.panel_focus, "main")
+
+    async def test_pager_and_wheel_turn_war_room_pages(self):
+        app = self.make_app()
+        app.threat_summary = "LOCAL KEYWORD ANALYSIS"
+        app.threat_summary_full = "\n".join(f"line {i}" for i in range(200))
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.click("#dashboard", offset=(5, 5), button=3)
+            await self.settle(pilot)
+            pager = app.query_one("#dashboard-pager")
+            self.assertTrue(pager.display)
+            page, total = app.dashboard_pages()
+            self.assertEqual(page, 0)
+            self.assertGreater(total, 1)
+            next_start = pager.regions[0][0]  # On page 1, Next is the first thing that can be clicked
+            await pilot.click("#dashboard-pager", offset=(next_start, 0))
+            await self.settle(pilot)
+            self.assertEqual(app.dashboard_pages()[0], 1)
+            prev_start = pager.regions[0][0]
+            await pilot.click("#dashboard-pager", offset=(prev_start, 0))
+            await self.settle(pilot)
+            self.assertEqual(app.dashboard_pages()[0], 0)
+            panel = app.query_one("#dashboard")
+            panel.last_turn = 0
+            panel.turn(1)
+            panel.turn(1)  # A second event from the same wheel notch
+            await self.settle(pilot)
+            self.assertEqual(app.dashboard_pages()[0], 1)
+
+    async def test_new_briefing_is_clickable_and_pager_hides_where_nothing_pages(self):
+        app = self.make_app()
+        with mock.patch.object(app, "action_ai_refresh") as refresh:
+            async with app.run_test(size=(160, 45)) as pilot:
+                await self.settle(pilot)
+                self.assertFalse(app.query_one("#dashboard-pager").display)
+                await pilot.click("#dashboard", offset=(5, 5), button=3)
+                await self.settle(pilot)
+                pager = app.query_one("#dashboard-pager")
+                self.assertTrue(pager.display)
+                await pilot.click("#dashboard-pager", offset=(pager.regions[-1][0], 0))
+                await self.settle(pilot)
+                refresh.assert_called_once()
+
+    async def test_view_buttons_match_the_keys(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+                await pilot.click("#act-open")
+                await self.settle(pilot)
+                browser.assert_called_once_with(app.selected_alert()["url"])
+            await pilot.click("#act-cve")
+            await self.settle(pilot)
+            self.assertIsInstance(app.screen, CveCard)
+            await app.workers.wait_for_complete()
+            await self.settle(pilot)
+            await pilot.click("#cve-close")
+            await self.settle(pilot)
+            self.assertNotIsInstance(app.screen, CveCard)
+
+    async def test_selected_row_keeps_its_cell_colors(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            self.assertEqual(app.query_one("#feed-table").cursor_foreground_priority, "renderable")
+
+    async def test_pager_labels_fit_a_narrow_panel(self):
+        app = self.make_app()
+        async with app.run_test(size=(120, 45)) as pilot:
+            await self.settle(pilot)
+            app.threat_summary = "LOCAL KEYWORD ANALYSIS"
+            app.threat_summary_full = "\n".join(f"line {i}" for i in range(200))
+            await pilot.click("#dashboard", offset=(5, 5), button=3)
+            await self.settle(pilot)
+            pager = app.query_one("#dashboard-pager")
+            self.assertLessEqual(pager.render().cell_length, pager.size.width)
+
+    async def test_help_closes_by_mouse(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("h")
+            await self.settle(pilot)
+            await pilot.click("#help-close")
+            await self.settle(pilot)
+            self.assertEqual(app.screen_stack[-1].__class__.__name__, "Screen")
+
     async def test_clicking_outside_a_card_closes_it_and_buttons_work(self):
         app = self.make_app()
         async with app.run_test(size=(160, 45)) as pilot:

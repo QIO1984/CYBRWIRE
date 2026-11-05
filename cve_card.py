@@ -10,7 +10,9 @@ from typing import List
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from widgets import Card
+from textual.containers import Horizontal
+
+from widgets import Card, CardButton
 from textual.widgets import Static
 
 import cve_intel
@@ -36,6 +38,7 @@ class CveCard(Card):
 
     DEFAULT_CSS = """
     CveCard { align: center middle; }
+    #cve-buttons { height: 1; margin-top: 1; }
     #cve-card-scroll {
         width: 94; max-width: 100%; height: auto; max-height: 90%;
         padding: 1 2; border: round $primary; background: $background;
@@ -64,6 +67,12 @@ class CveCard(Card):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="cve-card-scroll"):
             yield Static(id="cve-card")
+            with Horizontal(id="cve-buttons"):
+                yield CardButton("◀ Prev", id="cve-prev")
+                yield CardButton("Next ▶", id="cve-next")
+                yield CardButton("Open on NVD", id="cve-nvd")
+                yield CardButton("Exploit link", id="cve-exploit")
+                yield CardButton("Close", id="cve-close")
 
     def on_mount(self) -> None:
         self.query_one("#cve-card-scroll").focus()
@@ -79,8 +88,19 @@ class CveCard(Card):
         if cve == self.cve:
             self.redraw()
 
+    def on_button_pressed(self, event) -> None:
+        event.stop()
+        actions = {"cve-prev": lambda: self.action_step(-1), "cve-next": lambda: self.action_step(1),
+                   "cve-nvd": self.action_open_nvd, "cve-exploit": self.action_open_exploit, "cve-close": self.action_close}
+        actions[event.button.id]()
+
     def redraw(self) -> None:
         self.query_one("#cve-card", Static).update(self.render_card())
+        many = len(self.cves) > 1
+        self.query_one("#cve-prev").display = many
+        self.query_one("#cve-next").display = many
+        detail = self.app.nvd.get(self.cve) or {}
+        self.query_one("#cve-exploit").display = bool(detail.get("exploits"))
         self.query_one("#cve-card-scroll").border_subtitle = self.hints()
 
     def render_card(self) -> Text:

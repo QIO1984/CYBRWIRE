@@ -7,7 +7,7 @@ picks with Shift+K in the app, or under the `ai:` section of usrwire.yaml:
     ai:
       provider: "anthropic"   # anthropic | gemini | openai | openrouter | ollama | openai_compatible
       api_key: "..."          # not needed for ollama
-      model: ""               # blank = provider default below
+      model: "..."            # required: the model to use
       base_url: ""            # only for ollama / openai_compatible overrides
       auto_briefing: false    # true = generate a briefing at every launch (costs one call)
 """
@@ -24,14 +24,16 @@ RETRIES = 2
 RETRY_STATUSES = {429, 500, 502, 503, 504, 529}  # Overloaded / rate limited - usually temporary
 
 PROVIDERS = {
-    # name: (default model, default base URL)
-    "anthropic": ("claude-opus-5-5", None),
-    "gemini": ("gemini-flash-latest", "https://generativelanguage.googleapis.com/v1beta"),
-    "openai": (None, "https://api.openai.com/v1"),
-    "openrouter": (None, "https://openrouter.ai/api/v1"),
-    "ollama": (None, "http://localhost:11434/v1"),
-    "openai_compatible": (None, None),
+    # name: default base URL. Nobody gets a default model: the user chooses what they pay for.
+    "anthropic": None,
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "ollama": "http://localhost:11434/v1",
+    "openai_compatible": None,
 }
+MODEL_EXAMPLES = {"anthropic": "claude-sonnet-5-5", "gemini": "gemini-flash-latest", "openrouter": "provider/model-id",
+                  "ollama": "llama3.1"}
 
 # Claude models that accept server-side refusal fallbacks
 ANTHROPIC_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
@@ -53,7 +55,7 @@ class AIError(Exception):
 def describe(settings: Dict[str, Any]) -> str:
     """Short label such as 'anthropic / claude-opus-5-5'"""
     provider = settings.get("provider", "")
-    model = settings.get("model") or PROVIDERS.get(provider, (None, None))[0] or "?"
+    model = settings.get("model") or "no model chosen"
     return f"{provider} / {model}"
 
 
@@ -61,16 +63,16 @@ def configuration_problem(settings: Dict[str, Any]) -> Optional[str]:
     """Return a reason the AI settings can't work, or None if they look usable"""
     provider = settings.get("provider")
     if not provider:
-        return "No AI provider chosen. Press Shift+K to pick one"
+        return "No AI provider chosen"
     if provider not in PROVIDERS:
         return f"Unknown AI provider '{provider}'. Use one of: {', '.join(PROVIDERS)}"
-    default_model, default_url = PROVIDERS[provider]
-    if not (settings.get("model") or default_model):
-        return f"Press Shift+K to set a model for provider '{provider}'"
+    default_url = PROVIDERS[provider]
+    if not settings.get("model"):
+        return f"Choose a model for provider '{provider}'"
     if provider not in ("ollama",) and not settings.get("api_key"):
-        return f"Press Shift+K to add the key for provider '{provider}'"
+        return f"Add the key for provider '{provider}'"
     if not (settings.get("base_url") or default_url) and provider != "anthropic":
-        return f"Press Shift+K to set the server URL for provider '{provider}'"
+        return f"Set the server URL for provider '{provider}'"
     return None
 
 
@@ -81,8 +83,8 @@ async def generate(settings: Dict[str, Any], system: str, prompt: str) -> str:
         raise AIError(problem)
 
     provider = settings["provider"]
-    default_model, default_url = PROVIDERS[provider]
-    model = settings.get("model") or default_model
+    default_url = PROVIDERS[provider]
+    model = settings["model"]
     base_url = (settings.get("base_url") or default_url or "").rstrip("/")
     api_key = settings.get("api_key", "")
 

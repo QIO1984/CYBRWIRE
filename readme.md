@@ -152,9 +152,24 @@ Your data age, display mode, theme and filters are saved in `cybrwire_state.json
 
 The War Room panel (`tab`, then `v`, or just press `g`) shows a briefing written by the AI provider you choose: bottom line, priority actions, active threats, notable vulnerabilities, and a watch list, based on the alerts in your current data window. Press `a` on any alert for a short explanation of it.
 
-Press `Shift+K` to choose a provider, set its model if it needs one, and add its key. Each provider keeps its own key, so switching never sends one provider's key to another.
+Press `Shift+K` to choose a provider and model, then add its key. AI stays off until all of them are set, because there is no default model: you choose what you pay for. OpenAI-compatible servers also need a URL. Ollama runs models on your own machine, so no alert data leaves it.
 
-Anthropic and Gemini have a default model. OpenAI, OpenRouter, Ollama and OpenAI-compatible servers need a model ID, and compatible servers need a URL. Ollama runs models on your own machine, so no alert data leaves it. One provider is active at a time.
+You can keep a Primary and an Alternate provider and model, and switch between them in the card with `a` or a click. Each provider keeps its own key, so switching never sends one provider's key to another.
+
+## Keyboard or Mouse
+
+Everything for reading and moving around works both ways, so you only need the keyboard to type a search or a key.
+
+| Do this | Keyboard | Mouse |
+|---|---|---|
+| Choose a panel | `Tab` | Click it |
+| Next view in that panel | `v` | Right-click it |
+| Move through a list | `↑` `↓` `←` `→` | Wheel, or drag the scrollbar |
+| Open a row | `Enter` | Click the selected row, or the Open button |
+| Turn War Room and Feed Status pages | `←` `→` | Wheel, or Prev and Next under the panel |
+| Commands in the footer | Their keys | Click them |
+
+Some terminals keep right-click for their own menu. If yours does, look for a setting that passes it to the application.
 
 ## API Keys
 

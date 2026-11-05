@@ -40,7 +40,7 @@ from keystore import KEYCHAIN, SLOTS, KeyStore  # noqa: E402
 SIZE = (150, 46)
 FIREFOX_ATTEMPTS = 3
 WATCH_TERMS = ["Fortinet", "Ivanti", "Citrix*", "Cisco", "ransomware"]
-SAMPLE_KEYS = {"virustotal_api_key": "sample000000000000000a1b2", "abuse_ch_api_key": "sample000000000000000c3d4"}
+SAMPLE_KEYS = {"anthropic_api_key": "sample000000000000000e5f6", "virustotal_api_key": "sample000000000000000a1b2", "abuse_ch_api_key": "sample000000000000000c3d4"}
 
 
 class SampleKeychain:
@@ -57,7 +57,7 @@ def neutralize_config():
     cfg.keys = KeyStore(WORK, backend=SampleKeychain(), env={})
     for slot in SLOTS:
         cfg.set_key_value(slot.id, None)
-    cfg.choose_ai("anthropic")
+    cfg.ai.clear()
     cfg.watchlist[:] = []
 
     async def no_ai(*_args, **_kwargs):
@@ -86,6 +86,8 @@ async def main(output):
     app = cybrwire.CybrWireApp(recency=48)
     for term in WATCH_TERMS:
         app.watchlist.toggle(term)
+    app.set_ai_profile(0, "anthropic", "claude-sonnet-5-5", "")
+    app.set_ai_profile(1, "openrouter", "provider/model-id", "")
     os.makedirs(WORK + "/svg", exist_ok=True)
 
     async def load():
@@ -163,6 +165,7 @@ async def main(output):
             await pilot.press("escape")
 
         show_sample_keys()
+        app.key_changed("anthropic_api_key")
         await pilot.press("K")
         await pilot.pause(0.3)
         await snap("key_card", synthwave)
