@@ -17,6 +17,7 @@ dependencies = [
     "textual",
     "anthropic",
     "keyring",
+    "tzdata",
 ]
 
 [project.optional-dependencies]

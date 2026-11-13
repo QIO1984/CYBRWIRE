@@ -30,6 +30,13 @@
 # ai:
 #   auto_briefing: false
 
+# WORLD CLOCK: your local zone (TZ in the environment wins) and the reference cities on the line under
+# the title. Zone names are from the tz database, like Europe/Paris. Press z in the app to hide it.
+# timezone: America/New_York
+# clocks:
+#   - "NYC: America/New_York"
+#   - "TYO: Asia/Tokyo"
+
 # YOUR OWN FEEDS: type is rss, json or txt (or status, for a service's status page, with kind outage).
 # kind decides where items appear: advisory, news (the default), ransomware, indicators or outage.
 # If a feed needs a key, name how it is sent and the key card gets a row for it:

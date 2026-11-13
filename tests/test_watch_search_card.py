@@ -795,6 +795,22 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
                 await self.settle(pilot)
                 self.assertEqual(app.sound, "pc")
 
+    async def test_world_clock_shows_and_z_hides_it_and_remembers(self):
+        app = self.make_app()
+        async with app.run_test(size=(80, 30)) as pilot:
+            await self.settle(pilot)
+            clock = app.query_one(cybrwire.WorldClock)
+            self.assertTrue(clock.display)
+            self.assertIn("LOC ", clock.shown[0])
+            self.assertIn("TYO ", clock.shown[0])
+            self.assertLessEqual(len(clock.shown[0]), clock.size.width)  # Squeezed to fit, not cut off
+            await pilot.press("z")
+            self.assertFalse(clock.display)
+            self.assertFalse(cybrwire.STATE.settings["world_clock"])
+            await pilot.press("z")
+            self.assertTrue(clock.display)
+            self.assertTrue(cybrwire.STATE.settings["world_clock"])
+
     async def test_sound_cycles_saves_and_stays_off_by_default(self):
         app = self.make_app()
         with mock.patch.object(cybrwire.sound, "play") as play:

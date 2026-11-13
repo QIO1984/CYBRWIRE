@@ -24,6 +24,7 @@ from . import paths
 from .config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
 from .keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
 from .links import open_link
+from . import clocks
 from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, parse_metasploit, parse_status, fetch_doomsday_seconds
 from .incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 from . import cve_intel
@@ -340,6 +341,7 @@ class HelpScreen(Screen):
         help_text.append("│  w              Watchlist Only - Show only items matching your watchlist (marked ★)\n", style=color)
         help_text.append("│  Shift+W        Watchlist Card - See all terms and their hits, add or remove them\n", style=color)
         help_text.append("│  L              Live Wire - Jump to what's on the top bar (or click the bar)\n", style=color)
+        help_text.append("│  Z              World Clock - Show or hide your time and reference cities (see readme to change them)\n", style=color)
         help_text.append("│  B              Alert Sound - Off, PC speaker, teletype bell, modem chirp or terminal bell\n", style=color)
         help_text.append("│  U              Group Duplicates - Merge the same story from several feeds (marked +N)\n", style=color)
         help_text.append("│  I              CVE Card - CVSS, EPSS, KEV and exploit details for the selected item\n", style=color)
@@ -518,6 +520,37 @@ class LoadingScreen(Screen):
         # Build content - ASCII art + stacked messages
         content = f"{art_text}\n\n{messages_text}"
         self.query_one("#loading-content", Static).update(content)
+
+class WorldClock(Static):
+    """Your time and a few reference cities, one line under the header (z shows or hides it)"""
+
+    DEFAULT_CSS = """
+    WorldClock {
+        height: 1;
+        padding: 0 1;
+    }
+    """
+
+    shown = None
+
+    def on_mount(self) -> None:
+        self.local = clocks.local_zone(CONFIG.timezone)
+        self.zones = clocks.parse_clocks(CONFIG.clocks)
+        self.set_interval(1.0, self.tick)
+        self.tick()
+
+    def on_resize(self, event) -> None:
+        self.tick()  # The line is squeezed to the width, which isn't known until the window is laid out
+
+    def tick(self) -> None:
+        """Redraw only when the minute or the colours change"""
+        app = self.app
+        text = clocks.render(datetime.now(timezone.utc), self.local, self.zones, app.palette, max(0, self.size.width - 2))
+        key = (text.plain, app.palette.accent, app.palette.text)
+        if key != self.shown:
+            self.shown = key
+            self.update(text)
+
 
 class StyledHeader(Header):
     """Custom header that supports cold war mode styling"""
@@ -731,6 +764,7 @@ class CybrWireApp(App):
         ("W", "edit_watchlist", "Edit Watchlist"),
         ("l", "jump_to_wire", "Go To Live Wire Alert"),
         ("b", "cycle_sound", "Alert Sound"),
+        ("z", "toggle_clocks", "World Clock"),
         ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
@@ -770,6 +804,7 @@ class CybrWireApp(App):
         self.last_arrivals = []
         self.feed_cache = {}  # Feed name -> (when fetched, parsed items), for slow-moving lists
         self.sound = saved.get("sound", sound.OFF)
+        self.show_clocks = saved.get("world_clock", True)
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
         self.feed_at_top = False    # Return to the first row at the next redraw
@@ -864,6 +899,7 @@ class CybrWireApp(App):
             "notifications_started": STATE.settings.get("notifications_started", False),
             "ai": STATE.settings.get("ai"),
             "sound": self.sound,
+            "world_clock": self.show_clocks,
         }
         STATE.save()
     
@@ -1180,6 +1216,7 @@ class CybrWireApp(App):
     def on_mount(self) -> None:
         """Show loading screen then start app"""
         self.apply_theme()
+        self.query_one(WorldClock).display = self.show_clocks
         self.push_screen(LoadingScreen(self.palette))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -1229,6 +1266,7 @@ class CybrWireApp(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield StyledHeader(show_clock=True, icon="◆")
+        yield WorldClock(id="worldclock")
         yield LiveWirePanel(id="ticker")
         
         # Always create both layouts, use CSS to control visibility
@@ -1488,6 +1526,13 @@ class CybrWireApp(App):
     def sound_label(self):
         return sound.label(self.sound)
     
+    def action_toggle_clocks(self):
+        """Show or hide the world clock line"""
+        self.show_clocks = not self.show_clocks
+        self.query_one(WorldClock).display = self.show_clocks
+        self.save_settings()
+        self.notify(f"World clock: {'on' if self.show_clocks else 'off'}", timeout=2)
+
     def action_cycle_sound(self):
         """Off, or one of the alert sounds. Each one plays when chosen, so you can hear it."""
         self.sound = sound.next_tone(self.sound)

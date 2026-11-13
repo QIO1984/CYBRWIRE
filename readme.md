@@ -199,9 +199,23 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `a` | Explain the selected alert with AI |
 | `g` | Generate a fresh AI briefing (War Room) |
 | `e` | Re-enable disabled feeds |
+| `z` | Show or hide the world clock |
 | `q` | Quit |
 
 Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
+
+## World Clock
+
+A line under the title shows your local time and a few reference cities (New York, Los Angeles, London, Rome, St Petersburg, Tokyo). `+1` or `-1` marks a city that is on a different calendar day from you. Press `z` to hide or show it.
+
+- **Your zone** comes from the `TZ` setting (for Docker, add `TZ=America/New_York` or similar to `cybrwire.env`), or `timezone:` in `usrwire.yaml`, or else your computer's own zone.
+- **Your own cities:** add a `clocks:` list to `usrwire.yaml` (names are from the [tz database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)):
+
+```yaml
+clocks:
+  - "NYC: America/New_York"
+  - "SYD: Australia/Sydney"
+```
 
 ## AI Briefings
 

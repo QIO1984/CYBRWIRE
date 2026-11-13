@@ -104,6 +104,8 @@ class Config:
     ai: Dict[str, Any] = field(default_factory=dict)
     watchlist: List[str] = field(default_factory=list)
     notifications: Dict[str, Any] = field(default_factory=dict)
+    clocks: Any = None                 # Reference cities for the world clock (see clocks.py)
+    timezone: Optional[str] = None     # Your local zone, if TZ isn't set
     keys: Optional[KeyStore] = None
     key_sources: Dict[str, str] = field(default_factory=dict)  # slot id -> where its value came from
     ai_keys: Dict[str, str] = field(default_factory=dict)      # slot id -> key, one per AI provider
@@ -286,6 +288,10 @@ def load_config() -> Config:
     # Same precedence as keys: local values win. False and [] are real settings here.
     for name in ("usrwire.yaml", "cybrwire_local.yaml"):
         config.notifications.update(files[name].get("notifications") or {})
+
+    for name in ("usrwire.yaml", "cybrwire_local.yaml"):
+        config.clocks = files[name].get("clocks") or config.clocks
+        config.timezone = files[name].get("timezone") or config.timezone
 
     # Keys found in the YAML above are replaced by whatever outranks them in the key store
     config.keys = KeyStore(APP_DIR)
