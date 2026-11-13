@@ -24,6 +24,7 @@ KEV_DETAILS = {}
 EUVD_EXPLOITED = {}    # CVE -> when ENISA says exploitation began
 CIRCL_EXPLOITED = set()  # CVEs with a reported sighting of exploitation
 CIRCL_POC = set()        # CVEs with public exploit code reported
+METASPLOIT = set()       # CVEs that have a Metasploit exploit module
 MAX_SUMMARY_LEN = 300
 
 # Marketing, events and other non-intel posts. Only applied to RSS items with
@@ -167,6 +168,21 @@ def parse_circl(data, source_name, source_file):
                 CIRCL_POC.add(cve)
             elif sighting.get("type") == "exploited":
                 CIRCL_EXPLOITED.add(cve)
+    return []
+
+
+def parse_metasploit(data, source_name, source_file):
+    """
+    Metasploit's module list (Rapid7, BSD-3-Clause). A module is public, working exploit code, so
+    like CIRCL this only raises stories that mention the CVE. It adds no rows of its own.
+    """
+    for module in (data.values() if isinstance(data, dict) else data):
+        if not isinstance(module, dict) or module.get("type") != "exploit":
+            continue
+        for ref in module.get("references") or []:
+            ref = str(ref).upper()
+            if ref.startswith("CVE-"):
+                METASPLOIT.add(ref)
     return []
 
 

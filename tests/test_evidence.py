@@ -36,7 +36,7 @@ class Base(unittest.TestCase):
             patcher = mock.patch.dict(store, clear=True)
             patcher.start()
             self.addCleanup(patcher.stop)
-        for name in ("CIRCL_EXPLOITED", "CIRCL_POC"):
+        for name in ("CIRCL_EXPLOITED", "CIRCL_POC", "METASPLOIT"):
             patcher = mock.patch.object(feeds, name, set())
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -192,6 +192,24 @@ class ParserTests(Base):
         self.assertEqual(rows, [])
         self.assertEqual(feeds.CIRCL_EXPLOITED, {"CVE-2026-1001"})
         self.assertEqual(feeds.CIRCL_POC, {"CVE-2026-1002"})
+
+    def test_metasploit_modules_are_public_exploit_code(self):
+        rows = feeds.parse_metasploit({
+            "exploit/a": {"type": "exploit", "references": ["CVE-2026-3001", "URL-http://x", "cve-2026-3002"]},
+            "auxiliary/b": {"type": "auxiliary", "references": ["CVE-2026-3003"]},
+            "payload/c": {"type": "payload", "references": ["CVE-2026-3004"]},
+            "exploit/d": {"type": "exploit", "references": None},
+        }, "Metasploit Modules", "curated")
+        self.assertEqual(rows, [])
+        self.assertEqual(feeds.METASPLOIT, {"CVE-2026-3001", "CVE-2026-3002"})
+
+    def test_metasploit_module_counts_like_public_exploit_code(self):
+        feeds.METASPLOIT.add("CVE-2026-3001")
+        cve_intel.EPSS["CVE-2026-3001"] = (0.2, 0.9)
+        ev = assess_cve("CVE-2026-3001", NOW)
+        self.assertEqual(ev.tier, LIKELY)
+        self.assertIn("Metasploit module", ev.reasons)
+        self.assertIsNone(assess_cve("CVE-2026-3009", NOW))  # No module, no signal
 
     def test_euvd(self):
         rows = feeds.parse_euvd([{"id": "EUVD-1", "aliases": "GHSA-x\nCVE-2024-27834\n", "description": "Bug <b>here</b>",

@@ -105,10 +105,10 @@ def assess_cve(cve: str, now: datetime) -> Optional[Evidence]:
         score += 50
         reasons.append("CIRCL sighting")
 
-    poc = cve in feeds.CIRCL_POC
+    poc = cve in feeds.CIRCL_POC or cve in feeds.METASPLOIT
     if poc:
         score += 15
-        reasons.append("exploit public")
+        reasons.append("Metasploit module" if cve in feeds.METASPLOIT else "exploit public")
 
     epss = (cve_intel.EPSS.get(cve) or (0, 0))[0]
     if epss >= EPSS_HIGH:
@@ -194,7 +194,7 @@ def _severity(alert: Dict) -> str:
         if ev.tier == CONFIRMED:
             return "critical" if ev.recent else "exploit"
         return "zeroday" if ev.zero_day else "exploit"
-    if alert["source"] in EXPLOIT_SOURCES or any(m.upper() in feeds.CIRCL_POC for m in CVE_RE.findall(alert["title"])):
+    if alert["source"] in EXPLOIT_SOURCES or any(m.upper() in feeds.CIRCL_POC or m.upper() in feeds.METASPLOIT for m in CVE_RE.findall(alert["title"])):
         return "exploit"
     # With no evidence, only who is behind it can still be read from a headline
     label = classify(alert["title"])

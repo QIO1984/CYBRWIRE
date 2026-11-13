@@ -24,7 +24,7 @@ from . import ai
 from . import paths
 from .config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
 from .keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
-from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, fetch_doomsday_seconds
+from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, parse_metasploit, fetch_doomsday_seconds
 from .incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 from . import cve_intel
 from .cve_card import CveCard
@@ -1282,7 +1282,8 @@ class CybrWireApp(App):
                    "threatfox": lambda r, n, f: parse_threatfox(r.json(), n, f),
                    "urlhaus": lambda r, n, f: parse_urlhaus(r.json(), n, f),
                    "circl": lambda r, n, f: parse_circl(r.json(), n, f),
-                   "euvd": lambda r, n, f: parse_euvd(r.json(), n, f)}
+                   "euvd": lambda r, n, f: parse_euvd(r.json(), n, f),
+                   "metasploit": lambda r, n, f: parse_metasploit(r.json(), n, f)}
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
         self.wire.begin_sweep(len(all_sources))
 

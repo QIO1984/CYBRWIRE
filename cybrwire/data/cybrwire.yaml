@@ -260,6 +260,12 @@ curated:
     type: "circl"
     kind: "advisory"
     interval_minutes: 60
+  # Public exploit code: Metasploit's module list (about 11 MB, so once a day)
+  - name: "Metasploit Modules"
+    url: "https://raw.githubusercontent.com/rapid7/metasploit-framework/master/db/modules_metadata_base.json"
+    type: "metasploit"
+    kind: "advisory"
+    interval_minutes: 1440
   - name: "GreyNoise Blog"
     url: "https://www.greynoise.io/blog/rss.xml"
     type: "rss"

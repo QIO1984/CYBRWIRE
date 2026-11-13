@@ -229,6 +229,8 @@ The default **Alerts** filter (`f`) shows those, plus watchlist hits, new breach
 
 Exploitation and public-exploit sightings come from [CIRCL's Vulnerability-Lookup](https://vulnerability.circl.lu), a free public service run by the Computer Incident Response Center Luxembourg. Thank you to CIRCL for running it. CybrWire asks for recent sightings only, once an hour.
 
+Public exploit code is also detected from the [Metasploit Framework](https://github.com/rapid7/metasploit-framework)'s module list (Rapid7, BSD 3-Clause licence). CybrWire downloads that one file (about 11 MB) once a day and uses it only to mark CVEs that have a working public exploit module.
+
 Feeds are checked every 5 minutes, so an alert can't appear sooner than its source publishes it and the next check finds it.
 
 Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for something newly confirmed, a reported zero-day or a watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
