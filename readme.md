@@ -149,7 +149,7 @@ pip install "cybrwire[web]"
 cybrwire-web                      # then open http://127.0.0.1:8000
 ```
 
-Or in a container (data is kept in the `cybrwire-data` volume). The container listens on the network, so it **requires a password** and won't start without one:
+Or in a container (data is kept in the `cybrwire-data` volume; with Compose the volume is named after your folder, e.g. `cybrwire-src_cybrwire-data`, and is not inside the repo folder). The container listens on the network, so it **requires a password** and won't start without one:
 
 ```bash
 docker build -t cybrwire .
