@@ -187,10 +187,6 @@ curated:
     type: "txt"
     kind: "indicators"
     interval_minutes: 60
-  - name: "OpenPhish"
-    url: "https://openphish.com/feed.txt"
-    type: "txt"
-    kind: "indicators"
   - name: "Spamhaus Drop"
     url: "https://www.spamhaus.org/drop/drop.txt"
     type: "txt"
