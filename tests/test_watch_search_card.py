@@ -811,6 +811,21 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(clock.display)
             self.assertTrue(cybrwire.STATE.settings["world_clock"])
 
+    async def test_the_live_wire_dot_breathes_between_checks(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 30)) as pilot:
+            await self.settle(pilot)
+            panel = app.query_one(cybrwire.LiveWirePanel)
+            app.wire.sweeping = False
+            far = app.wire.last_check_clock + 1000  # Long after any check
+            styles = {str(panel.title_text(far + t).style) for t in (0.0, 0.6, 1.3, 1.9, 2.5)}
+            self.assertEqual(len(styles), 2)  # Bright and dim, alternating
+            self.assertTrue(any(s.startswith("dim ") for s in styles))
+            self.assertTrue(any(s.startswith("bold ") for s in styles))
+            self.assertTrue(panel.title_text(far).plain.lstrip().startswith("●"))  # Always a filled dot: it fades, not disappears
+            just_checked = app.wire.last_check_clock + 0.5
+            self.assertEqual(str(panel.title_text(just_checked).style), f"bold {app.palette.accent}")
+
     async def test_world_clock_is_centered(self):
         app = self.make_app()
         async with app.run_test(size=(160, 30)) as pilot:

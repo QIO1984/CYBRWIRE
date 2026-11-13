@@ -21,7 +21,7 @@ class Palette:
 
 class ClockTests(unittest.TestCase):
     def test_defaults_cover_the_reference_cities(self):
-        self.assertEqual([label for label, _ in clocks.parse_clocks(None)], ["NYC", "LAX", "LON", "ROM", "SPB", "TYO"])
+        self.assertEqual([label for label, _ in clocks.parse_clocks(None)], ["LAX", "NYC", "LON", "ROM", "SPB", "TYO"])
 
     def test_render_shows_each_city_and_marks_a_different_day(self):
         text = clocks.render(NOW, ZoneInfo("America/New_York"), clocks.parse_clocks(None), Palette()).plain
@@ -56,6 +56,39 @@ class ClockTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("TZ", None)
             self.assertIsNotNone(clocks.local_zone(None))
+
+
+class CatalogTests(unittest.TestCase):
+    def test_every_catalogue_city_is_a_real_zone_with_a_unique_code(self):
+        codes = [c for c, _, _ in clocks.CATALOG]
+        self.assertEqual(len(codes), len(set(codes)))
+        for code, zone, _ in clocks.CATALOG:
+            self.assertIsNotNone(clocks._zone(zone), f"{code}: {zone}")
+        self.assertEqual(len(clocks.DEFAULT_CLOCKS), 6)
+
+    def test_the_example_files_list_exactly_the_catalogue(self):
+        import re
+        from cybrwire import paths
+        want = {f"{c}: {z}" for c, z, _ in clocks.CATALOG}
+        yaml_text = open(os.path.join(paths.DATA_DIR, "usrwire.example.yaml")).read()
+        self.assertEqual(set(re.findall(r'^#   - "([A-Z]{3}: [^"]+)"', yaml_text, re.M)), want)
+        marked = set(re.findall(r'"([A-Z]{3}): [^"]+"\s+# UTC\S*\s+\(default\)', yaml_text))
+        self.assertEqual(marked, {c for c, _ in clocks.DEFAULT_CLOCKS})
+        env_text = open(os.path.join(os.path.dirname(paths.DATA_DIR), "..", "cybrwire.env.example")).read()
+        menu = set(re.findall(r"\b([A-Z]{3}:[A-Za-z_/]+)", env_text.split("to copy from:")[1].split("# Keys")[0]))
+        self.assertEqual(menu, {f"{c}:{z}" for c, z, _ in clocks.CATALOG})
+        line = next(l for l in env_text.splitlines() if l.startswith("# CYBRWIRE_CLOCKS="))
+        self.assertEqual(line.split("=", 1)[1], ",".join(f"{c}:{z}" for c, z in clocks.DEFAULT_CLOCKS))
+
+    def test_the_environment_setting_beats_the_yaml_and_junk_falls_back(self):
+        with mock.patch.dict(os.environ, {"CYBRWIRE_CLOCKS": " SYD:Australia/Sydney , DXB:Asia/Dubai ,"}):
+            self.assertEqual(clocks.from_env(), ["SYD:Australia/Sydney", "DXB:Asia/Dubai"])
+            zones = clocks.parse_clocks(clocks.from_env() or ["NYC: America/New_York"])
+            self.assertEqual([label for label, _ in zones], ["SYD", "DXB"])
+        with mock.patch.dict(os.environ, {"CYBRWIRE_CLOCKS": " , "}):
+            self.assertIsNone(clocks.from_env())
+        with mock.patch.dict(os.environ, {"CYBRWIRE_CLOCKS": "NOPE:Not/AZone"}):
+            self.assertEqual(len(clocks.parse_clocks(clocks.from_env())), 6)  # Nothing usable: the defaults
 
 
 if __name__ == "__main__":

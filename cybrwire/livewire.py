@@ -36,6 +36,7 @@ CLAIM_RE = re.compile(r"^RANSOMWARE VICTIM: .* \(([^)]+)\)")
 TYPE_RATE = 60            # Cold War: characters per second
 PULSE_SECONDS = 0.4       # Dot flip while a check runs
 SETTLE_SECONDS = 2        # Dot stays bright this long after a check
+IDLE_PULSE_SECONDS = 1.2  # Between checks the dot breathes: bright, then dim, so the wire feels alive
 SOUND_LABEL_WIDTH = 24    # Clickable end of the bottom border
 
 
@@ -233,7 +234,11 @@ class LiveWirePanel(Static):
             dot_style = f"bold {p.warn}"
         else:
             dot = "●"
-            dot_style = f"bold {p.accent}" if clock - wire.last_check_clock < SETTLE_SECONDS else p.good
+            if clock - wire.last_check_clock < SETTLE_SECONDS:
+                dot_style = f"bold {p.accent}"
+            else:
+                bright = int(clock / IDLE_PULSE_SECONDS) % 2 == 0
+                dot_style = f"bold {p.good}" if bright else f"dim {p.good}"
             if wire.last_check:
                 now = datetime.now(timezone.utc)
                 since = max(0, int((now - wire.last_check).total_seconds()))

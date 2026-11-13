@@ -119,7 +119,7 @@ pipx install git+https://github.com/QIO1984/CYBRWIRE.git
 cybrwire
 ```
 
-Upgrade later with `pipx upgrade cybrwire`.
+Upgrade later by running the install command again with `--force`: `pipx install --force git+https://github.com/QIO1984/CYBRWIRE.git`. (`pipx upgrade` compares version numbers, so it can miss changes made between releases.)
 
 Your settings (`usrwire.yaml`), keys file, saved state, history and log live in `~/.config/cybrwire`. Set `CYBRWIRE_HOME` to use another folder. The curated and community feed lists ship inside the package.
 
@@ -209,13 +209,16 @@ Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/
 A line under the title shows your local time and a few reference cities (New York, Los Angeles, London, Rome, St Petersburg, Tokyo). `+1` or `-1` marks a city that is on a different calendar day from you. Press `z` to hide or show it.
 
 - **Your zone** comes from the `TZ` setting (for Docker, add `TZ=America/New_York` or similar to `cybrwire.env`), or `timezone:` in `usrwire.yaml`, or else your computer's own zone.
-- **Your own cities:** add a `clocks:` list to `usrwire.yaml` (names are from the [tz database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)):
+- **The default cities** are Los Angeles, New York, London, Rome, St Petersburg and Tokyo. `usrwire.example.yaml` lists one prominent city for every time zone, from Honolulu to Auckland, with the defaults marked: uncomment `clocks:` and the lines you want, and only your list is used. Zone names come from the [tz database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones), so any city works:
 
 ```yaml
 clocks:
   - "NYC: America/New_York"
   - "SYD: Australia/Sydney"
 ```
+
+- **In Docker,** put the list on one line in `cybrwire.env` instead (it takes priority over `usrwire.yaml`): `CYBRWIRE_CLOCKS=NYC:America/New_York,SYD:Australia/Sydney`
+- Restart CybrWire after changing either one.
 
 ## AI Briefings
 

@@ -543,7 +543,7 @@ class WorldClock(Static):
 
     def on_mount(self) -> None:
         self.local = clocks.local_zone(CONFIG.timezone)
-        self.zones = clocks.parse_clocks(CONFIG.clocks)
+        self.zones = clocks.parse_clocks(clocks.from_env() or CONFIG.clocks)
         self.set_interval(1.0, self.tick)
         self.tick()
 

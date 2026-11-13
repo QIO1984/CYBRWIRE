@@ -18,11 +18,19 @@ from zoneinfo import ZoneInfo
 
 from rich.text import Text
 
-# St Petersburg shares Moscow's zone
-DEFAULT_CLOCKS: List[Tuple[str, str]] = [
-    ("NYC", "America/New_York"), ("LAX", "America/Los_Angeles"), ("LON", "Europe/London"),
-    ("ROM", "Europe/Rome"), ("SPB", "Europe/Moscow"), ("TYO", "Asia/Tokyo"),
+# One prominent city per time zone, west to east. The last field marks the ones shown by default.
+# (St Petersburg shares Moscow's zone.) The example config files list the same cities.
+CATALOG: List[Tuple[str, str, bool]] = [
+    ("HNL", "Pacific/Honolulu", False), ("ANC", "America/Anchorage", False), ("LAX", "America/Los_Angeles", True),
+    ("DEN", "America/Denver", False), ("CHI", "America/Chicago", False), ("NYC", "America/New_York", True),
+    ("SAO", "America/Sao_Paulo", False), ("UTC", "UTC", False), ("LON", "Europe/London", True),
+    ("ROM", "Europe/Rome", True), ("CAI", "Africa/Cairo", False), ("SPB", "Europe/Moscow", True),
+    ("THR", "Asia/Tehran", False), ("DXB", "Asia/Dubai", False), ("KHI", "Asia/Karachi", False),
+    ("DEL", "Asia/Kolkata", False), ("DAC", "Asia/Dhaka", False), ("BKK", "Asia/Bangkok", False),
+    ("SHA", "Asia/Shanghai", False), ("TYO", "Asia/Tokyo", True), ("SYD", "Australia/Sydney", False),
+    ("AKL", "Pacific/Auckland", False),
 ]
+DEFAULT_CLOCKS: List[Tuple[str, str]] = [(code, zone) for code, zone, shown in CATALOG if shown]
 
 
 def _zone(name: str) -> Optional[ZoneInfo]:
@@ -30,6 +38,12 @@ def _zone(name: str) -> Optional[ZoneInfo]:
         return ZoneInfo(str(name).strip())
     except Exception:  # Unknown name, or no zone database on this machine
         return None
+
+
+def from_env() -> Optional[List[str]]:
+    """CYBRWIRE_CLOCKS=NYC:America/New_York,TYO:Asia/Tokyo (for Docker, where editing usrwire.yaml is awkward)"""
+    parts = [p.strip() for p in os.environ.get("CYBRWIRE_CLOCKS", "").split(",") if p.strip()]
+    return parts or None
 
 
 def local_zone(configured: Optional[str] = None) -> tzinfo:

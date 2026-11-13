@@ -30,12 +30,37 @@
 # ai:
 #   auto_briefing: false
 
-# WORLD CLOCK: your local zone (TZ in the environment wins) and the reference cities on the line under
-# the title. Zone names are from the tz database, like Europe/Paris. Press z in the app to hide it.
+# WORLD CLOCK: the line under the title shows your local time and the cities below.
+# Your own zone: TZ in the environment wins, then this setting, then your computer's zone.
 # timezone: America/New_York
+#
+# To choose your own cities, uncomment 'clocks:' and the cities you want (one prominent city per time
+# zone, west to east). Only your list is used, so keep any default you still want. Any tz database
+# name works, like Europe/Paris. Leave it all commented to get the defaults. Restart after changing.
+#
 # clocks:
-#   - "NYC: America/New_York"
-#   - "TYO: Asia/Tokyo"
+#   - "HNL: Pacific/Honolulu"           # UTC-10
+#   - "ANC: America/Anchorage"          # UTC-9
+#   - "LAX: America/Los_Angeles"        # UTC-8  (default)
+#   - "DEN: America/Denver"             # UTC-7
+#   - "CHI: America/Chicago"            # UTC-6
+#   - "NYC: America/New_York"           # UTC-5  (default)
+#   - "SAO: America/Sao_Paulo"          # UTC-3
+#   - "UTC: UTC"                        # UTC
+#   - "LON: Europe/London"              # UTC  (default)
+#   - "ROM: Europe/Rome"                # UTC+1  (default)
+#   - "CAI: Africa/Cairo"               # UTC+2
+#   - "SPB: Europe/Moscow"              # UTC+3  (default)
+#   - "THR: Asia/Tehran"                # UTC+3:30
+#   - "DXB: Asia/Dubai"                 # UTC+4
+#   - "KHI: Asia/Karachi"               # UTC+5
+#   - "DEL: Asia/Kolkata"               # UTC+5:30
+#   - "DAC: Asia/Dhaka"                 # UTC+6
+#   - "BKK: Asia/Bangkok"               # UTC+7
+#   - "SHA: Asia/Shanghai"              # UTC+8
+#   - "TYO: Asia/Tokyo"                 # UTC+9  (default)
+#   - "SYD: Australia/Sydney"           # UTC+10
+#   - "AKL: Pacific/Auckland"           # UTC+12
 
 # YOUR OWN FEEDS: type is rss, json or txt (or status, for a service's status page, with kind outage).
 # kind decides where items appear: advisory, news (the default), ransomware, indicators or outage.
