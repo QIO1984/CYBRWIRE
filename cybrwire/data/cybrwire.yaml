@@ -10,14 +10,6 @@
 #   outage      - what is broken right now, from each service's own status page
 curated:
   # === GOVERNMENT & OFFICIAL SOURCES ===
-  - name: "ACSC Alerts"
-    url: "https://www.cyber.gov.au/rss/alerts"
-    type: "rss"
-    kind: "advisory"
-  - name: "ACSC Advisories"
-    url: "https://www.cyber.gov.au/rss/advisories"
-    type: "rss"
-    kind: "advisory"
   - name: "CERT-EU Advisories"
     url: "https://cert.europa.eu/publications/security-advisories-rss"
     type: "rss"

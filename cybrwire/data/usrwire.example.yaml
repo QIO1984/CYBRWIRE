@@ -57,3 +57,10 @@
 #     url: "https://api.example.com/threats.json"
 #     type: json
 #     key_param: key
+#
+# Feeds that are fine in a browser but turn away automated clients can be added here if they work for you.
+# Example: the Australian Cyber Security Centre, left out of the defaults because it never answered CybrWire.
+#   - name: "ACSC Alerts"
+#     url: "https://www.cyber.gov.au/rss/alerts"
+#     type: rss
+#     kind: advisory
