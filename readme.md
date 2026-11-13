@@ -149,17 +149,21 @@ pip install "cybrwire[web]"
 cybrwire-web                      # then open http://127.0.0.1:8000
 ```
 
-Or in a container (data is kept in the `cybrwire-data` volume):
+Or in a container (data is kept in the `cybrwire-data` volume). The container listens on the network, so it **requires a password** and won't start without one:
 
 ```bash
 docker build -t cybrwire .
-docker run --rm -p 127.0.0.1:8000:8000 -v cybrwire-data:/data cybrwire
+docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' \
+  -e CYBRWIRE_WEB_URL=http://YOUR-SERVER-IP:8000 -v cybrwire-data:/data cybrwire
 ```
 
-- **There is no login.** The page gives full control of the app, including your keys. Publish the port on `127.0.0.1` as above, or reach it over a private network such as Tailscale. Do not expose it to the internet.
+Your browser shows a sign-in box (user `cybrwire`, or whatever `CYBRWIRE_WEB_USER` is set to).
+
+- **The login is basic.** It is one shared password over plain http, so anyone who can watch your network traffic could read it. That is fine on a home LAN or over Tailscale (which encrypts). For anything wider, put an https reverse proxy in front. Never expose it to the internet as it is: the page gives full control of the app, including your keys.
+- **Locally** (`cybrwire-web` on `127.0.0.1`) the password is optional. Set `CYBRWIRE_WEB_PASSWORD` to require one anyway. On any other address the server refuses to start without it.
 - **Keys:** a container has no system keychain. Pass keys as environment variables (`-e CYBRWIRE_ANTHROPIC_API_KEY=...`, or `--env-file`), or add them with Shift+K, which saves them to a restricted file in the volume.
 - **Links:** `Enter` can't open your browser from inside a container; copy the address from the alert instead.
-- Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT` and `CYBRWIRE_WEB_URL` (if you reach it through another address).
+- Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT`, `CYBRWIRE_WEB_USER`, `CYBRWIRE_WEB_PASSWORD`, and `CYBRWIRE_WEB_URL` (the address your browser uses, if it isn't `http://HOST:PORT`).
 
 ### Keyboard Controls
 
