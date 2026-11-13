@@ -213,6 +213,10 @@ class CveCard(Card):
                     text.append("EXPLOIT ", style=f"bold {p.warn}")
                 text.append(r["url"] + "\n", style=f"underline {p.muted}")
 
+        heading("DATA FROM")
+        wrapped("Scores and details: NVD. This product uses the NVD API but is not endorsed or certified by the NVD.", p.muted)
+        wrapped("Exploit likelihood: FIRST EPSS (first.org/epss). Exploited lists: CISA KEV, ENISA, CIRCL, Metasploit.", p.muted)
+
         return text
 
     def hints(self) -> str:

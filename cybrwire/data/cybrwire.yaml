@@ -181,10 +181,12 @@ curated:
     url: "https://feeds.dshield.org/top10.txt"
     type: "txt"
     kind: "indicators"
+    interval_minutes: 60
   - name: "DShield Block"
     url: "https://feeds.dshield.org/block.txt"
     type: "txt"
     kind: "indicators"
+    interval_minutes: 60
   - name: "OpenPhish"
     url: "https://openphish.com/feed.txt"
     type: "txt"
@@ -193,6 +195,7 @@ curated:
     url: "https://www.spamhaus.org/drop/drop.txt"
     type: "txt"
     kind: "indicators"
+    interval_minutes: 360
 
   # === RANSOMWARE & APT TRACKING ===
   - name: "Ransomware.live"
@@ -205,6 +208,7 @@ curated:
     url: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt"
     type: "txt"
     kind: "indicators"
+    interval_minutes: 60
 
   # === SECURITY RESEARCH & ANALYSIS BLOGS ===
   - name: "Rapid7 Research"

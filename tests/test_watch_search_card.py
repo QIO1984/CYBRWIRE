@@ -883,6 +883,10 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
                              "Patch it.", "Auth bypass", "CWE-287", "ivanti endpoint", "EXPLOIT https://poc.test/b",
                              "IN YOUR FEEDS (1)", "1 of 2"):
                 self.assertIn(expected, card)
+            # NIST asks for this notice inside the application, and FIRST asks to be credited
+            flat = " ".join(card.split())
+            self.assertIn("This product uses the NVD API but is not endorsed or certified by the NVD.", flat)
+            self.assertIn("FIRST EPSS", flat)
             # Arrows go to the card, not the feed underneath
             row = app.query_one("#feed-table").cursor_row
             await pilot.press("right")

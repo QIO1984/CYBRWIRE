@@ -393,6 +393,28 @@ Query threat intelligence APIs directly from CybrWire:
 - `textual` – TUI framework
 - `anthropic` – Only used when the AI provider is `anthropic`
 
+## Data Sources and Credits
+
+CybrWire is MIT licensed, but the data it reads belongs to the people who publish it. Thank you to all of them. Nothing is redistributed: your copy fetches each source itself, and shows headlines, short summaries and links back to the original.
+
+| Source | What it gives CybrWire | Terms to know |
+|---|---|---|
+| [NVD](https://nvd.nist.gov) (NIST) | CVSS scores and descriptions | *This product uses the NVD API but is not endorsed or certified by the NVD.* |
+| [FIRST EPSS](https://www.first.org/epss) | Exploit likelihood | Free; FIRST asks that EPSS is credited |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | Known exploited vulnerabilities | US government data |
+| [ENISA EUVD](https://euvd.enisa.europa.eu) | Exploited vulnerabilities (EU) | |
+| [CIRCL Vulnerability-Lookup](https://vulnerability.circl.lu) | Exploitation sightings | See the Evidence section |
+| [Metasploit Framework](https://github.com/rapid7/metasploit-framework) (Rapid7) | Public exploit modules | BSD 3-Clause |
+| [Spamhaus DROP](https://www.spamhaus.org/drop/) | Hijacked network ranges | Credit to The Spamhaus Project; CybrWire fetches it every 6 hours (they ask for no more than hourly) |
+| [DShield / SANS ISC](https://isc.sans.edu) | Attacking and blocked IPs | CC BY-NC-SA 4.0: credit, non-commercial, don't resell the data |
+| [Have I Been Pwned](https://haveibeenpwned.com) | Recent data breaches | CC BY 4.0: data from haveibeenpwned.com |
+| [Ransomware.live](https://www.ransomware.live) | Ransomware victim claims | The free v2 API is for personal use; see their API PRO for business use |
+| [Bulletin of the Atomic Scientists](https://thebulletin.org/doomsday-clock/) | The Doomsday Clock setting | |
+
+The remaining sources are public blogs, advisories and news feeds. Please visit the originals and support them.
+
+**Using CybrWire at work?** Some free feeds limit business use (Ransomware.live's free API, DShield's non-commercial licence). Read each provider's terms, and remove or replace a feed in your own copy if it doesn't allow your use.
+
 ## License
 
 MIT License - See LICENSE file for details

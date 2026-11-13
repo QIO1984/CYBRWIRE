@@ -115,15 +115,22 @@ CONTENT_KINDS = [("all", "All"), ("advisory", "Advisories"), ("news", "News & Re
                  ("ransomware", "Ransomware"), ("indicators", "Indicators"), ("outage", "Outages")]
 
 
+BREACH_CHECK_SECONDS = 3600  # New breaches are added a few times a day at most
+_breaches_checked = None
+
+
 async def fetch_breaches():
-    """Fetch recent breaches from HaveIBeenPwned"""
-    global breach_list
+    """Fetch recent breaches from HaveIBeenPwned, at most once an hour"""
+    global breach_list, _breaches_checked
+    if _breaches_checked is not None and time.monotonic() - _breaches_checked < BREACH_CHECK_SECONDS:
+        return
     try:
         async with httpx.AsyncClient(headers={"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}, timeout=10) as c:
             r = await c.get("https://haveibeenpwned.com/api/v3/breaches")
             breaches = r.json()
             # Get the 7 most recently added breaches (sorted by AddedDate, not BreachDate)
             breach_list = sorted(breaches, key=lambda x: x.get("AddedDate", ""), reverse=True)[:7]
+            _breaches_checked = time.monotonic()
     except Exception as e:
         logging.error(f"Failed to fetch breaches: {e}")
 
