@@ -50,18 +50,36 @@ THREAT_KEYWORDS = [
 # Severity keywords, matched as whole words so "conti" doesn't match "continue"
 SEVERITY_RULES = [
     ("ransomware", re.compile(r"\b(ransom\w*|lockbit|conti|blackcat|alphv|akira|cl[o0]p|qilin|play ransomware|black basta|rhysida|medusa)\b")),
-    ("apt", re.compile(r"\b(apt\s?\d+|lazarus|kimsuky|sandworm|turla|volt typhoon|salt typhoon|\w+ typhoon|\w+ blizzard|"
-                       r"nation[- ]state|state[- ]sponsored|iran(ian)?|chin(a|ese)|russia(n)?|north korea(n)?|dprk)\b")),
+    ("apt", None),  # Needs two checks, see is_apt
     ("zeroday", re.compile(r"\b(zero[- ]day|0[- ]?day|wormable|in the wild|actively exploited|exploited in attacks|under active exploitation)\b")),
     ("exploit", re.compile(r"\b(exploit\w*|poc|proof[- ]of[- ]concept|rce|remote code execution|code injection|"
                            r"authentication bypass|privilege escalation)\b")),
 ]
 
 
+# A named group or "nation-state" is enough on its own. A country name only counts next to
+# hacking wording, otherwise police arrests and drone strikes read as APT activity.
+APT_GROUP = re.compile(
+    r"\b(apt\s?\d+|lazarus|kimsuky|sandworm|turla|gamaredon|mustang panda|charming kitten|muddywater|oilrig|"
+    r"fancy bear|cozy bear|(volt|salt|silk|flax|linen|violet|mulberry|granite) typhoon|"
+    r"(forest|midnight|seashell|star|aqua|cadet) blizzard|nation[- ]state|state[- ]sponsored)\b")
+APT_COUNTRY = re.compile(r"\b(iran(ian)?|chin(a|ese)|russia(n)?|north korea(n)?|dprk)\b")
+APT_CYBER = re.compile(
+    r"\b(cyber\w*|hack\w*|malware|espionage|spyware|backdoor|phishing|intrusions?|threat actors?|apt|ddos|"
+    r"state[- ]backed|breach\w*)\b")
+
+
+def is_apt(lower: str) -> bool:
+    return bool(APT_GROUP.search(lower) or (APT_COUNTRY.search(lower) and APT_CYBER.search(lower)))
+
+
 def classify(text: str) -> str:
     """Severity tag for free text: the first matching rule wins, otherwise info"""
     lower = text.lower()
-    return next((sev for sev, rule in SEVERITY_RULES if rule.search(lower)), "info")
+    for sev, rule in SEVERITY_RULES:
+        if (is_apt(lower) if sev == "apt" else rule.search(lower)):
+            return sev
+    return "info"
 
 
 def is_blog_post_content(title: str, summary: str, source_name: str = "") -> bool:
@@ -95,7 +113,7 @@ DOOMSDAY_PATTERN = re.compile(r"It is (?:now )?(\d+(?:\.\d+)?) (seconds|minutes)
 async def fetch_doomsday_seconds() -> int:
     """Read the current Doomsday Clock setting from the Bulletin's page description"""
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
-                                 headers={"User-Agent": "Mozilla/5.0 (CybrWire)"}) as c:
+                                 headers={"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}) as c:
         r = await c.get(DOOMSDAY_URL)
         r.raise_for_status()
     match = DOOMSDAY_PATTERN.search(r.text)

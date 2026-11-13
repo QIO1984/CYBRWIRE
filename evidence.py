@@ -82,7 +82,7 @@ def assess_cve(cve: str, now: datetime) -> Optional[Evidence]:
         tier = CONFIRMED
         days = _days_ago(kev.get("dateAdded", ""), now)
         recent = days is not None and days <= RECENT_DAYS
-        score += 100 if recent else 15
+        score += 150 if recent else 15  # A fresh official listing outranks any unconfirmed signal
         if days is not None and recent:
             score -= 2 * days  # Newest first among recent entries
         reasons.append(f"CISA KEV {_ago(days)}" if days is not None else "CISA KEV")
@@ -94,7 +94,7 @@ def assess_cve(cve: str, now: datetime) -> Optional[Evidence]:
         days = (now - exploited_since).days
         if not kev:
             recent = days <= RECENT_DAYS
-            score += 90 if recent else 15
+            score += 140 if recent else 15
         else:
             score += 10
         tier = CONFIRMED

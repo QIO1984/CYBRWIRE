@@ -1,7 +1,7 @@
 """
 Configuration loading for CybrWire
 
-cybrwire.yaml and comwire.yaml ship with the app. usrwire.yaml is the user's own,
+cybrwire.yaml and community.yaml ship with the app. usrwire.yaml is the user's own,
 created from usrwire.example.yaml and ignored by git. Keys come from keystore.py,
 and the AI provider chosen in the app overrides any ai: section.
 """
@@ -24,7 +24,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 FEED_FILES = [
     ("cybrwire.yaml", "curated"),
     ("usrwire.yaml", "custom"),
-    ("comwire.yaml", "community"),
+    ("community.yaml", "community"),
     ("cybrwire_local.yaml", "custom"),
 ]
 

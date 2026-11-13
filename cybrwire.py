@@ -74,7 +74,7 @@ console = Console(color_system="truecolor", theme=Theme({
     "new": "bold reverse white on #00ff00",
 }))
 
-HEADERS = {"User-Agent": "C Y B R W I R E // v1.0 LEGENDARY EDITION"}
+HEADERS = {"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}
 HEAT_BAR_WIDTH = 33
 REFRESH_INTERVAL = 300
 SIGHTING_DAYS = 7
@@ -115,7 +115,7 @@ async def fetch_breaches():
     """Fetch recent breaches from HaveIBeenPwned"""
     global breach_list
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": "CybrWire"}, timeout=10) as c:
+        async with httpx.AsyncClient(headers={"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}, timeout=10) as c:
             r = await c.get("https://haveibeenpwned.com/api/v3/breaches")
             breaches = r.json()
             # Get the 7 most recently added breaches (sorted by AddedDate, not BreachDate)

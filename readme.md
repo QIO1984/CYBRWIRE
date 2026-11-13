@@ -177,6 +177,8 @@ Keywords can't tell you whether something is being attacked, so stories are judg
 
 The default **Alerts** filter (`f`) shows those, plus watchlist hits, new breaches, threat-actor stories and ransomware stories. Press `f` for everything. Search and the content types (`4`) look past it, and individual ransomware claims live under `4`. The same evidence decides the dashboard counts, sounds and notifications.
 
+Exploitation and public-exploit sightings come from [CIRCL's Vulnerability-Lookup](https://vulnerability.circl.lu), a free public service run by the Computer Incident Response Center Luxembourg. Thank you to CIRCL for running it. CybrWire asks for recent sightings only, once an hour.
+
 Feeds are checked every 5 minutes, so an alert can't appear sooner than its source publishes it and the next check finds it.
 
 Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for something newly confirmed, a reported zero-day or a watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
@@ -254,7 +256,7 @@ A **CLEAN** result means the provider has no record of the indicator, not that i
 
 - **`cybrwire.yaml`** – Curated official threat feeds (CISA, Microsoft, Talos, etc.)
 - **`usrwire.yaml`** – Yours: your feeds, watchlist and notification triggers. Created on first run from `usrwire.example.yaml`, ignored by git, and never holds keys
-- **`comwire.yaml`** – Community-contributed feeds - Submit yours via PR
+- **`community.yaml`** – Community-contributed feeds - Submit yours via PR
 
 Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),
 `txt` (IP/CIDR lists, URL lists, DShield), or `threatfox` and `urlhaus` (use your abuse.ch key).
@@ -327,7 +329,7 @@ MIT License - See LICENSE file for details
 
 Contributions are welcome and much needed! Please feel free to submit pull requests or open issues for bugs and feature requests.
 
-If you have a cool source for intel, please submit it via PR to the comwire.yaml 
+If you have a cool source for intel, please submit it via PR to the community.yaml 
 Verified feeds will be added to the canon.
 
 ## Author

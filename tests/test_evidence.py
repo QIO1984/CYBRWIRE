@@ -14,7 +14,7 @@ import digest  # noqa: E402
 import evidence  # noqa: E402
 import feeds  # noqa: E402
 import notify  # noqa: E402
-from evidence import CONFIRMED, LIKELY, REPORTED, apply_evidence, assess  # noqa: E402
+from evidence import CONFIRMED, LIKELY, REPORTED, apply_evidence, assess, assess_cve  # noqa: E402
 from watchlist import Watchlist  # noqa: E402
 
 NOW = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
@@ -97,6 +97,14 @@ class TierTests(Base):
         self.assertGreater(fresh.score, listed.score)
         self.assertTrue(fresh.zero_day)
 
+    def test_fresh_official_listing_outranks_older_likely_items(self):
+        feeds.KEV_DETAILS.update(kev("CVE-2026-1001", "2026-11-11"))
+        cve_intel.EPSS["CVE-2026-2002"] = (0.97, 0.99)
+        feeds.CIRCL_POC.add("CVE-2026-2002")
+        fresh, likely = assess_cve("CVE-2026-1001", NOW), assess_cve("CVE-2026-2002", NOW)
+        self.assertEqual(likely.tier, "LIKELY")
+        self.assertGreater(fresh.score - 3, likely.score)
+
     def test_news_adds_to_official_evidence(self):
         feeds.KEV_DETAILS.update(kev("CVE-2026-1001", "2026-11-03"))
         plain = assess(alert("CVE-2026-1001 story"), NOW)
@@ -125,6 +133,14 @@ class SeverityTests(Base):
     def test_headlines_still_name_ransomware_and_actors(self):
         self.assertEqual(self.run_one(alert("LockBit returns")), "ransomware")
         self.assertEqual(self.run_one(alert("Russian hackers target banks")), "apt")
+
+    def test_a_country_needs_hacking_wording_to_be_apt(self):
+        for title in ("Russian police arrest three over fraud", "Drone strikes hit Iran border town",
+                      "China unveils new chip plan"):
+            self.assertEqual(self.run_one(alert(title)), "info", title)
+        for title in ("Iranian hackers breach water utility", "China-linked espionage campaign", "Lazarus steals crypto",
+                      "Volt Typhoon hides in routers"):
+            self.assertEqual(self.run_one(alert(title)), "apt", title)
 
     def test_exploit_label_needs_real_exploit_code(self):
         self.assertEqual(self.run_one(alert("[webapps] pizzafy-1.0 SQLi", "Exploit-DB", "advisory")), "exploit")

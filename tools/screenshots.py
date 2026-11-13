@@ -27,7 +27,7 @@ import state  # noqa: E402
 WORK = tempfile.mkdtemp(prefix="cybrwire-shots-")
 # Only the shipped feeds: the user's own YAML, keys and watchlist are never read
 config.APP_DIR = WORK
-for name in ("cybrwire.yaml", "comwire.yaml"):
+for name in ("cybrwire.yaml", "community.yaml"):
     shutil.copy(os.path.join(ROOT, name), WORK)
 state.STATE_PATH = os.path.join(WORK, "state.json")
 history.HISTORY_PATH = os.path.join(WORK, "history.db")

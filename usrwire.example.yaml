@@ -5,7 +5,7 @@
 # Keys never go in here. Press Shift+K in the app to enter and test API keys,
 # notification targets and feed keys, and to choose your AI provider and model.
 #
-# The feeds that ship with CybrWire are in cybrwire.yaml and comwire.yaml.
+# The feeds that ship with CybrWire are in cybrwire.yaml and community.yaml.
 # Uncomment any section below that you want to use.
 
 # WATCHLIST: vendors, products or keywords you care about. Matching items get a
