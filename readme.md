@@ -136,6 +136,10 @@ python -m unittest discover -s tests
 
 A clone that already has local files next to the code (`usrwire.yaml`, state, history) moves them to `~/.config/cybrwire` on first launch.
 
+### Upgrading from an older clone
+
+Earlier versions kept `usrwire.yaml`, `cybrwire_state.json`, `cybrwire_history.db` and `cybrwire_secrets.yaml` next to the code. If you keep running from the clone (`pip install -e .`), they move to `~/.config/cybrwire` on first launch. If you switch to a pipx install, nothing moves on its own: quit CybrWire, then copy those files from the old folder into `~/.config/cybrwire`. Keys stored in your system keychain carry over without any copying.
+
 ### Keyboard Controls
 
 | Key | Action |
