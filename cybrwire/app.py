@@ -528,6 +528,7 @@ class WorldClock(Static):
     WorldClock {
         height: 1;
         padding: 0 1;
+        text-align: center;
     }
     """
 

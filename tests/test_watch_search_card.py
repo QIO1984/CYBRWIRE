@@ -811,6 +811,15 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(clock.display)
             self.assertTrue(cybrwire.STATE.settings["world_clock"])
 
+    async def test_world_clock_is_centered(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 30)) as pilot:
+            await self.settle(pilot)
+            line = app.query_one(cybrwire.WorldClock).render_line(0).text
+            left, right = len(line) - len(line.lstrip()), len(line) - len(line.rstrip())
+            self.assertGreater(left, 10)  # Not hugging the left edge
+            self.assertLessEqual(abs(left - right), 1)
+
     async def test_sound_cycles_saves_and_stays_off_by_default(self):
         app = self.make_app()
         with mock.patch.object(cybrwire.sound, "play") as play:
