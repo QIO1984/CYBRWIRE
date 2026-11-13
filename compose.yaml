@@ -1,6 +1,7 @@
 # Run CybrWire in the background and restart it after reboots:
 #   cp cybrwire.env.example cybrwire.env   (then edit it; it holds your password and keys)
 #   docker compose up -d --build
+# To use another port, put CYBRWIRE_PORT=8765 in a file named .env next to this one.
 services:
   cybrwire:
     build: .
@@ -9,7 +10,7 @@ services:
     restart: unless-stopped
     env_file: cybrwire.env
     ports:
-      - "8000:8000"
+      - "${CYBRWIRE_PORT:-8000}:8000"
     volumes:
       - cybrwire-data:/data
 
