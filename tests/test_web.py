@@ -62,10 +62,10 @@ class Origin(unittest.TestCase):
         return mock.Mock(headers=headers, scheme="http")
 
     def test_direct_by_ip(self):
-        self.assertEqual(web.request_origin(self.req(Host="192.168.1.195:1947"), "http://x"), "http://192.168.1.195:1947")
+        self.assertEqual(web.request_origin(self.req(Host="192.0.2.10:1947"), "http://x"), "http://192.0.2.10:1947")
 
     def test_behind_a_proxy_uses_the_address_the_browser_used(self):
-        r = self.req(Host="192.168.1.195:1947", **{"X-Forwarded-Proto": "https", "X-Forwarded-Host": "cybrwire.lan"})
+        r = self.req(Host="192.0.2.10:1947", **{"X-Forwarded-Proto": "https", "X-Forwarded-Host": "cybrwire.lan"})
         self.assertEqual(web.request_origin(r, "http://x"), "https://cybrwire.lan")
         self.assertEqual(web.request_origin(self.req(Host="cybrwire.lan", **{"X-Forwarded-Proto": "https, http"}), "http://x"),
                          "https://cybrwire.lan")
@@ -90,7 +90,7 @@ class Startup(unittest.TestCase):
         self.assertIn("CYBRWIRE_WEB_PASSWORD", msg)
 
     def test_a_specific_address_is_shown_as_is(self):
-        self.assertIn("http://192.168.1.195:1947", web.startup_message("192.168.1.195", 1947, "u", True, False))
+        self.assertIn("http://192.0.2.10:1947", web.startup_message("192.0.2.10", 1947, "u", True, False))
 
 
 def basic(user, password):
@@ -107,7 +107,7 @@ class WebLogin(unittest.TestCase):
 
     def test_open_network_without_password_is_refused(self):
         self.assertIsNotNone(web.check_config("0.0.0.0", ""))
-        self.assertIsNotNone(web.check_config("192.168.1.195", ""))
+        self.assertIsNotNone(web.check_config("192.0.2.10", ""))
         self.assertIsNone(web.check_config("0.0.0.0", "pw"))
         self.assertIsNone(web.check_config("127.0.0.1", ""))
 
