@@ -140,6 +140,27 @@ A clone that already has local files next to the code (`usrwire.yaml`, state, hi
 
 Earlier versions kept `usrwire.yaml`, `cybrwire_state.json`, `cybrwire_history.db` and `cybrwire_secrets.yaml` next to the code. If you keep running from the clone (`pip install -e .`), they move to `~/.config/cybrwire` on first launch. If you switch to a pipx install, nothing moves on its own: quit CybrWire, then copy those files from the old folder into `~/.config/cybrwire`. Keys stored in your system keychain carry over without any copying.
 
+### In a browser or Docker
+
+CybrWire can run in a browser tab, using the same screens, mouse and themes through a terminal in the page:
+
+```bash
+pip install "cybrwire[web]"
+cybrwire-web                      # then open http://127.0.0.1:8000
+```
+
+Or in a container (data is kept in the `cybrwire-data` volume):
+
+```bash
+docker build -t cybrwire .
+docker run --rm -p 127.0.0.1:8000:8000 -v cybrwire-data:/data cybrwire
+```
+
+- **There is no login.** The page gives full control of the app, including your keys. Publish the port on `127.0.0.1` as above, or reach it over a private network such as Tailscale. Do not expose it to the internet.
+- **Keys:** a container has no system keychain. Pass keys as environment variables (`-e CYBRWIRE_ANTHROPIC_API_KEY=...`, or `--env-file`), or add them with Shift+K, which saves them to a restricted file in the volume.
+- **Links:** `Enter` can't open your browser from inside a container; copy the address from the alert instead.
+- Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT` and `CYBRWIRE_WEB_URL` (if you reach it through another address).
+
 ### Keyboard Controls
 
 | Key | Action |

@@ -1,0 +1,13 @@
+.git
+venv
+__pycache__
+*.log
+*.db
+usrwire.yaml
+cybrwire_state.json
+cybrwire_secrets.yaml
+.env
+*.env
+screenshots
+tests
+tools

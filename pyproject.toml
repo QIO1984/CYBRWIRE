@@ -19,11 +19,15 @@ dependencies = [
     "keyring",
 ]
 
+[project.optional-dependencies]
+web = ["textual-serve"]
+
 [project.urls]
 Homepage = "https://github.com/QIO1984/CYBRWIRE"
 
 [project.scripts]
 cybrwire = "cybrwire.app:main"
+cybrwire-web = "cybrwire.web:main"
 
 [tool.setuptools]
 packages = ["cybrwire"]
