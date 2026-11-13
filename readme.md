@@ -327,10 +327,49 @@ For best results with CybrWire enrichment:
 
 A **CLEAN** result means the provider has no record of the indicator, not that it is known to be safe.
 
+## Where Settings Live
+
+Three places hold settings, and each has one job:
+
+- **The app itself** (Shift+K, Shift+W, and the keys on the footer) for things you change while using it: API keys, notification targets, AI provider and model, watchlist, theme, filters and data age. They are saved for you.
+- **`usrwire.yaml`** for lists and preferences about *what you watch*: your own feeds, notification triggers, the auto briefing switch, and optional watchlist, clock and time zone settings. It never holds keys.
+- **`cybrwire.env`** (Docker only) for the container's own settings: sign-in password, time zone, clock cities, and API keys if you'd rather not type them into the app. A second file, **`.env`**, holds only the port.
+
+| Setting | Docker | Normal install (pipx, clone) |
+|---|---|---|
+| Sign-in password and user | `cybrwire.env`: `CYBRWIRE_WEB_PASSWORD`, `CYBRWIRE_WEB_USER` | Optional: the same variables in your shell |
+| Port | `.env`: `CYBRWIRE_PORT` | `CYBRWIRE_WEB_PORT` (browser version only) |
+| Your time zone | `cybrwire.env`: `TZ` | `TZ`, or `timezone:` in `usrwire.yaml` |
+| World clock cities | `cybrwire.env`: `CYBRWIRE_CLOCKS` | `clocks:` in `usrwire.yaml` |
+| API keys and notification targets | `cybrwire.env` (`CYBRWIRE_ANTHROPIC_API_KEY` and so on), or Shift+K | Shift+K (system keychain), or the same variables |
+| AI provider and model | Shift+K | Shift+K |
+| Watchlist | Shift+W in the app | Shift+W, or `watchlist:` in `usrwire.yaml` |
+| Your own feeds | `custom:` in `usrwire.yaml` | `custom:` in `usrwire.yaml` |
+| Notification triggers | `notifications:` in `usrwire.yaml` | `notifications:` in `usrwire.yaml` |
+| Auto AI briefing at launch | `ai:` in `usrwire.yaml` | `ai:` in `usrwire.yaml` |
+
+If the same thing is set in two places, the environment wins over the app's saved value (and `CYBRWIRE_CLOCKS` wins over `clocks:`).
+
+**Where the files are**
+
+| File | Normal install | Docker |
+|---|---|---|
+| `usrwire.yaml`, `cybrwire_state.json`, `cybrwire_history.db`, `cybrwire.log`, `cybrwire_secrets.yaml` | `~/.config/cybrwire/` (or the folder in `CYBRWIRE_HOME`) | `/data/` inside the container, which is a Docker volume named after your folder (for example `cybrwire-src_cybrwire-data`) |
+| `cybrwire.env`, `.env`, `compose.yaml` | not used | The folder you cloned, next to `compose.yaml`. Git ignores the two env files |
+
+To edit `usrwire.yaml` in Docker, open it where Docker keeps the volume (this needs `sudo`, because Docker's storage belongs to root), then restart:
+
+```bash
+sudo nano "$(docker volume inspect cybrwire-src_cybrwire-data --format '{{.Mountpoint}}')/usrwire.yaml"
+docker compose restart
+```
+
+`docker volume ls` shows the exact volume name if yours differs. `cybrwire_secrets.yaml` only exists when you save a key in the app with no system keychain (the Docker case); never share it.
+
 ## Configuration Files
 
 - **`cybrwire.yaml`** – Curated official threat feeds (CISA, Microsoft, Talos, etc.)
-- **`usrwire.yaml`** – Yours: your feeds, watchlist and notification triggers. Created on first run from a documented template, kept in `~/.config/cybrwire`, and never holds keys
+- **`usrwire.yaml`** – Yours: your feeds, watchlist and notification triggers. Created on first run from a documented template (see Where Settings Live for its path), and never holds keys
 - **`community.yaml`** – Community-contributed feeds - Submit yours via PR
 
 Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),

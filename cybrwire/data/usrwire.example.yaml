@@ -1,6 +1,9 @@
 # YOUR CYBRWIRE SETTINGS
 # ============================================================================
-# This file is yours: git ignores it, and it lives next to the app as usrwire.yaml.
+# This file is yours: git ignores it, and updates never overwrite it.
+# Normal install: ~/.config/cybrwire/usrwire.yaml
+# Docker: /data/usrwire.yaml, inside the container's volume (see "Where Settings Live" in the readme)
+# Docker users can set the time zone and clock cities in cybrwire.env instead of here.
 #
 # Keys never go in here. Press Shift+K in the app to enter and test API keys,
 # notification targets and feed keys, and to choose your AI provider and model.
