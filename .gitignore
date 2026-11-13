@@ -55,3 +55,6 @@ cybrwire_state.json
 cybrwire_state.json.tmp
 cybrwire_history.db
 cybrwire_history.db-*
+
+# CybrWire container secrets
+cybrwire.env

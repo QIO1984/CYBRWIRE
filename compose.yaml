@@ -1,0 +1,17 @@
+# Run CybrWire in the background and restart it after reboots:
+#   cp cybrwire.env.example cybrwire.env   (then edit it; it holds your password and keys)
+#   docker compose up -d --build
+services:
+  cybrwire:
+    build: .
+    image: cybrwire
+    container_name: cybrwire
+    restart: unless-stopped
+    env_file: cybrwire.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - cybrwire-data:/data
+
+volumes:
+  cybrwire-data:

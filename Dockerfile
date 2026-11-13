@@ -16,4 +16,6 @@ RUN pip install --no-cache-dir ".[web]" \
 USER cybrwire
 VOLUME /data
 EXPOSE 8000
+HEALTHCHECK --interval=60s --timeout=5s --start-period=15s \
+  CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/login', timeout=4)" || exit 1
 CMD ["cybrwire-web"]

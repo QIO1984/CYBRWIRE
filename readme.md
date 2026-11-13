@@ -157,6 +157,17 @@ docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' \
   -e CYBRWIRE_WEB_URL=http://YOUR-SERVER-IP:8000 -v cybrwire-data:/data cybrwire
 ```
 
+**To keep it running in the background** (restarts after a reboot, keys included), use Docker Compose:
+
+```bash
+cp cybrwire.env.example cybrwire.env && chmod 600 cybrwire.env   # then edit it: password, URL, keys
+docker compose up -d --build
+docker compose logs -f        # watch it; Ctrl+C leaves it running
+docker compose down           # stop it (your data stays in the volume)
+```
+
+`cybrwire.env` holds your password and API keys. It is git-ignored and never baked into the image.
+
 Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_USER` is set to).
 
 - **The login is basic.** It is one shared password over plain http, so anyone who can watch your network traffic could read it. That is fine on a home LAN or over Tailscale (which encrypts). For anything wider, put an https reverse proxy in front. Never expose it to the internet as it is: the page gives full control of the app, including your keys.
