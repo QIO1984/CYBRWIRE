@@ -8,7 +8,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 
-from cybrwire import app, web  # noqa: E402
+from cybrwire import app, links, web  # noqa: E402
 
 
 class WebStartup(unittest.TestCase):
@@ -37,6 +37,24 @@ class WebStartup(unittest.TestCase):
         prompts, App = self.run_main(None, {})
         prompts.assert_called_once()
         App.assert_called_once_with(cold_war=True, recency=48)
+
+
+class Links(unittest.TestCase):
+    def test_terminal_uses_the_local_browser(self):
+        host = mock.Mock()
+        with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.linux_driver:LinuxDriver"}), \
+                mock.patch("cybrwire.links.webbrowser.open") as opened:
+            links.open_link(host, "https://example.test/a")
+        opened.assert_called_once_with("https://example.test/a")
+        host.open_url.assert_not_called()
+
+    def test_browser_mode_asks_the_page_for_a_new_tab(self):
+        host = mock.Mock()
+        with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.web_driver:WebDriver"}), \
+                mock.patch("cybrwire.links.webbrowser.open") as opened:
+            links.open_link(host, "https://example.test/a")
+        host.open_url.assert_called_once_with("https://example.test/a", new_tab=True)
+        opened.assert_not_called()
 
 
 def basic(user, password):

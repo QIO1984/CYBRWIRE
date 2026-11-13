@@ -9,7 +9,6 @@ import re
 import os
 import sys
 import textwrap
-import webbrowser
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 from rich.console import Console, Group
@@ -24,6 +23,7 @@ from . import ai
 from . import paths
 from .config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
 from .keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
+from .links import open_link
 from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, parse_metasploit, fetch_doomsday_seconds
 from .incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 from . import cve_intel
@@ -2986,7 +2986,7 @@ class CybrWireApp(App):
             if not alert:
                 self.notify("Select an alert with ↑/↓ first", timeout=2)
             elif alert.get("url"):
-                webbrowser.open(alert["url"])
+                open_link(self, alert["url"])
                 STATE.mark_read(alert)
                 for other in self.duplicate_groups().others.get(alert_key(alert), []):
                     STATE.mark_read(other)
@@ -2999,7 +2999,7 @@ class CybrWireApp(App):
             inc = self.selected_incident()
             if inc:
                 if inc.url:
-                    webbrowser.open(inc.url)
+                    open_link(self, inc.url)
                     self.notify("Opening latest report in browser...")
             else:
                 self.notify("Select an incident with ↑/↓ first", timeout=2)

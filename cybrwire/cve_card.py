@@ -4,7 +4,7 @@ evidence for one CVE, opened with 'i' from an alert or incident.
 """
 
 import textwrap
-import webbrowser
+from .links import open_link
 from typing import List
 
 from rich.text import Text
@@ -232,12 +232,12 @@ class CveCard(Card):
         self.dismiss()
 
     def action_open_nvd(self) -> None:
-        webbrowser.open(NVD_DETAIL_URL + self.cve)
+        open_link(self.app, NVD_DETAIL_URL + self.cve)
 
     def action_open_exploit(self) -> None:
         url = self.exploit_url()
         if url:
-            webbrowser.open(url)
+            open_link(self.app, url)
 
     def action_step(self, delta: int) -> None:
         if len(self.cves) > 1:

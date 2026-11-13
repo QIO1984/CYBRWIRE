@@ -27,6 +27,7 @@ from cybrwire import state  # noqa: E402
 
 from cybrwire import ai  # noqa: E402
 from cybrwire import cve_card  # noqa: E402
+from cybrwire import links  # noqa: E402
 from cybrwire import cve_intel  # noqa: E402
 from cybrwire import app as cybrwire  # noqa: E402
 from cybrwire import feeds  # noqa: E402
@@ -187,7 +188,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         self.ai_guard.start()
         self.addCleanup(self.ai_guard.stop)
         # Nothing in here may reach the network or open a browser
-        for target in ("cybrwire.app.webbrowser.open", "cybrwire.cve_card.webbrowser.open"):
+        for target in ("cybrwire.links.webbrowser.open",):
             patcher = mock.patch(target)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -338,7 +339,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await pilot.press("slash", *"e", "enter")
             await self.settle(pilot)
             second = app.feed_rows[1]
-            with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+            with mock.patch.object(links.webbrowser, "open") as browser:
                 await pilot.click("#feed-table", offset=(10, 1))
                 await self.settle(pilot)
                 self.assertIs(app.selected_alert(), second)
@@ -416,7 +417,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(app.selected_alert())
             self.assertFalse(table.show_cursor)
             self.assertIn("NO ALERTS", table.get_row_at(0)[2].plain)
-            with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+            with mock.patch.object(links.webbrowser, "open") as browser:
                 await pilot.press("enter")
                 browser.assert_not_called()
 
@@ -517,7 +518,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             alert("CVE-2099-1111 story", source="A"), alert("CVE-2099-1111 again", source="B"),
             alert("CVE-2099-2222 story", source="A", hours=2), alert("CVE-2099-2222 again", source="B", hours=2)]
         app = self.make_app()
-        with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+        with mock.patch.object(links.webbrowser, "open") as browser:
             async with app.run_test(size=(160, 45)) as pilot:
                 await self.settle(pilot)
                 await pilot.press("v")
@@ -552,7 +553,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
 
     async def test_right_click_acts_like_v_in_that_panel_and_never_opens_a_row(self):
         app = self.make_app()
-        with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+        with mock.patch.object(links.webbrowser, "open") as browser:
             async with app.run_test(size=(160, 45)) as pilot:
                 await self.settle(pilot)
                 await pilot.click("#feed-table", offset=(10, 0), button=3)  # On the selected row
@@ -633,7 +634,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         app = self.make_app()
         async with app.run_test(size=(160, 45)) as pilot:
             await self.settle(pilot)
-            with mock.patch.object(cybrwire.webbrowser, "open") as browser:
+            with mock.patch.object(links.webbrowser, "open") as browser:
                 await pilot.click("#act-open")
                 await self.settle(pilot)
                 browser.assert_called_once_with(app.selected_alert()["url"])
@@ -845,7 +846,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         self.http_get.return_value = mock.Mock(raise_for_status=lambda: None,
                                                json=lambda: {"vulnerabilities": [{"cve": NVD_RECORD}], "data": []})
 
-        browser = cve_card.webbrowser.open
+        browser = links.webbrowser.open
         async with app.run_test(size=(160, 45)) as pilot:
             await self.settle(pilot)
             await pilot.press("i")
