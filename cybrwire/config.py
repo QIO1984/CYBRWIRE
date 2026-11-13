@@ -12,6 +12,7 @@ import re
 import stat
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlsplit
 
 import yaml
 
@@ -193,17 +194,22 @@ class Config:
         self.refresh_ai_key()
 
     def feed_request_parts(self, src: Dict[str, Any]) -> Dict[str, Any]:
-        """Headers and URL parameters for one feed, with its key added"""
+        """
+        Headers and, when the feed's key goes in the URL, its parameters.
+        httpx replaces the whole query string when given any params, so params are only
+        passed when there is a key, and then they include the query already in the address.
+        """
         headers = dict(src.get("headers") or {})
-        params = {}
+        parts: Dict[str, Any] = {"headers": headers}
         spec = feed_key_spec(src)
         key = self.feed_keys.get(src.get("key_slot")) if spec else None
         if key:
             if spec[0] == "header":
                 headers[spec[1]] = key
             else:
-                params[spec[1]] = key
-        return {"headers": headers, "params": params}
+                existing = dict(parse_qsl(urlsplit(src["url"]).query, keep_blank_values=True))
+                parts["params"] = {**existing, spec[1]: key}
+        return parts
 
     def feed_is_ready(self, src: Dict[str, Any]) -> bool:
         """A feed that needs a key is skipped until it has one"""

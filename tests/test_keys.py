@@ -595,7 +595,7 @@ class FeedKeyTests(Base):
         slot = "feed_otx_feed"
         self.assertEqual(cfg.key_value(slot), KEY)
         self.assertEqual(cfg.key_sources[slot], YAML)
-        self.assertEqual(cfg.feed_request_parts(feed), {"headers": {"X-OTX-API-KEY": KEY}, "params": {}})
+        self.assertEqual(cfg.feed_request_parts(feed), {"headers": {"X-OTX-API-KEY": KEY}})  # No params: they would wipe the query
         self.assertIn(slot, cfg.keys.movable())
         moved, problems = cfg.keys.move_all()
         self.assertEqual((moved, problems), ([slot], []))
@@ -626,6 +626,28 @@ class FeedKeyTests(Base):
         cfg.set_key_value("feed_p", KEY, KEYCHAIN)
         self.assertTrue(cfg.feed_is_ready(feed))
         self.assertEqual(cfg.feed_request_parts(feed)["params"], {"token": KEY})
+
+    def test_a_feeds_own_query_string_survives_with_and_without_a_key(self):
+        import httpx
+        self.write("usrwire.yaml", "custom:\n  - name: Q\n    url: https://x.test/feed?type=reviewed&severity=high&per_page=30\n    type: json\n"
+                                   "  - name: K\n    url: https://x.test/feed?size=100\n    type: json\n    key_param: token\n")
+        cfg = self.load(FakeKeychain())
+        client = httpx.Client()
+        plain = next(s for s in cfg.sources if s["name"] == "Q")
+        self.assertEqual(str(client.build_request("GET", plain["url"], **cfg.feed_request_parts(plain)).url),
+                         "https://x.test/feed?type=reviewed&severity=high&per_page=30")
+        keyed = next(s for s in cfg.sources if s["name"] == "K")
+        cfg.set_key_value("feed_k", KEY, KEYCHAIN)
+        self.assertEqual(str(client.build_request("GET", keyed["url"], **cfg.feed_request_parts(keyed)).url),
+                         f"https://x.test/feed?size=100&token={KEY}")
+
+    def test_every_shipped_feed_is_requested_at_exactly_its_own_address(self):
+        import httpx
+        cfg = config.load_config()
+        client = httpx.Client()
+        for src in cfg.sources:
+            sent = client.build_request("GET", src["url"], **cfg.feed_request_parts(src)).url
+            self.assertEqual(str(sent), str(httpx.URL(src["url"])), src["name"])
 
     def test_feeds_without_a_key_are_always_ready(self):
         cfg = config.Config()
