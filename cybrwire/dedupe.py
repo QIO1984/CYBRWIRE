@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Dict, List
 
-from incidents import CVE_RE, SEVERITY_RANK
-from state import alert_key
+from .incidents import CVE_RE, SEVERITY_RANK
+from .state import alert_key
 
 MAX_GAP = timedelta(days=3)
 MIN_WORDS = 4         # Shorter titles don't carry enough words to compare

@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
-from widgets import Card, CardButton, RowTable
+from .widgets import Card, CardButton, RowTable
 
 HINTS = "Enter add or remove · ↑↓ select · Del remove · Esc close"
 

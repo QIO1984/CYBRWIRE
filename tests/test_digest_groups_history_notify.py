@@ -18,15 +18,17 @@ import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["CYBRWIRE_KEYCHAIN"] = "off"  # Tests must never touch the real keychain
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import isolated  # noqa: E402,F401  Must come before any cybrwire import: sets a temporary user folder
 
-import config  # noqa: E402
-import digest  # noqa: E402
-import feeds  # noqa: E402
-import notify  # noqa: E402
-from dedupe import group_duplicates  # noqa: E402
-from history import History  # noqa: E402
-from state import alert_key  # noqa: E402
-from watchlist import Watchlist  # noqa: E402
+from cybrwire import config  # noqa: E402
+from cybrwire import digest  # noqa: E402
+from cybrwire import feeds  # noqa: E402
+from cybrwire import notify  # noqa: E402
+from cybrwire.dedupe import group_duplicates  # noqa: E402
+from cybrwire.history import History  # noqa: E402
+from cybrwire.state import alert_key  # noqa: E402
+from cybrwire.watchlist import Watchlist  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 

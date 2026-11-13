@@ -22,20 +22,20 @@ from textual import events
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
-import history  # noqa: E402
-import state  # noqa: E402
+from cybrwire import history  # noqa: E402
+from cybrwire import state  # noqa: E402
 
-import ai  # noqa: E402
-import cve_card  # noqa: E402
-import cve_intel  # noqa: E402
-import cybrwire  # noqa: E402
-import feeds  # noqa: E402
-from config import Config  # noqa: E402
-from cve_card import CveCard, exploit_status  # noqa: E402
-from livewire import Shown, WireItem  # noqa: E402
-import evidence  # noqa: E402
-from watch_card import WatchCard  # noqa: E402
-from watchlist import Watchlist, matches_search  # noqa: E402
+from cybrwire import ai  # noqa: E402
+from cybrwire import cve_card  # noqa: E402
+from cybrwire import cve_intel  # noqa: E402
+from cybrwire import app as cybrwire  # noqa: E402
+from cybrwire import feeds  # noqa: E402
+from cybrwire.config import Config  # noqa: E402
+from cybrwire.cve_card import CveCard, exploit_status  # noqa: E402
+from cybrwire.livewire import Shown, WireItem  # noqa: E402
+from cybrwire import evidence  # noqa: E402
+from cybrwire.watch_card import WatchCard  # noqa: E402
+from cybrwire.watchlist import Watchlist, matches_search  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 
@@ -187,7 +187,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         self.ai_guard.start()
         self.addCleanup(self.ai_guard.stop)
         # Nothing in here may reach the network or open a browser
-        for target in ("cybrwire.webbrowser.open", "cve_card.webbrowser.open"):
+        for target in ("cybrwire.app.webbrowser.open", "cybrwire.cve_card.webbrowser.open"):
             patcher = mock.patch(target)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -918,7 +918,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         cybrwire.CONFIG = Config(sources=[], watchlist=["ivanti"], notifications={"ntfy_url": "https://n.test/t"})
         app = self.make_app()
         send = mock.AsyncMock(return_value={"ntfy": None})
-        with mock.patch("notify.send", send):
+        with mock.patch("cybrwire.notify.send", send):
             await app.send_notifications()
             send.assert_not_called()
             new = alert("Fresh Ivanti flaw")
@@ -935,7 +935,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
         app = self.make_app()
         app.notify = mock.Mock()
         send = mock.AsyncMock(return_value={"ntfy": "HTTP 500"})
-        with mock.patch("notify.send", send):
+        with mock.patch("cybrwire.notify.send", send):
             await app.send_notifications()
             await app.send_notifications()
         self.assertEqual(send.call_count, 2)

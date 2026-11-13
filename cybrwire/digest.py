@@ -7,9 +7,9 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
-from dedupe import group_duplicates
-from incidents import KIND_LABELS, SEVERITY_RANK, age, build_incidents
-from state import alert_key
+from .dedupe import group_duplicates
+from .incidents import KIND_LABELS, SEVERITY_RANK, age, build_incidents
+from .state import alert_key
 
 MAX_ITEMS = 10
 SEVERITY_LABELS = [("critical", "Critical/KEV"), ("zeroday", "Zero-day"), ("ransomware", "Ransomware"),

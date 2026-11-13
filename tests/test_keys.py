@@ -17,14 +17,14 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 
-import ai  # noqa: E402
-import config  # noqa: E402
-import cybrwire  # noqa: E402
-import key_card  # noqa: E402
-import key_check  # noqa: E402
-import keystore  # noqa: E402
-from key_card import KeyCard  # noqa: E402
-from keystore import FILE, KEYCHAIN, YAML, KeyStore, KeyStoreError, clean_value, mask, scrub_yaml  # noqa: E402
+from cybrwire import ai  # noqa: E402
+from cybrwire import config  # noqa: E402
+from cybrwire import app as cybrwire  # noqa: E402
+from cybrwire import key_card  # noqa: E402
+from cybrwire import key_check  # noqa: E402
+from cybrwire import keystore  # noqa: E402
+from cybrwire.key_card import KeyCard  # noqa: E402
+from cybrwire.keystore import FILE, KEYCHAIN, YAML, KeyStore, KeyStoreError, clean_value, mask, scrub_yaml  # noqa: E402
 
 KEY = "abcdef-secret-value-1234"
 
@@ -636,12 +636,6 @@ class FileLayoutTests(Base):
     OLD = ('# my notes\n# api_key: "commented-out-secret"\nai:\n  provider: anthropic\n  api_key: ""\n  model: claude-haiku-5-5\n'
            'enrichment:\n  nvd_api_key: ""\nwatchlist:\n  - Fortinet\ncustom:\n  - name: F\n    url: https://x.test\n    type: rss\n')
 
-    def setUp(self):
-        super().setUp()
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, keystore.EXAMPLE_FILE)) as f:
-            self.write(keystore.EXAMPLE_FILE, f.read())
-
     def test_old_file_converts_and_is_kept_aside(self):
         self.write(keystore.OLD_USER_FILE, self.OLD)
         self.assertTrue(keystore.convert_user_file(self.dir))
@@ -816,8 +810,7 @@ class ProfileTests(unittest.TestCase):
 
 class TemplateTests(unittest.TestCase):
     def test_tracked_template_holds_no_key_fields(self):
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.assertEqual(yaml.safe_load(open(os.path.join(root, keystore.EXAMPLE_FILE))), None)  # All comments
+        self.assertEqual(yaml.safe_load(open(os.path.join(keystore.DATA_DIR, keystore.EXAMPLE_FILE))), None)  # All comments
 
 
 if __name__ == "__main__":

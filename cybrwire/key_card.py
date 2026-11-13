@@ -9,12 +9,12 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Select, Static
 
-import ai
-import key_check
-from key_check import CheckResult
-from keystore import (ENV, FILE, KEYCHAIN, OLD_COPY, SECRETS_FILE, SLOTS, SLOTS_BY_ID, SOURCE_LABELS, YAML, KeyStoreError,
+from . import ai
+from . import key_check
+from .key_check import CheckResult
+from .keystore import (ENV, FILE, KEYCHAIN, OLD_COPY, SECRETS_FILE, SLOTS, SLOTS_BY_ID, SOURCE_LABELS, YAML, KeyStoreError,
                       clean_value, mask)
-from widgets import Card, CardButton, RowTable
+from .widgets import Card, CardButton, RowTable
 
 HINTS = "Enter set · t test · Del remove · a switch AI · Tab AI settings · Esc close"
 EDIT_HINTS = "Enter test and save · Esc cancel"

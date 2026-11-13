@@ -11,8 +11,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
-from config import APP_DIR, secure_file
-from state import alert_key
+from .config import APP_DIR, secure_file
+from .state import alert_key
 
 HISTORY_PATH = os.path.join(APP_DIR, "cybrwire_history.db")
 RETENTION_DAYS = 365

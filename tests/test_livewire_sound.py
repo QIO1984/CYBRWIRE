@@ -11,11 +11,11 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 
-import evidence  # noqa: E402
-import livewire  # noqa: E402
-import sound  # noqa: E402
-from livewire import LiveWire, wire_items  # noqa: E402
-from watchlist import Watchlist  # noqa: E402
+from cybrwire import evidence  # noqa: E402
+from cybrwire import livewire  # noqa: E402
+from cybrwire import sound  # noqa: E402
+from cybrwire.livewire import LiveWire, wire_items  # noqa: E402
+from cybrwire.watchlist import Watchlist  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 NO_TERMS = Watchlist()

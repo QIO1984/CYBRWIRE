@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cybrwire"
+dynamic = ["version"]
+description = "Terminal threat-intelligence dashboard"
+readme = "readme.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "feedparser",
+    "httpx",
+    "PyYAML",
+    "rich",
+    "textual",
+    "anthropic",
+    "keyring",
+]
+
+[project.urls]
+Homepage = "https://github.com/QIO1984/CYBRWIRE"
+
+[project.scripts]
+cybrwire = "cybrwire.app:main"
+
+[tool.setuptools]
+packages = ["cybrwire"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cybrwire.__version__" }
+
+[tool.setuptools.package-data]
+cybrwire = ["data/*.yaml"]

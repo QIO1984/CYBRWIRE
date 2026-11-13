@@ -1,7 +1,7 @@
 """
 Persistent local state for CybrWire: UI settings, seen alerts, cached lookups
 
-Stored as JSON in cybrwire_state.json next to the app (gitignored).
+Stored as JSON in cybrwire_state.json in the user folder (see paths.py).
 """
 
 import json
@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from config import APP_DIR, secure_file
+from .config import APP_DIR, secure_file
 
 STATE_PATH = os.path.join(APP_DIR, "cybrwire_state.json")
 SEEN_RETENTION = timedelta(days=30)

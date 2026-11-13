@@ -19,26 +19,24 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ["CYBRWIRE_KEYCHAIN"] = "off"
-
-import config  # noqa: E402
-import history  # noqa: E402
-import state  # noqa: E402
-
 WORK = tempfile.mkdtemp(prefix="cybrwire-shots-")
-# Only the shipped feeds: the user's own YAML, keys and watchlist are never read
+os.environ["CYBRWIRE_HOME"] = WORK  # Only the shipped feeds: the user's own YAML, keys and watchlist are never read
+
+from cybrwire import config  # noqa: E402
+from cybrwire import history  # noqa: E402
+from cybrwire import state  # noqa: E402
+
 config.APP_DIR = WORK
-for name in ("cybrwire.yaml", "community.yaml"):
-    shutil.copy(os.path.join(ROOT, name), WORK)
 state.STATE_PATH = os.path.join(WORK, "state.json")
 history.HISTORY_PATH = os.path.join(WORK, "history.db")
 
-import ai  # noqa: E402
-import cybrwire  # noqa: E402
-from cve_card import CveCard  # noqa: E402
-from key_card import KeyCard  # noqa: E402
-from keystore import KEYCHAIN, SLOTS, KeyStore  # noqa: E402
+from cybrwire import ai  # noqa: E402
+from cybrwire import app as cybrwire  # noqa: E402
+from cybrwire.cve_card import CveCard  # noqa: E402
+from cybrwire.key_card import KeyCard  # noqa: E402
+from cybrwire.keystore import KEYCHAIN, SLOTS, KeyStore  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
-from livewire import Shown, wire_items  # noqa: E402
+from cybrwire.livewire import Shown, wire_items  # noqa: E402
 
 SIZE = (150, 46)
 FIREFOX_ATTEMPTS = 3

@@ -10,7 +10,7 @@ Search is a plain substring match; every word in the query has to appear.
 import re
 from typing import Any, Dict, Iterable, List
 
-from state import alert_key
+from .state import alert_key
 
 SEARCH_FIELDS = ("title", "summary", "source", "severity", "ioc", "threat")
 WATCH_FIELDS = ("title", "summary")

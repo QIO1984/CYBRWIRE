@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 import httpx
 
-from state import alert_key
+from .state import alert_key
 
 MAX_LISTED = 8                  # Alerts named in one message; the rest are counted
 MAX_AGE = timedelta(hours=48)   # A feed that resurfaces old items shouldn't alert

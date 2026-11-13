@@ -12,9 +12,9 @@ from typing import Dict, Iterable, Optional
 
 import httpx
 
-import ai
-import notify
-from keystore import SLOTS_BY_ID, feed_key_spec
+from . import ai
+from . import notify
+from .keystore import SLOTS_BY_ID, feed_key_spec
 
 OK = "ok"
 REJECTED = "rejected"

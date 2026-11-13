@@ -15,9 +15,9 @@ from rich.text import Text
 from textual import events
 from textual.widgets import Static
 
-from evidence import CONFIRMED, due_text, is_breach
-from incidents import age
-from state import alert_key
+from .evidence import CONFIRMED, due_text, is_breach
+from .incidents import age
+from .state import alert_key
 
 ARRIVAL_SECONDS = 6       # How long an arrival stays up
 QUIET_SECONDS = 8         # How long each item stays up when nothing is arriving

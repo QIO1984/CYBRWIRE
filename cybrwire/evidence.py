@@ -17,10 +17,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-import cve_intel
-import feeds
-from feeds import classify
-from incidents import CVE_RE
+from . import cve_intel
+from . import feeds
+from .feeds import classify
+from .incidents import CVE_RE
 
 CONFIRMED = "CONFIRMED"
 LIKELY = "LIKELY"

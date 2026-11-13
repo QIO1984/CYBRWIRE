@@ -2,7 +2,7 @@
 Configuration loading for CybrWire
 
 cybrwire.yaml and community.yaml ship with the app. usrwire.yaml is the user's own,
-created from usrwire.example.yaml and ignored by git. Keys come from keystore.py,
+created from usrwire.example.yaml. Keys come from keystore.py,
 and the AI provider chosen in the app overrides any ai: section.
 """
 
@@ -15,10 +15,11 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from keystore import (SLOTS_BY_ID, KeyStore, add_feed_slot, convert_user_file, create_user_file,
+from .paths import DATA_DIR, USER_DIR
+from .keystore import (SLOTS_BY_ID, KeyStore, add_feed_slot, convert_user_file, create_user_file,
                       feed_key_spec)
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = USER_DIR  # Your settings, keys, state and history; see paths.py
 
 # Feed files and the category their sources fall under when the YAML key is missing
 FEED_FILES = [
@@ -216,8 +217,11 @@ class Config:
         return names
 
 
+SHIPPED_FILES = ("cybrwire.yaml", "community.yaml")
+
+
 def _read_yaml(filename: str) -> Dict[str, Any]:
-    path = os.path.join(APP_DIR, filename)
+    path = os.path.join(DATA_DIR if filename in SHIPPED_FILES else APP_DIR, filename)
     if not os.path.exists(path):
         return {}
     try:

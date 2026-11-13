@@ -9,13 +9,13 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 
-import cve_intel  # noqa: E402
-import digest  # noqa: E402
-import evidence  # noqa: E402
-import feeds  # noqa: E402
-import notify  # noqa: E402
-from evidence import CONFIRMED, LIKELY, REPORTED, apply_evidence, assess, assess_cve  # noqa: E402
-from watchlist import Watchlist  # noqa: E402
+from cybrwire import cve_intel  # noqa: E402
+from cybrwire import digest  # noqa: E402
+from cybrwire import evidence  # noqa: E402
+from cybrwire import feeds  # noqa: E402
+from cybrwire import notify  # noqa: E402
+from cybrwire.evidence import CONFIRMED, LIKELY, REPORTED, apply_evidence, assess, assess_cve  # noqa: E402
+from cybrwire.watchlist import Watchlist  # noqa: E402
 
 NOW = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
 

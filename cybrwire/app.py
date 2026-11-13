@@ -19,42 +19,45 @@ from rich.theme import Theme
 from rich.panel import Panel
 from rich import box
 from collections import Counter
-from enrichment import enrichment_engine, initialize_enrichment
-import ai
-from config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
-from keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
-from feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, fetch_doomsday_seconds
-from incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
-import cve_intel
-from cve_card import CveCard
-from state import AppState, alert_key
-from watch_card import WatchCard
-from key_card import KeyCard
-from watchlist import Watchlist, matches_search
-from dedupe import group_duplicates
-from digest import build_digest
-from history import History
-import notify
+from .enrichment import enrichment_engine, initialize_enrichment
+from . import ai
+from . import paths
+from .config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
+from .keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
+from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, fetch_doomsday_seconds
+from .incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
+from . import cve_intel
+from .cve_card import CveCard
+from .state import AppState, alert_key
+from .watch_card import WatchCard
+from .key_card import KeyCard
+from .watchlist import Watchlist, matches_search
+from .dedupe import group_duplicates
+from .digest import build_digest
+from .history import History
+from . import notify
 from textual.app import App, Screen, ComposeResult
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.widgets import Input, Static, Header
-import sound
-import evidence
-from livewire import LiveWire, LiveWirePanel, wire_items
-from widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
+from . import sound
+from . import evidence
+from .livewire import LiveWire, LiveWirePanel, wire_items
+from .widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import Theme as TextualTheme
-from theme import COLD_WAR, DEFAULT_PALETTE, PALETTES, Palette
+from .theme import COLD_WAR, DEFAULT_PALETTE, PALETTES, Palette
 from textual import events
+
+MIGRATED = paths.bootstrap()
 
 # Log to a file - writing to stderr would draw over the TUI
 logging.basicConfig(
     level=logging.WARNING,
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
-    filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), "cybrwire.log"),
+    filename=os.path.join(paths.USER_DIR, "cybrwire.log"),
 )
 for _handler in logging.getLogger().handlers:
     _handler.setFormatter(RedactingFormatter(_handler.formatter._fmt if _handler.formatter else None))

@@ -12,12 +12,12 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.containers import Horizontal
 
-from widgets import Card, CardButton
+from .widgets import Card, CardButton
 from textual.widgets import Static
 
-import cve_intel
-from feeds import KEV_DETAILS
-from incidents import age
+from . import cve_intel
+from .feeds import KEV_DETAILS
+from .incidents import age
 
 NVD_DETAIL_URL = "https://nvd.nist.gov/vuln/detail/"
 MAX_MENTIONS = 8

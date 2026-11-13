@@ -22,7 +22,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Search** – press `/` to filter as you type across all feeds and a year of saved history, including older alerts and indicators
 - **Duplicate grouping** – the same story from several feeds becomes one row marked `+N`; `u` lists every report
 - **Notifications** – push watchlist hits, new KEV entries or zero-days to ntfy, Discord or Slack
-- **Digest mode** – `python3 cybrwire.py --digest` prints a plain-text summary for a terminal, pipe or cron job, with no AI calls
+- **Digest mode** – `cybrwire --digest` prints a plain-text summary for a terminal, pipe or cron job, with no AI calls
 - **CVE card** – press `i` for CVSS, EPSS, CISA KEV status, exploit links, affected products and which of your feeds report it
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
 - **Configurable feeds** – define curated, custom, and community intelligence sources via YAML
@@ -110,21 +110,31 @@ Press `t` to cycle themes. Your choice is remembered between runs. To retake the
 
 ## Installation & Usage
 
+Install with [pipx](https://pipx.pypa.io) (keeps CybrWire and its dependencies out of your system Python):
+
 ```bash
-# Clone the repo
-git clone https://github.com/QIO1984/cybrwire.git
-cd cybrwire
-
-# Recommended: create a virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+pipx install git+https://github.com/QIO1984/CYBRWIRE.git
 
 # Run it! Press Shift+K in the app to add API keys (optional)
-python3 cybrwire.py
+cybrwire
 ```
+
+Upgrade later with `pipx upgrade cybrwire`.
+
+Your settings (`usrwire.yaml`), keys file, saved state, history and log live in `~/.config/cybrwire`. Set `CYBRWIRE_HOME` to use another folder. The curated and community feed lists ship inside the package.
+
+To run from a clone instead (for development or contributing):
+
+```bash
+git clone https://github.com/QIO1984/CYBRWIRE.git
+cd CYBRWIRE
+python3 -m venv venv && source venv/bin/activate
+pip install -e .
+cybrwire            # or: python -m cybrwire
+python -m unittest discover -s tests
+```
+
+A clone that already has local files next to the code (`usrwire.yaml`, state, history) moves them to `~/.config/cybrwire` on first launch.
 
 ### Keyboard Controls
 
@@ -151,7 +161,7 @@ python3 cybrwire.py
 | `e` | Re-enable disabled feeds |
 | `q` | Quit |
 
-Your data age, display mode, theme and filters are saved in `cybrwire_state.json`, so later launches skip the startup questions. Run `python3 cybrwire.py --setup` to answer them again.
+Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
 
 ## AI Briefings
 
@@ -255,7 +265,7 @@ A **CLEAN** result means the provider has no record of the indicator, not that i
 ## Configuration Files
 
 - **`cybrwire.yaml`** – Curated official threat feeds (CISA, Microsoft, Talos, etc.)
-- **`usrwire.yaml`** – Yours: your feeds, watchlist and notification triggers. Created on first run from `usrwire.example.yaml`, ignored by git, and never holds keys
+- **`usrwire.yaml`** – Yours: your feeds, watchlist and notification triggers. Created on first run from a documented template, kept in `~/.config/cybrwire`, and never holds keys
 - **`community.yaml`** – Community-contributed feeds - Submit yours via PR
 
 Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),
@@ -283,7 +293,7 @@ watchlist:
 ```
 
 Notifications can go to ntfy, Pushover, Telegram, Discord or Slack. Targets are added with `Shift+K`, because their URLs work like passwords. Which events
-send one is set in a `notifications:` section (see `usrwire.yaml`). Run `python3 cybrwire.py --test-notify` to check them.
+send one is set in a `notifications:` section (see `usrwire.yaml`). Run `cybrwire --test-notify` to check them.
 
 Every alert is saved to `cybrwire_history.db` for a year, so search can find items that feeds have dropped.
 

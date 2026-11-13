@@ -22,7 +22,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import yaml
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+from .paths import DATA_DIR, USER_DIR
+
+APP_DIR = USER_DIR
 SERVICE = "cybrwire"
 SECRETS_FILE = "cybrwire_secrets.yaml"
 USER_FILE = "usrwire.yaml"
@@ -315,7 +317,7 @@ def convert_user_file(app_dir: str = APP_DIR) -> bool:
     """
     old = os.path.join(app_dir, OLD_USER_FILE)
     new = os.path.join(app_dir, USER_FILE)
-    example_path = os.path.join(app_dir, EXAMPLE_FILE)
+    example_path = os.path.join(DATA_DIR, EXAMPLE_FILE)
     if not os.path.exists(old) or os.path.exists(new) or not os.path.exists(example_path):
         return False
     try:
@@ -338,7 +340,7 @@ def convert_user_file(app_dir: str = APP_DIR) -> bool:
 def create_user_file(app_dir: str = APP_DIR) -> None:
     """First run: start from the documented template"""
     new = os.path.join(app_dir, USER_FILE)
-    example_path = os.path.join(app_dir, EXAMPLE_FILE)
+    example_path = os.path.join(DATA_DIR, EXAMPLE_FILE)
     if os.path.exists(new) or os.path.exists(os.path.join(app_dir, OLD_USER_FILE)) or not os.path.exists(example_path):
         return
     try:
