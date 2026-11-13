@@ -57,24 +57,45 @@ class WebLogin(unittest.TestCase):
         self.assertIsNone(web.check_config("0.0.0.0", "pw"))
         self.assertIsNone(web.check_config("127.0.0.1", ""))
 
-    def test_middleware_blocks_then_lets_in(self):
+    def test_session_token(self):
+        tok = web.session_token("u", "pw", 2000)
+        self.assertTrue(web.token_ok(tok, "u", "pw", now=1000))
+        self.assertFalse(web.token_ok(tok, "u", "pw", now=3000))  # expired
+        self.assertFalse(web.token_ok(tok, "u", "other", now=1000))  # wrong password
+        self.assertFalse(web.token_ok("2000." + "0" * 64, "u", "pw", now=1000))  # forged
+        for junk in (None, "", "abc", "x.y"):
+            self.assertFalse(web.token_ok(junk, "u", "pw", now=1000))
+
+    def test_login_page_flow(self):
         import asyncio
         from aiohttp import web as aw
         from aiohttp.test_utils import TestClient, TestServer
 
         async def go():
             a = aw.Application(middlewares=[web.make_auth_middleware("cybrwire", "pw")])
-            a.add_routes([aw.get("/", lambda r: aw.Response(text="secret page"))])
+            a.add_routes([aw.get("/", lambda r: aw.Response(text="secret page")),
+                          aw.get("/ws", lambda r: aw.Response(text="secret ws"))])
             with mock.patch("asyncio.sleep", new=mock.AsyncMock()):
                 async with TestClient(TestServer(a)) as c:
-                    r = await c.get("/")
+                    r = await c.get("/", allow_redirects=False)
+                    body = await r.text()
+                    self.assertEqual(r.status, 200)
+                    self.assertIn('type="password"', body)
+                    self.assertNotIn("secret", body)
+                    self.assertEqual((await c.get("/ws")).status, 401)  # no page, no websocket
+                    r = await c.post("/login", data={"user": "cybrwire", "password": "wrong"})
                     self.assertEqual(r.status, 401)
-                    self.assertIn("Basic", r.headers["WWW-Authenticate"])
-                    self.assertNotIn("secret", await r.text())
-                    r = await c.get("/", headers={"Authorization": basic("cybrwire", "wrong")})
-                    self.assertEqual(r.status, 401)
-                    r = await c.get("/", headers={"Authorization": basic("cybrwire", "pw")})
-                    self.assertEqual((r.status, await r.text()), (200, "secret page"))
+                    self.assertIn("Wrong password", await r.text())
+                    self.assertEqual((await c.get("/ws")).status, 401)
+                    r = await c.post("/login", data={"user": "cybrwire", "password": "pw"}, allow_redirects=False)
+                    self.assertEqual(r.status, 303)
+                    self.assertIn("httponly", r.headers["Set-Cookie"].lower())
+                    # the client keeps the cookie, so the page and websocket now open
+                    self.assertEqual(await (await c.get("/")).text(), "secret page")
+                    self.assertEqual((await c.get("/ws")).status, 200)
+                async with TestClient(TestServer(a)) as c2:  # curl-style header still works
+                    r = await c2.get("/", headers={"Authorization": basic("cybrwire", "pw")})
+                    self.assertEqual(await r.text(), "secret page")
         asyncio.run(go())
 
 

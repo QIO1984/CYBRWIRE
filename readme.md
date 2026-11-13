@@ -157,7 +157,7 @@ docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' \
   -e CYBRWIRE_WEB_URL=http://YOUR-SERVER-IP:8000 -v cybrwire-data:/data cybrwire
 ```
 
-Your browser shows a sign-in box (user `cybrwire`, or whatever `CYBRWIRE_WEB_USER` is set to).
+Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_USER` is set to).
 
 - **The login is basic.** It is one shared password over plain http, so anyone who can watch your network traffic could read it. That is fine on a home LAN or over Tailscale (which encrypts). For anything wider, put an https reverse proxy in front. Never expose it to the internet as it is: the page gives full control of the app, including your keys.
 - **Locally** (`cybrwire-web` on `127.0.0.1`) the password is optional. Set `CYBRWIRE_WEB_PASSWORD` to require one anyway. On any other address the server refuses to start without it.
