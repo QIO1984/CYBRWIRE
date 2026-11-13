@@ -16,7 +16,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 ## Features
 
 - **85+ curated threat intelligence sources** including CISA, vendor advisories (Fortinet, Palo Alto, Cisco, Ivanti, Microsoft), national CERTs, GitHub security advisories, Ransomware.live, ThreatFox, and more
-- **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, and Indicators (what to block)
+- **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, Indicators (what to block), and Outages (what is broken right now)
 - **CVE scores** – CISA KEV status, CVSS severity (NVD) and EPSS exploit likelihood shown wherever a CVE appears
 - **Watchlist** – star everything that mentions the vendors, products or keywords you care about, and press `w` to see only those
 - **Search** – press `/` to filter as you type across all feeds and a year of saved history, including older alerts and indicators
@@ -184,7 +184,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `r` | Force refresh all feeds |
 | `d` | Cycle data age (24h → 48h → 7d) |
 | `f` | Cycle filter (all → alerts only → posts only) |
-| `4` | Cycle content type (All → Advisories → News & Research → Ransomware → Indicators) |
+| `4` | Cycle content type (All → Advisories → News & Research → Ransomware → Indicators → Outages) |
 | `/` | Search all loaded items (`esc` clears) |
 | `w` | Show only watchlist hits, or everything |
 | `W` | Open the watchlist card: see all terms and their hits, add or remove them |
@@ -214,6 +214,12 @@ You can keep a Primary and an Alternate provider and model, and switch between t
 ## Live Wire
 
 The bar across the top shows what the app is really doing. Its title follows each feed check as it runs, then counts down to the next one. Between arrivals, what has the strongest evidence of exploitation in the last 7 days takes turns, along with busy ransomware campaigns and new breaches, and each line says why it's there. New items with evidence, or watchlist hits, are announced as `JUST IN`. Anything new wears a `LIVE` badge in the feed for 90 seconds. Press `l` or click the bar to jump to what's on show.
+
+## Outages
+
+Ten services' own status pages are watched for incidents: AWS, Azure, Google Cloud, Google Workspace, Cloudflare, GitHub, Slack, Discord, OpenAI and Zoom. An active incident shows in the Alerts list as `OUTAGE · service: ...`. Planned maintenance and all-clears are left out of Alerts, and an incident with no update for 48 hours counts as over. Press `4` until you reach Outages to see recent incidents of both kinds.
+
+Microsoft 365 has no public status feed, so it isn't covered directly. It often shows up on other services' pages when it fails (Zoom and OpenAI both list Microsoft-related incidents). You can add any status page that publishes RSS or Atom in your own `usrwire.yaml` with `type: status` and `kind: outage`.
 
 ## Evidence
 

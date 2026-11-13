@@ -212,6 +212,8 @@ def is_breach(alert: Dict) -> bool:
 
 def is_alert(alert: Dict, watch_hits: List[str]) -> bool:
     """What the default Alerts filter shows: something happening that you may need to act on"""
+    if alert.get("kind") == "outage":
+        return not alert.get("resolved")  # Something broken now; the all-clear is history
     if alert.get("evidence") or watch_hits or is_breach(alert):
         return True
     if alert["severity"] == "ransomware":

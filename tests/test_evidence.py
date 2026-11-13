@@ -211,6 +211,33 @@ class ParserTests(Base):
         self.assertIn("Metasploit module", ev.reasons)
         self.assertIsNone(assess_cve("CVE-2026-3009", NOW))  # No module, no signal
 
+    def test_status_pages_show_active_outages_only(self):
+        now = datetime.now(timezone.utc)
+
+        def entry(title, ago_hours, body="Investigating", link="https://status.test/1"):
+            ts = (now - timedelta(hours=ago_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return f"<entry><title>{title}</title><updated>{ts}</updated><link href='{link}'/><content type='html'>{body}</content></entry>"
+
+        future = (now + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        atom = ("<feed xmlns='http://www.w3.org/2005/Atom'>"
+                + entry("Elevated errors on the API", 1)
+                + entry("Service impact: Login failures", 5)
+                + entry("Service is operating normally: [RESOLVED] Login failures", 2, "Resolved")
+                + entry("Old incident that never got closed", 100)
+                + entry("Scheduled maintenance for the API", 1)
+                + entry("Zoom update (No Operational Impact)", 1)
+                + f"<entry><title>Announcement</title><updated>{future}</updated></entry></feed>")
+        rows = {r["title"]: r for r in feeds.parse_status(atom, "Acme Status", "curated")}
+        self.assertEqual(set(rows), {
+            "OUTAGE · Acme: Elevated errors on the API",
+            "RESOLVED · Acme: Login failures",            # The all-clear beats the earlier updates
+            "RESOLVED · Acme: Old incident that never got closed",
+            "RESOLVED · Acme: Zoom update (No Operational Impact)"})
+        active = rows["OUTAGE · Acme: Elevated errors on the API"]
+        self.assertEqual((active["kind"], active["severity"], active["resolved"]), ("outage", "info", False))
+        self.assertTrue(evidence.is_alert(active, []))
+        self.assertFalse(evidence.is_alert(rows["RESOLVED · Acme: Login failures"], []))
+
     def test_euvd(self):
         rows = feeds.parse_euvd([{"id": "EUVD-1", "aliases": "GHSA-x\nCVE-2024-27834\n", "description": "Bug <b>here</b>",
                                   "exploitedSince": "Nov 4, 2026, 12:00:00 AM"}, {"id": "EUVD-2", "aliases": "GHSA-y\n"}], "ENISA Exploited", "curated")

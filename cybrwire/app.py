@@ -24,7 +24,7 @@ from . import paths
 from .config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
 from .keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
 from .links import open_link
-from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, parse_metasploit, fetch_doomsday_seconds
+from .feeds import MAX_TITLE_LEN, KEV_CATALOG, parse_json, parse_rss, parse_threatfox, parse_txt, parse_urlhaus, parse_circl, parse_euvd, parse_metasploit, parse_status, fetch_doomsday_seconds
 from .incidents import CVE_RE, build_incidents, age, KIND_LABELS, SEVERITY_RANK
 from . import cve_intel
 from .cve_card import CveCard
@@ -111,7 +111,7 @@ COUNTRY_NAMES = {
 force_event = asyncio.Event()
 # What '4' cycles through. "All" leaves indicators out; they have their own view.
 CONTENT_KINDS = [("all", "All"), ("advisory", "Advisories"), ("news", "News & Research"),
-                 ("ransomware", "Ransomware"), ("indicators", "Indicators")]
+                 ("ransomware", "Ransomware"), ("indicators", "Indicators"), ("outage", "Outages")]
 
 
 async def fetch_breaches():
@@ -202,7 +202,7 @@ class HelpScreen(Screen):
         help_text.append("│    Posts         - Blog posts and advisories only\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [CONTENT TYPE] (Press '4' to cycle)\n", style=f"bold {accent}")
-        help_text.append("│    All (default) - Advisories, news and ransomware (indicators have their own view)\n", style=color)
+        help_text.append("│    All (default) - Advisories, news, ransomware and active outages (indicators have their own view)\n", style=color)
         help_text.append("│    Advisories    - Vendor bulletins, CISA/KEV, national CERTs, GitHub advisories: what to patch\n", style=color)
         help_text.append("│    News & Research - Security news and vendor research: what's happening\n", style=color)
         help_text.append("│    Ransomware    - Ransomware.live victim claims: who's getting hit\n", style=color)
@@ -335,7 +335,7 @@ class HelpScreen(Screen):
         help_text.append("│  R              Force Refresh - Fetch alerts immediately (don't wait for timer)\n", style=color)
         help_text.append("│  D              Cycle Data Age - Switch between 24h / 48h / 7d windows\n", style=color)
         help_text.append("│  F              Cycle Alert Type - Switch between All / Alerts / Posts\n", style=color)
-        help_text.append("│  4              Content Type - All / Advisories / News & Research / Ransomware / Indicators\n", style=color)
+        help_text.append("│  4              Content Type - All / Advisories / News & Research / Ransomware / Indicators / Outages\n", style=color)
         help_text.append("│  /              Search - Filter as you type, across all feeds and history; Esc clears it\n", style=color)
         help_text.append("│  w              Watchlist Only - Show only items matching your watchlist (marked ★)\n", style=color)
         help_text.append("│  Shift+W        Watchlist Card - See all terms and their hits, add or remove them\n", style=color)
@@ -1283,7 +1283,8 @@ class CybrWireApp(App):
                    "urlhaus": lambda r, n, f: parse_urlhaus(r.json(), n, f),
                    "circl": lambda r, n, f: parse_circl(r.json(), n, f),
                    "euvd": lambda r, n, f: parse_euvd(r.json(), n, f),
-                   "metasploit": lambda r, n, f: parse_metasploit(r.json(), n, f)}
+                   "metasploit": lambda r, n, f: parse_metasploit(r.json(), n, f),
+                   "status": lambda r, n, f: parse_status(r.text, n, f)}
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
         self.wire.begin_sweep(len(all_sources))
 
@@ -2726,7 +2727,7 @@ class CybrWireApp(App):
         return CONTENT_KINDS[self.kind_index][0]
     
     def action_cycle_feeds(self):
-        """Cycle content types: All → Advisories → News & Research → Ransomware → Indicators"""
+        """Cycle content types: All → Advisories → News & Research → Ransomware → Indicators → Outages"""
         self.kind_index = (self.kind_index + 1) % len(CONTENT_KINDS)
         self.feed_at_top = True
         if self.main_view_mode != "alerts":

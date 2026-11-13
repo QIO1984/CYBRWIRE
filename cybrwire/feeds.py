@@ -186,6 +186,42 @@ def parse_metasploit(data, source_name, source_file):
     return []
 
 
+SCHEDULED = re.compile(r"\b(scheduled|maintenance|lifecycle update|planned)\b", re.IGNORECASE)
+RESOLVED = re.compile(r"\b(resolved|operating normally|completed|has been fixed|recovered|no (operational )?impact)\b", re.IGNORECASE)
+OUTAGE_ACTIVE_HOURS = 48  # An incident with no update for this long is history, whatever its last status says
+
+
+def parse_status(text, source_name, source_file):
+    """
+    A service's own status page (Atom or RSS): what is broken right now. Planned maintenance is
+    left out, and so are future-dated entries, which are announcements, not outages.
+    """
+    service = re.sub(r"\s+status$", "", source_name, flags=re.IGNORECASE)
+    now = datetime.now(timezone.utc)
+    newest = {}  # Status pages post every update as its own entry: keep the latest per incident
+    for e in feedparser.parse(text).entries[:60]:
+        ts = entry_time(e)
+        raw_title = clean_html(e.get("title", ""))
+        summary = clean_html(e.get("summary") or e.get("description") or "")
+        if ts is None or ts > now + timedelta(minutes=5) or SCHEDULED.search(raw_title):
+            continue
+        # The newest update comes first in the text, so its status word is the current state
+        resolved = bool(RESOLVED.search(f"{raw_title} {summary[:160]}")) or now - ts > timedelta(hours=OUTAGE_ACTIVE_HOURS)
+        title = re.sub(r"^(Service is operating normally|Informational message|Service impact|Service disruption): ?", "", raw_title, flags=re.IGNORECASE)
+        title = re.sub(r"^\[?RESOLVED\]?:? ?", "", title, flags=re.IGNORECASE)
+        key = title.lower()
+        if key in newest and newest[key][0] >= ts:
+            continue
+        newest[key] = (ts, title, summary, e.get("link", ""), resolved)
+    items = []
+    for ts, title, summary, link, resolved in newest.values():
+        label = "RESOLVED" if resolved else "OUTAGE"
+        items.append({"title": f"{label} · {service}: {title}"[:MAX_TITLE_LEN], "summary": summary[:MAX_SUMMARY_LEN],
+                      "published": ts.strftime("%a, %d %b"), "severity": "info", "source": source_name,
+                      "source_file": source_file, "url": link, "ts": ts, "kind": "outage", "resolved": resolved})
+    return items
+
+
 def parse_euvd(data, source_name, source_file):
     """ENISA's list of exploited vulnerabilities"""
     items = []
