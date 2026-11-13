@@ -3176,7 +3176,10 @@ def main():
         return
     
     saved = STATE.settings
-    if saved and not args.setup:
+    if "web_driver" in os.environ.get("TEXTUAL_DRIVER", ""):
+        # Served in a browser: there is no terminal for the plain-text questions, so use the saved or default choices
+        recency, cold_war = saved.get("recency_hours", 24), saved.get("cold_war", False)
+    elif saved and not args.setup:
         recency = saved.get("recency_hours", 24)
         cold_war = saved.get("cold_war", False)
     else:
