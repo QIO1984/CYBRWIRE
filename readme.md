@@ -153,8 +153,7 @@ Or in a container (data is kept in the `cybrwire-data` volume). The container li
 
 ```bash
 docker build -t cybrwire .
-docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' \
-  -e CYBRWIRE_WEB_URL=http://YOUR-SERVER-IP:8000 -v cybrwire-data:/data cybrwire
+docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' -v cybrwire-data:/data cybrwire
 ```
 
 **To keep it running in the background** (restarts after a reboot, keys included), use Docker Compose:
@@ -174,7 +173,8 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 - **Locally** (`cybrwire-web` on `127.0.0.1`) the password is optional. Set `CYBRWIRE_WEB_PASSWORD` to require one anyway. On any other address the server refuses to start without it.
 - **Keys:** a container has no system keychain. Pass keys as environment variables (`-e CYBRWIRE_ANTHROPIC_API_KEY=...`, or `--env-file`), or add them with Shift+K, which saves them to a restricted file in the volume.
 - **Links:** `Enter` can't open your browser from inside a container; copy the address from the alert instead.
-- Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT`, `CYBRWIRE_WEB_USER`, `CYBRWIRE_WEB_PASSWORD`, and `CYBRWIRE_WEB_URL` (the address your browser uses, if it isn't `http://HOST:PORT`).
+- Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT`, `CYBRWIRE_WEB_USER`, `CYBRWIRE_WEB_PASSWORD`, and `CYBRWIRE_WEB_URL` (forces one fixed address; normally leave it unset).
+- **Behind a reverse proxy** (Caddy, nginx): point it at the container's port and pass websockets through (Caddy's `reverse_proxy` does this by default). The page uses whatever address your browser used, so the IP address and the proxy's name both work. If you set `CYBRWIRE_WEB_URL` from an older version, remove it.
 
 ### Keyboard Controls
 

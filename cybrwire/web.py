@@ -8,8 +8,9 @@ the password is optional; on any other address the server refuses to start witho
 The password travels unencrypted over plain http, so keep it to your LAN or Tailscale (which
 encrypts), or put an https proxy in front.
 
-Other settings: CYBRWIRE_WEB_HOST (default 127.0.0.1), CYBRWIRE_WEB_PORT (8000) and
-CYBRWIRE_WEB_URL (the address your browser uses, if not http://HOST:PORT).
+The page works out its own address from the one your browser used, so the IP address and a name
+behind a reverse proxy (Caddy, nginx) both work. Settings: CYBRWIRE_WEB_HOST (default 127.0.0.1) and
+CYBRWIRE_WEB_PORT (8000). CYBRWIRE_WEB_URL forces one fixed address, only needed if auto-detection fails.
 """
 
 import asyncio
@@ -17,6 +18,7 @@ import base64
 import hmac
 import html
 import os
+import re
 import sys
 import time
 from urllib.parse import parse_qs
@@ -84,6 +86,18 @@ def token_ok(token: str | None, user: str, password: str, now: float | None = No
     return hmac.compare_digest(token.encode(), session_token(user, password, int(expires)).encode())
 
 
+HOST_OK = re.compile(r"^[A-Za-z0-9.\-]+(:\d{1,5})?$|^\[[0-9A-Fa-f:]+\](:\d{1,5})?$")
+
+
+def request_origin(request, fallback: str) -> str:
+    """The address the browser used (behind a proxy, the forwarded one), like https://cybrwire.lan"""
+    proto = (request.headers.get("X-Forwarded-Proto") or request.scheme or "http").split(",")[0].strip().lower()
+    host = (request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or "").split(",")[0].strip()
+    if proto not in ("http", "https") or not HOST_OK.match(host):
+        return fallback
+    return f"{proto}://{host}"
+
+
 def make_auth_middleware(user: str, password: str):
     from aiohttp import web
 
@@ -105,7 +119,8 @@ def make_auth_middleware(user: str, password: str):
                 return login_page("Wrong password", 401)
             resp = web.HTTPSeeOther("/")
             resp.set_cookie(COOKIE, session_token(user, password, int(time.time()) + SESSION_SECONDS),
-                            max_age=SESSION_SECONDS, httponly=True, samesite="Strict")
+                            max_age=SESSION_SECONDS, httponly=True, samesite="Strict",
+                            secure=request_origin(request, "http://x").startswith("https"))
             return resp
         if token_ok(request.cookies.get(COOKIE), user, password) or \
                 credentials_ok(request.headers.get("Authorization"), user, password):
@@ -132,7 +147,15 @@ def main() -> None:
     if problem:
         sys.exit(problem)
 
+    fixed_url = os.environ.get("CYBRWIRE_WEB_URL") or None
+
     class AuthServer(Server):
+        async def handle_index(self, request):
+            if not fixed_url:  # Page and live connection must use the address the browser came by
+                self.base_url = getattr(self, "base_url", self.public_url)
+                self.public_url = request_origin(request, self.base_url)
+            return await super().handle_index(request)
+
         async def _make_app(self):
             app = await super()._make_app()
             if password:
@@ -140,7 +163,7 @@ def main() -> None:
             return app
 
     AuthServer(f'"{sys.executable}" -m cybrwire', host=host, port=port, title="CybrWire",
-               public_url=os.environ.get("CYBRWIRE_WEB_URL") or None).serve()
+               public_url=fixed_url).serve()
 
 
 if __name__ == "__main__":

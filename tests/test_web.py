@@ -57,6 +57,25 @@ class Links(unittest.TestCase):
         opened.assert_not_called()
 
 
+class Origin(unittest.TestCase):
+    def req(self, **headers):
+        return mock.Mock(headers=headers, scheme="http")
+
+    def test_direct_by_ip(self):
+        self.assertEqual(web.request_origin(self.req(Host="192.168.1.195:1947"), "http://x"), "http://192.168.1.195:1947")
+
+    def test_behind_a_proxy_uses_the_address_the_browser_used(self):
+        r = self.req(Host="192.168.1.195:1947", **{"X-Forwarded-Proto": "https", "X-Forwarded-Host": "cybrwire.lan"})
+        self.assertEqual(web.request_origin(r, "http://x"), "https://cybrwire.lan")
+        self.assertEqual(web.request_origin(self.req(Host="cybrwire.lan", **{"X-Forwarded-Proto": "https, http"}), "http://x"),
+                         "https://cybrwire.lan")
+
+    def test_junk_falls_back(self):
+        for bad in ('evil.test"><script>', "a b", "", "x/y"):
+            self.assertEqual(web.request_origin(self.req(Host=bad), "http://fallback:8000"), "http://fallback:8000")
+        self.assertEqual(web.request_origin(self.req(Host="ok.lan", **{"X-Forwarded-Proto": "javascript"}), "http://f"), "http://f")
+
+
 def basic(user, password):
     import base64
     return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
