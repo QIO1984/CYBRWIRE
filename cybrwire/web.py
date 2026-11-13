@@ -133,6 +133,21 @@ def make_auth_middleware(user: str, password: str):
     return auth
 
 
+def startup_message(host: str, port: int, user: str, signed_in: bool, in_container: bool) -> str:
+    """What to open in the browser: the listen address (0.0.0.0) isn't something anyone can type"""
+    if host in LOCAL_HOSTS:
+        where = f"Open http://{'localhost' if host == 'localhost' else '127.0.0.1'}:{port} in your browser (this computer only)."
+    elif host in ("0.0.0.0", "::", ""):
+        where = (f"Listening on all network interfaces, port {port}.\n"
+                 "  Open http://<this machine's IP address or name>:<the port you published> in your browser"
+                 + (".\n  In Docker the published port is the left number of -p, or CYBRWIRE_PORT in .env."
+                    if in_container else f", for example http://<IP>:{port}."))
+    else:
+        where = f"Open http://{host}:{port} in your browser."
+    login = f"Sign in as '{user}' with your CYBRWIRE_WEB_PASSWORD." if signed_in else "No password is set (allowed on this computer only)."
+    return f"CybrWire is running.\n  {where}\n  {login}\n  Stop with Ctrl+C."
+
+
 def main() -> None:
     try:
         from textual_serve.server import Server
@@ -148,6 +163,7 @@ def main() -> None:
         sys.exit(problem)
 
     fixed_url = os.environ.get("CYBRWIRE_WEB_URL") or None
+    print(startup_message(host, port, user, bool(password), os.path.exists("/.dockerenv")), flush=True)
 
     class AuthServer(Server):
         async def handle_index(self, request):

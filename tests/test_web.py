@@ -76,6 +76,23 @@ class Origin(unittest.TestCase):
         self.assertEqual(web.request_origin(self.req(Host="ok.lan", **{"X-Forwarded-Proto": "javascript"}), "http://f"), "http://f")
 
 
+class Startup(unittest.TestCase):
+    def test_local_says_what_to_open(self):
+        msg = web.startup_message("127.0.0.1", 8000, "cybrwire", False, False)
+        self.assertIn("http://127.0.0.1:8000", msg)
+        self.assertIn("No password", msg)
+
+    def test_a_container_explains_the_published_port_and_never_prints_the_password(self):
+        msg = web.startup_message("0.0.0.0", 8000, "cybrwire", True, True)
+        self.assertNotIn("http://0.0.0.0", msg)
+        self.assertIn("published", msg)
+        self.assertIn("CYBRWIRE_PORT", msg)
+        self.assertIn("CYBRWIRE_WEB_PASSWORD", msg)
+
+    def test_a_specific_address_is_shown_as_is(self):
+        self.assertIn("http://192.168.1.195:1947", web.startup_message("192.168.1.195", 1947, "u", True, False))
+
+
 def basic(user, password):
     import base64
     return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
