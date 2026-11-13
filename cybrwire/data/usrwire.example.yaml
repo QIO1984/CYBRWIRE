@@ -30,8 +30,8 @@
 # ai:
 #   auto_briefing: false
 
-# YOUR OWN FEEDS: type is rss, json or txt. kind decides where items appear:
-# advisory, news (the default), ransomware or indicators.
+# YOUR OWN FEEDS: type is rss, json or txt (or status, for a service's status page, with kind outage).
+# kind decides where items appear: advisory, news (the default), ransomware, indicators or outage.
 # If a feed needs a key, name how it is sent and the key card gets a row for it:
 #   key_header: the HTTP header that carries the key
 #   key_param:  the URL parameter that carries the key
