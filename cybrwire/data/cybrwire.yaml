@@ -364,10 +364,6 @@ curated:
     url: "https://www.nowsecure.com/feed/"
     type: "rss"
     kind: "news"
-  - name: "Android Security"
-    url: "http://feeds.feedburner.com/AndroidCracking"
-    type: "rss"
-    kind: "news"
 
   # === INFRASTRUCTURE & CLOUD SECURITY ===
   - name: "Wiz Cloud Threat Landscape"
