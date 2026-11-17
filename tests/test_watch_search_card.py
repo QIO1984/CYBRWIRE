@@ -28,6 +28,7 @@ from cybrwire import state  # noqa: E402
 from cybrwire import ai  # noqa: E402
 from cybrwire import cve_card  # noqa: E402
 from cybrwire import links  # noqa: E402
+from cybrwire import livewire  # noqa: E402
 from cybrwire import cve_intel  # noqa: E402
 from cybrwire import app as cybrwire  # noqa: E402
 from cybrwire import feeds  # noqa: E402
@@ -811,20 +812,44 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(clock.display)
             self.assertTrue(cybrwire.STATE.settings["world_clock"])
 
-    async def test_the_live_wire_dot_breathes_between_checks(self):
+    async def test_the_live_wire_dot_breathes_and_nothing_else_does(self):
         app = self.make_app()
         async with app.run_test(size=(160, 30)) as pilot:
             await self.settle(pilot)
             panel = app.query_one(cybrwire.LiveWirePanel)
             app.wire.sweeping = False
-            far = app.wire.last_check_clock + 1000  # Long after any check
-            styles = {str(panel.title_text(far + t).style) for t in (0.0, 0.6, 1.3, 1.9, 2.5)}
-            self.assertEqual(len(styles), 2)  # Bright and dim, alternating
-            self.assertTrue(any(s.startswith("dim ") for s in styles))
-            self.assertTrue(any(s.startswith("bold ") for s in styles))
-            self.assertTrue(panel.title_text(far).plain.lstrip().startswith("●"))  # Always a filled dot: it fades, not disappears
+            pulse = livewire.IDLE_PULSE_SECONDS
+            n = int((app.wire.last_check_clock + 1000) / pulse) + 1  # A moment long after any check
+            starts = [(n + i) * pulse + 0.05 for i in range(4)]
+            titles = [panel.title_text(t) for t in starts]
+            dot_styles = [str(t.spans[0].style) for t in titles]
+            self.assertEqual(dot_styles[0], dot_styles[2])
+            self.assertEqual(dot_styles[1], dot_styles[3])
+            self.assertNotEqual(dot_styles[0], dot_styles[1])  # Bright, then dim
+            self.assertEqual({s.split()[0] for s in dot_styles}, {"bold", "dim"})
+            for t in titles:
+                self.assertEqual(str(t.style), "")  # No base style: dimming the dot can't dim the words
+                self.assertEqual((t.spans[0].start, t.spans[0].end), (0, 3))  # Only " ● " carries the pulse
+                self.assertTrue(t.plain.lstrip().startswith("●"))  # It fades, never disappears
+            rest = {(t.plain, tuple((s.start, s.end, str(s.style)) for s in t.spans[1:])) for t in titles}
+            self.assertEqual(len(rest), 1)  # LIVE WIRE and the status read the same in every phase
             just_checked = app.wire.last_check_clock + 0.5
-            self.assertEqual(str(panel.title_text(just_checked).style), f"bold {app.palette.accent}")
+            self.assertEqual(str(panel.title_text(just_checked).spans[0].style), f"bold {app.palette.accent}")
+
+    async def test_the_pulse_does_not_repaint_the_feed_text(self):
+        app = self.make_app()
+        async with app.run_test(size=(160, 30)) as pilot:
+            await self.settle(pilot)
+            panel = app.query_one(cybrwire.LiveWirePanel)
+            app.wire.sweeping = False
+            pulse = livewire.IDLE_PULSE_SECONDS
+            n = int((app.wire.last_check_clock + 1000) / pulse) + 1
+            panel.redraw(n * pulse + 0.05)
+            title_before = str(panel.border_title)
+            with mock.patch.object(panel, "update") as update:
+                panel.redraw((n + 1) * pulse + 0.05)  # Only the dot's phase has changed
+                update.assert_not_called()
+            self.assertIsNotNone(panel.drawn)
 
     async def test_world_clock_is_centered(self):
         app = self.make_app()

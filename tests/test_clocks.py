@@ -75,10 +75,21 @@ class CatalogTests(unittest.TestCase):
         marked = set(re.findall(r'"([A-Z]{3}): [^"]+"\s+# UTC\S*\s+\(default\)', yaml_text))
         self.assertEqual(marked, {c for c, _ in clocks.DEFAULT_CLOCKS})
         env_text = open(os.path.join(os.path.dirname(paths.DATA_DIR), "..", "cybrwire.env.example")).read()
-        menu = set(re.findall(r"\b([A-Z]{3}:[A-Za-z_/]+)", env_text.split("to copy from:")[1].split("# Keys")[0]))
+        menu = set(re.findall(r"\b([A-Z]{3}:[A-Za-z_/]+)", env_text.split("More cities, one per time zone")[1].split("# Keys")[0]))
         self.assertEqual(menu, {f"{c}:{z}" for c, z, _ in clocks.CATALOG})
-        line = next(l for l in env_text.splitlines() if l.startswith("# CYBRWIRE_CLOCKS="))
+        line = next(l for l in env_text.splitlines() if l.startswith("CYBRWIRE_CLOCKS="))  # A live line, not a comment
         self.assertEqual(line.split("=", 1)[1], ",".join(f"{c}:{z}" for c, z in clocks.DEFAULT_CLOCKS))
+
+    def test_the_shipped_env_file_gives_the_default_clocks_as_it_stands(self):
+        from cybrwire import paths
+        env_text = open(os.path.join(os.path.dirname(paths.DATA_DIR), "..", "cybrwire.env.example")).read()
+        value = next(l for l in env_text.splitlines() if l.startswith("CYBRWIRE_CLOCKS=")).split("=", 1)[1]
+        with mock.patch.dict(os.environ, {"CYBRWIRE_CLOCKS": value}):
+            shipped = [label for label, _ in clocks.parse_clocks(clocks.from_env())]
+        self.assertEqual(shipped, [label for label, _ in clocks.parse_clocks(None)])
+        # The way it was edited on a real server: a space after a comma, one more city on the end
+        with mock.patch.dict(os.environ, {"CYBRWIRE_CLOCKS": value + ", SYD:Australia/Sydney, HON:Pacific/Honolulu"}):
+            self.assertEqual([l for l, _ in clocks.parse_clocks(clocks.from_env())][-2:], ["SYD", "HON"])
 
     def test_the_environment_setting_beats_the_yaml_and_junk_falls_back(self):
         with mock.patch.dict(os.environ, {"CYBRWIRE_CLOCKS": " SYD:Australia/Sydney , DXB:Asia/Dubai ,"}):

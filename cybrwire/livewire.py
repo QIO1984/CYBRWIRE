@@ -249,7 +249,8 @@ class LiveWirePanel(Static):
             failed = app.failed_feed_count()
             if failed:
                 status += f" · {failed} feed{'s' if failed != 1 else ''} failed"
-        text = Text(f" {dot} ", style=dot_style)
+        text = Text()  # No base style: the dot's colour (and its dimming) must not reach the words
+        text.append(f" {dot} ", style=dot_style)
         text.append(p.title("LIVE WIRE"), style=f"bold {p.text}")
         text.append(f" · {status} ", style=p.muted)
         return text
@@ -302,11 +303,12 @@ class LiveWirePanel(Static):
         state = (p.key, title.markup, subtitle.markup, body.markup)
         if state == self.drawn:
             return
-        self.drawn = state
+        previous, self.drawn = self.drawn, state
         self.border_title = title
         self.border_subtitle = subtitle
         self.styles.border = ("round", p.accent if shown and shown.arrival else p.border)
-        self.update(body)
+        if previous is None or previous[0] != state[0] or previous[3] != state[3]:
+            self.update(body)  # The dot breathing alone must not repaint the feed text
 
     def on_click(self, event: events.Click) -> None:
         if event.button != 1:

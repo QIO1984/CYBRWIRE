@@ -217,7 +217,7 @@ clocks:
   - "SYD: Australia/Sydney"
 ```
 
-- **In Docker,** put the list on one line in `cybrwire.env` instead (it takes priority over `usrwire.yaml`): `CYBRWIRE_CLOCKS=NYC:America/New_York,SYD:Australia/Sydney`
+- **In Docker,** the list is one line in `cybrwire.env` (it takes priority over `usrwire.yaml`). `cybrwire.env.example` ships with the six defaults on that line and the full city list underneath: copy the cities you want onto the line, for example `CYBRWIRE_CLOCKS=NYC:America/New_York,SYD:Australia/Sydney`.
 - Restart CybrWire after changing either one.
 
 ## AI Briefings
