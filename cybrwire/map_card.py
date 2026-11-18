@@ -1,6 +1,5 @@
 """Full-window threat map, opened with 'm'."""
 
-from rich.console import Group
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
@@ -39,14 +38,14 @@ class MapCard(Card):
         self.redraw()
 
     def pulse(self) -> None:
-        self.app.map_step += 1
+        if self.app.effects_on:
+            self.app.map_step += 1
         self.redraw()
 
     def redraw(self) -> None:
         view = self.query_one("#map-view", Static)
         width, height = max(30, view.size.width - 2), max(8, view.size.height)
-        picture, lines = self.app.map_text(width, height)
-        self.shown = Group(picture, "", *lines)  # Kept so a test can read what was drawn
+        self.shown = self.app.map_view_content(width, height)  # Kept so a test can read what was drawn
         view.update(self.shown)
 
     def on_button_pressed(self, event) -> None:

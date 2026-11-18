@@ -137,24 +137,50 @@ class FromAlerts(unittest.TestCase):
         self.assertEqual(set(by_label), {"Cloudflare, GitHub", "Azure"})
         self.assertEqual(by_label["Cloudflare, GitHub"].count, 2)
 
-    def test_the_legend_reports_totals_and_the_busiest_countries(self):
-        spots = [Spot(0, 0, "victim", "US", 9), Spot(0, 0, "victim", "DE", 3), Spot(0, 0, "outage", "AWS", 1)]
-        text = "\n".join(line.plain for line in worldmap.legend(spots, NEON))
-        self.assertIn("Ransomware victims  12", text)
-        self.assertIn("Active outages  1", text)
-        self.assertIn("United States", text)
-        self.assertIn("Down: AWS", text)
+    def test_actors_come_from_attribution_in_apt_headlines_and_advisories_from_the_issuing_source(self):
+        alerts = [alert("China-linked APT41 targets telecoms", "BleepingComputer", severity="apt"),
+                  alert("Lazarus group steals crypto", "The Hacker News", severity="apt"),
+                  alert("Fancy Bear phishing wave", "Krebs", severity="apt"),
+                  alert("Russia strikes a bank (not tagged APT)", "Krebs", severity="info"),
+                  alert("Advisory A", "CISA Advisories", "advisory"), alert("Advisory B", "CISA KEV", "advisory"),
+                  alert("Advisory C", "JPCERT/CC", "advisory"), alert("Old", "NCSC UK Alerts", "advisory", hours=24 * 9)]
+        spots = worldmap.gather_spots(alerts, NOW)
+        actors = {s.label: s.count for s in spots if s.kind == "actor"}
+        advisories = {s.label: s.count for s in spots if s.kind == "advisory"}
+        self.assertEqual(actors, {"CN": 1, "KP": 1, "RU": 1})
+        self.assertEqual(advisories, {"US": 2, "JP": 1})
 
-    def test_a_narrow_legend_puts_each_total_on_its_own_line(self):
-        spots = [Spot(0, 0, "victim", "US", 9), Spot(0, 0, "outage", "AWS", 1)]
-        wide = [line.plain for line in worldmap.legend(spots, NEON, width=100)]
-        narrow = [line.plain for line in worldmap.legend(spots, NEON, width=40)]
-        self.assertEqual(len(narrow), len(wide) + 1)
-        self.assertTrue(all(len(line) <= 40 for line in narrow))
+    def test_the_legend_has_one_line_per_layer_with_totals_and_the_busiest_places(self):
+        spots = [Spot(0, 0, "victim", "US", 9), Spot(0, 0, "victim", "DE", 3), Spot(0, 0, "outage", "AWS", 1),
+                 Spot(0, 0, "actor", "CN", 4), Spot(0, 0, "advisory", "GB", 6)]
+        lines = [line.plain for line in worldmap.legend(spots, NEON, width=100)]
+        text = "\n".join(lines)
+        self.assertEqual(len(lines), len(worldmap.LAYERS) + 1)  # A line per layer, then the note
+        for expected in ("Ransomware victims  12", "United States 9", "Active outages  1", "AWS", "Attributed activity  4",
+                         "China 4", "National advisories  6", "United Kingdom 6"):
+            self.assertIn(expected, text)
 
-    def test_an_empty_map_says_so_instead_of_going_blank(self):
+    def test_every_legend_line_fits_a_narrow_panel(self):
+        spots = [Spot(0, 0, "victim", c, 3) for c in ("US", "DE", "GB", "FR")] + [Spot(0, 0, "outage", "Cloudflare, GitHub; AWS, Azure, Slack", 5)]
+        for width in (40, 56, 100):
+            self.assertTrue(all(line.cell_len <= width for line in worldmap.legend(spots, NEON, width=width)), width)
+
+    def test_an_empty_legend_still_shows_every_layer_at_zero(self):
         text = "\n".join(line.plain for line in worldmap.legend([], NEON))
-        self.assertIn("No victims", text)
+        for _name, _glyph, label, _role in worldmap.LAYERS:
+            self.assertIn(f"{label}  0", text)
+
+    def test_markers_that_share_a_country_are_nudged_apart_so_every_layer_shows(self):
+        spots = [Spot(*worldmap.COUNTRIES["US"], kind, "US", 3) for kind in ("victim", "advisory", "actor", "outage")]
+        text = worldmap.render(100, 20, spots, 0, NEON).plain
+        self.assertIn("◆", text)
+        self.assertIn("■", text)
+        self.assertTrue("▲" in text or "△" in text)  # The attributed-activity marker pulses between the two
+        self.assertTrue(any(ch in text for ch in worldmap.PULSE))
+
+    def test_the_layers_use_different_colours(self):
+        roles = [getattr(NEON, role) for *_rest, role in worldmap.LAYERS]
+        self.assertEqual(len(set(roles)), len(roles))
 
 
 if __name__ == "__main__":

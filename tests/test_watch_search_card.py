@@ -215,6 +215,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
 
     def make_app(self):
         app = cybrwire.CybrWireApp()
+        app.main_view_mode = "alerts"  # The app opens on the map; these tests are about the feed
 
         async def fake_load():
             app.pop_screen()
@@ -498,7 +499,7 @@ class AppBehavior(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             await pilot.press("v")
             await self.settle(pilot)
-            self.assertEqual(app.main_view_mode, "alerts")
+            self.assertEqual(app.main_view_mode, "map")  # The view after API tools
             self.assertIsNone(app.prompt)
 
     async def test_api_tools_enter_runs_the_lookup_and_paste_works(self):

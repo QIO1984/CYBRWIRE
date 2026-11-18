@@ -266,6 +266,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         ("b", "cycle_sound", "Alert Sound"),
         ("z", "toggle_clocks", "World Clock"),
         ("m", "show_map", "Threat Map"),
+        ("x", "toggle_effects", "Effects"),
         ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
@@ -290,8 +291,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     kind_index = reactive(0)  # Index into CONTENT_KINDS
     data_age_index = reactive(0)  # Cycle: 0=24h, 1=48h, 2=7d
     filter_type_index = reactive(1)  # Cycle: 0=all, 1=alerts, 2=posts
-    dashboard_panel_index = reactive(0)  # Cycle dashboard: 0=metrics, 1=war room, 2=feed status, 3=threat map
-    main_view_mode = reactive("alerts")  # alerts, incidents, or api_tools
+    dashboard_panel_index = reactive(0)  # Cycle dashboard: 0=metrics, 1=war room, 2=feed status
+    main_view_mode = reactive("map")  # map, alerts, incidents, or api_tools
     
     def __init__(self, cold_war=False, recency=24):
         super().__init__()
@@ -306,6 +307,9 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.feed_cache = {}  # Feed name -> (when fetched, parsed items), for slow-moving lists
         self.sound = saved.get("sound", sound.OFF)
         self.show_clocks = saved.get("world_clock", True)
+        self.effects_on = bool(saved.get("effects", True))  # Pulses, arrival flashes and the idle screensaver
+        self.main_view_mode = saved.get("main_view") if saved.get("main_view") in ("map", "alerts", "incidents") else "map"
+        self.last_input = time.monotonic()
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
         self.feed_at_top = False    # Return to the first row at the next redraw
@@ -401,6 +405,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             "ai": STATE.settings.get("ai"),
             "sound": self.sound,
             "world_clock": self.show_clocks,
+            "effects": self.effects_on,
+            "main_view": self.main_view_mode if self.main_view_mode in ("map", "alerts", "incidents") else "alerts",
         }
         STATE.save()
     
@@ -581,6 +587,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
                     with Horizontal(classes="view-actions"):
                         yield CardButton("Open latest report", id="act-open-incident")
                         yield CardButton("CVE card", id="act-cve-incident")
+                with Vertical(id="map-panel", classes="view"):
+                    yield Static(id="map-main")
                 with Vertical(id="api-view", classes="view"):
                     with Horizontal(id="indicator-row"):
                         yield Static("Indicator: ", id="indicator-prefix")
@@ -764,10 +772,13 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             self.query_one("#alerts-view").display = mode == "alerts"
             self.query_one("#incidents-view").display = mode == "incidents"
             self.query_one("#api-view").display = mode == "api_tools"
+            self.query_one("#map-panel").display = mode == "map"
             if mode == "alerts":
                 self.sync_feed_view()
             elif mode == "incidents":
                 self.sync_incident_view()
+            elif mode == "map":
+                self.sync_map_view()
             else:
                 self.sync_api_view()
             
@@ -784,8 +795,6 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
                     dashboard_content = self.make_war_room_panel()
                 elif self.dashboard_panel_index == 2:
                     dashboard_content = self.make_feed_status_panel()
-                elif self.dashboard_panel_index == 3:
-                    dashboard_content = self.make_threat_map_panel()
                 else:
                     dashboard_content = self.make_dashboard()
                 
@@ -998,6 +1007,13 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         STATE.save()
         self.mark_dirty()
     
+    def action_toggle_effects(self):
+        """Pulses, arrival flashes and the idle screensaver, all at once"""
+        self.effects_on = not self.effects_on
+        self.save_settings()
+        self.notify(f"Effects {'on' if self.effects_on else 'off'}", timeout=2)
+        self.update_display()
+
     def action_show_map(self):
         """Full-window threat map"""
         if not self.is_loading and not isinstance(self.screen, MapCard):
@@ -1451,7 +1467,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     def action_cycle_feed_view(self):
         """Cycle between alerts, incidents, and API tools views in main feed panel"""
         # Cycle: alerts -> incidents -> api_tools -> alerts
-        views = ["alerts", "incidents", "api_tools"]
+        views = ["alerts", "incidents", "api_tools", "map"]
         current_idx = views.index(self.main_view_mode) if self.main_view_mode in views else 0
         self.main_view_mode = views[(current_idx + 1) % len(views)]
         # Don't reset offsets, preserve position in each view
@@ -1498,16 +1514,17 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         """Toggle view in the focused panel - alerts/incidents/api_tools on left, dashboard views on right"""
         if self.panel_focus == "main":
             # Cycle alerts/incidents/api_tools in left panel
-            views = ["alerts", "incidents", "api_tools"]
+            views = ["alerts", "incidents", "api_tools", "map"]
             current_idx = views.index(self.main_view_mode) if self.main_view_mode in views else 0
             self.main_view_mode = views[(current_idx + 1) % len(views)]
+            self.save_settings()
             self.finish_typing()
             self.update_display()
             if self.main_view_mode == "api_tools":
                 self.focus_indicator_box()
         else:
             # Cycle through all dashboard views in right panel (0-5: metrics, war room, AI correlation, AI risk ranking, enrichment, failed feeds)
-            self.dashboard_panel_index = (self.dashboard_panel_index + 1) % 4
+            self.dashboard_panel_index = (self.dashboard_panel_index + 1) % 3
             self.dashboard_page_offset = 0
 #            logging.info(f"Dashboard view cycled to: {self.dashboard_panel_index}")
             self.update_display()

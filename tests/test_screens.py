@@ -144,7 +144,7 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
                 for name, panel in (("dashboard", app.make_dashboard()), ("feed status", app.make_feed_status_panel()),
                                     ("war room", app.make_war_room_panel()), ("API tools", app.make_api_tools_content()),
                                     ("preview", app.make_alert_preview(PANEL_ALERTS[0])),
-                                    ("threat map", app.make_threat_map_panel())):
+                                    ("map view", app.map_view_content(100, 45))):
                     self.assertTrue(drawn(panel).strip(), f"{name} drew nothing (cold war: {cold_war})")
                 self.assertIn("Acme", drawn(app.make_dashboard()) + drawn(app.make_alert_preview(PANEL_ALERTS[4])))
             for _ in range(3):  # Alerts -> incidents -> API tools -> back
@@ -154,7 +154,7 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
             await self.settle(pilot)
             self.assertEqual(app.screen_stack[-1].__class__.__name__, "Screen")  # Nothing crashed back to a bare screen
 
-    async def test_the_threat_map_is_a_right_panel_view_and_a_full_window_card(self):
+    async def test_the_map_is_the_default_main_view_and_has_a_full_window_card(self):
         cybrwire_app.alert_queue[:] = PANEL_ALERTS
         app = cybrwire_app.CybrWireApp()
 
@@ -166,24 +166,23 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
         app.initial_load = fake_load
         async with app.run_test(size=(160, 45)) as pilot:
             await self.settle(pilot)
-            await pilot.press("tab")  # Focus the right panel, then v steps metrics -> war room -> feed status -> map
+            self.assertEqual(app.main_view_mode, "map")
+            self.assertTrue(app.query_one("#map-panel").display)
+            self.assertFalse(app.query_one("#alerts-view").display)
+            shown = drawn(app.map_view_content(100, 40))
+            for expected in ("Ransomware victims  2", "Active outages  1", "LATEST", "ALERTS / HOUR"):
+                self.assertIn(expected, shown)
+            before = drawn(app.map_view_content(100, 40))
+            for _ in range(3):
+                app.map_tick()  # The timer doesn't run in the harness; the pulse moves markers and scope
+            self.assertNotEqual(before, drawn(app.map_view_content(100, 40)))
+            await pilot.press("v")  # map -> alerts -> incidents -> API tools -> map
+            await self.settle(pilot)
+            self.assertEqual(app.main_view_mode, "alerts")
             for _ in range(3):
                 await pilot.press("v")
                 await self.settle(pilot)
-            self.assertEqual(app.dashboard_panel_index, 3)
-            panel = drawn(app.make_threat_map_panel())
-            self.assertIn("THREAT MAP", panel)
-            self.assertIn("Ransomware victims  2", panel)
-            first = app.map_step
-            for _ in range(3):
-                app.map_tick()  # The timer doesn't run in the harness; the pulse moves the markers
-            self.assertEqual(app.map_step, first + 3)
-            pulsed = drawn(app.make_threat_map_panel())
-            app.map_step += 1
-            self.assertNotEqual(pulsed, drawn(app.make_threat_map_panel()))  # The markers moved a step
-            await pilot.press("v")
-            await self.settle(pilot)
-            self.assertEqual(app.dashboard_panel_index, 0)  # Four views, then back round
+            self.assertEqual(app.main_view_mode, "map")
             await pilot.press("m")
             await self.settle(pilot)
             self.assertIsInstance(app.screen, MapCard)
@@ -200,6 +199,36 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
             await pilot.click("#map-close")
             await self.settle(pilot)
             self.assertNotIsInstance(app.screen, MapCard)
+
+    async def test_effects_can_be_switched_off_and_the_choice_is_remembered(self):
+        app = cybrwire_app.CybrWireApp()
+
+        async def fake_load():
+            app.pop_screen()
+            app.is_loading = False
+            app.update_display()
+
+        app.initial_load = fake_load
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            self.assertTrue(app.effects_on)
+            step = app.map_step
+            await pilot.press("x")
+            await self.settle(pilot)
+            self.assertFalse(app.effects_on)
+            app.map_tick()
+            self.assertEqual(app.map_step, step)  # Nothing pulses with effects off
+            self.assertFalse(cybrwire_app.STATE.settings["effects"])
+            await pilot.press("x")
+            await self.settle(pilot)
+            self.assertTrue(app.effects_on)
+
+    async def test_the_last_main_view_is_remembered(self):
+        cybrwire_app.STATE.settings = {"main_view": "incidents", "alerts_default": True}
+        app = cybrwire_app.CybrWireApp()
+        self.assertEqual(app.main_view_mode, "incidents")
+        cybrwire_app.STATE.settings = {"main_view": "api_tools"}
+        self.assertEqual(cybrwire_app.CybrWireApp().main_view_mode, "map")  # API tools is never the opening view
 
 
 if __name__ == "__main__":

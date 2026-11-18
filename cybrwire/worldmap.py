@@ -7,6 +7,7 @@ fine coastlines. Markers step through a few glyphs and shades to pulse, each out
 """
 
 import base64
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -74,7 +75,7 @@ COUNTRIES: Dict[str, Tuple[float, float]] = {
     "PK": (30, 70), "BD": (24, 90), "LK": (7, 81), "NP": (28, 84), "CN": (35, 104), "HK": (22, 114),
     "TW": (24, 121), "JP": (36, 138), "KR": (36, 128), "MN": (47, 105), "TH": (15, 101), "VN": (16, 108),
     "MY": (4, 102), "SG": (1, 104), "ID": (-2, 118), "PH": (13, 122), "KH": (12, 105), "MM": (21, 96),
-    "AU": (-25, 134), "NZ": (-41, 173), "PG": (-6, 147), "FJ": (-18, 178),
+    "AU": (-25, 134), "NZ": (-41, 173), "PG": (-6, 147), "FJ": (-18, 178), "KP": (40, 127),
 }
 
 # Where each status-page service lives, since an outage has no single place on the map
@@ -87,11 +88,37 @@ SERVICE_HOMES: Dict[str, Tuple[str, float, float]] = {
 }
 
 
+# Nation-state attribution in headlines: the country named (or the country a well-known group works for)
+ORIGIN_PATTERNS: Dict[str, "re.Pattern"] = {code: re.compile(pattern, re.IGNORECASE) for code, pattern in {
+    "CN": r"\b(china|chinese|prc|beijing|apt ?(1|3|10|27|31|40|41)|volt typhoon|salt typhoon|flax typhoon|mustang panda)\b",
+    "RU": r"\b(russia\w*|moscow|kremlin|gru|fsb|svr|apt ?(28|29)|fancy bear|cozy bear|sandworm|turla|midnight blizzard|forest blizzard)\b",
+    "KP": r"\b(north korea\w*|dprk|pyongyang|lazarus|kimsuky|apt ?(37|38)|andariel)\b",
+    "IR": r"\b(iran\w*|tehran|irgc|muddywater|oilrig|charming kitten|apt ?(33|34|35))\b",
+}.items()}
+
+# Which country an advisory source speaks for (matched at the start of the feed's name)
+SOURCE_COUNTRIES: Dict[str, str] = {
+    "cisa": "US", "us-cert": "US", "nist": "US", "ncsc uk": "GB", "cyber.gc.ca": "CA", "jpcert": "JP",
+    "cert-eu": "BE", "enisa": "GR", "cert-fr": "FR", "anssi": "FR", "bsi": "DE", "cert-bund": "DE",
+    "ncsc-nl": "NL", "ncsc nl": "NL", "cert nz": "NZ", "cert-nz": "NZ", "krcert": "KR", "cert-in": "IN",
+    "singcert": "SG", "csa singapore": "SG", "incibe": "ES", "acn": "IT",
+}
+
+# What a marker is called in the legend, its glyph, and which palette role colours it. Earlier entries are drawn first.
+LAYERS = (
+    ("outage", "◆", "Active outages", "warn"),
+    ("victim", "●", "Ransomware victims", "ransomware"),
+    ("actor", "▲", "Attributed activity", "apt"),
+    ("advisory", "■", "National advisories", "info"),
+)
+PRIORITY = {name: i for i, (name, *_rest) in enumerate(LAYERS)}
+
+
 @dataclass
 class Spot:
     lat: float
     lon: float
-    kind: str          # "victim" or "outage"
+    kind: str          # "victim", "outage", "actor" (attributed to this country) or "advisory"
     label: str         # "US" or "Cloudflare, GitHub"
     count: int = 1
 
@@ -157,19 +184,32 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette) -> Text:
     shore, inland = palette.accent, _blend(palette.accent, palette.bg, 0.4)
     cells = [[(chr(0x2800 + v) if v else " ", shore if coast else inland) for v, coast in line] for line in grid]
     placed: Dict[Tuple[int, int], Spot] = {}
-    for spot in sorted(spots, key=lambda s: s.count):  # The busiest spot wins a shared cell
+    nudges = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (-1, -1), (1, -1), (-1, 1))
+    for spot in sorted(spots, key=lambda s: (PRIORITY.get(s.kind, 9), -s.count)):  # Outages first, then busiest
         cell = cell_of(spot, cols, rows)
-        if cell:
-            placed[cell] = spot
+        if not cell:
+            continue
+        for dr, dc in ((0, 0), *nudges):  # A shared cell is nudged to a free neighbour so every layer shows
+            r, c = cell[0] + dr, cell[1] + dc
+            if 0 <= r < rows and 0 <= c < cols and (r, c) not in placed:
+                placed[(r, c)] = spot
+                break
+    roles = {name: role for name, _glyph, _label, role in LAYERS}
     for (r, c), spot in placed.items():
-        color = palette.warn if spot.kind == "outage" else palette.ransomware
+        color = getattr(palette, roles[spot.kind])
         phase = (step + r * 3 + c) % len(PULSE)
-        glyph = "◆" if spot.kind == "outage" else PULSE[phase]
-        cells[r][c] = (glyph, _blend(color, palette.bg, 1.0 if spot.kind == "outage" else PULSE_SHADE[phase]))
+        if spot.kind == "victim":
+            glyph, keep = PULSE[phase], PULSE_SHADE[phase]
+        elif spot.kind == "actor":
+            glyph, keep = ("▲" if phase < 2 else "△"), 1.0
+        else:
+            glyph, keep = ("◆" if spot.kind == "outage" else "■"), 1.0
+        cells[r][c] = (glyph, _blend(color, palette.bg, keep))
     # Labels for the busiest few: to the right of the marker, else the left, else a row above or below
     taken = set(placed)
-    for (r, c), spot in sorted(placed.items(), key=lambda kv: -kv[1].count)[:8 if cols >= MIN_LABEL_COLS else 0]:
-        text = spot.label.split(",")[0][:12] + (f" {spot.count}" if spot.kind == "victim" and spot.count > 1 else "")
+    labelled = [kv for kv in placed.items() if kv[1].kind != "advisory"]
+    for (r, c), spot in sorted(labelled, key=lambda kv: -kv[1].count)[:10 if cols >= MIN_LABEL_COLS else 0]:
+        text = spot.label.split(",")[0][:12] + (f" {spot.count}" if spot.kind in ("victim", "actor") and spot.count > 1 else "")
         for row, start in ((r, c + 2), (r, c - 1 - len(text)), (r - 1, c + 2), (r + 1, c + 2)):
             span = [(row, x) for x in range(start - 1, start + len(text) + 1)]
             if 0 <= row < rows and start >= 0 and start + len(text) <= cols and not any(cell in taken for cell in span):
@@ -187,14 +227,15 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette) -> Text:
 
 
 def gather_spots(alerts: List[dict], now, days: int = 7) -> List[Spot]:
-    """Markers for the last few days: ransomware victims by country, and active outages by service home"""
+    """Markers for the last few days, in four layers: ransomware victims by country, active outages by
+    service home, attributed activity by the country named in a headline, and advisories by issuing country"""
     from collections import Counter
     from datetime import timedelta
 
     from .panel_dashboard import RANSOM_VICTIM_RE
 
     cutoff = now - timedelta(days=days)
-    victims: Counter = Counter()
+    victims, actors, advisories = Counter(), Counter(), Counter()
     outages: Dict[str, Tuple[float, float, List[str]]] = {}
     for alert in alerts:
         if alert["ts"] < cutoff:
@@ -211,43 +252,51 @@ def gather_spots(alerts: List[dict], now, days: int = 7) -> List[Spot]:
                     names.append(service)
             continue
         match = RANSOM_VICTIM_RE.match(alert["title"])
-        if match and match.group(2) in COUNTRIES:
-            victims[match.group(2)] += 1
+        if match:
+            if match.group(2) in COUNTRIES:
+                victims[match.group(2)] += 1
+            continue
+        if alert.get("severity") == "apt":
+            for code, pattern in ORIGIN_PATTERNS.items():
+                if pattern.search(alert["title"]):
+                    actors[code] += 1
+                    break
+        source = alert.get("source", "").lower()
+        code = next((c for prefix, c in SOURCE_COUNTRIES.items() if source.startswith(prefix)), None)
+        if code in COUNTRIES:
+            advisories[code] += 1
     spots = [Spot(*COUNTRIES[code], "victim", code, n) for code, n in victims.items()]
+    spots += [Spot(*COUNTRIES[code], "actor", code, n) for code, n in actors.items()]
+    spots += [Spot(*COUNTRIES[code], "advisory", code, n) for code, n in advisories.items()]
     spots += [Spot(lat, lon, "outage", ", ".join(names), len(names)) for lat, lon, names in outages.values()]
     return spots
 
 
-def legend(spots: List[Spot], palette, top: int = 5, width: int = 80) -> List[Text]:
-    """The lines under the map: totals, the busiest countries and which services are down"""
+def _top(spots: List[Spot], n: int) -> str:
     from .panel_dashboard import COUNTRY_NAMES
+    names = {"CN": "China", "RU": "Russia", "KP": "North Korea", "IR": "Iran", "BE": "EU (CERT-EU)", "GR": "EU (ENISA)"}
+    ranked = sorted(spots, key=lambda s: -s.count)[:n]
+    return " · ".join(f"{names.get(s.label) or COUNTRY_NAMES.get(s.label, s.label)} {s.count}" for s in ranked)
 
-    victims = sorted((s for s in spots if s.kind == "victim"), key=lambda s: -s.count)
-    outages = [s for s in spots if s.kind == "outage"]
+
+def legend(spots: List[Spot], palette, top: int = 3, width: int = 80) -> List[Text]:
+    """One line per layer under the map: its marker, total and the busiest places, clipped to the width"""
     lines = []
-    narrow = width < 58
-    head = Text()
-    head.append("● ", style=palette.ransomware)
-    head.append(f"Ransomware victims  {sum(s.count for s in victims)}", style=palette.text)
-    if narrow:
-        lines.append(head)
-        head = Text()
-    else:
-        head.append("   ", style=palette.text)
-    head.append("◆ ", style=palette.warn)
-    head.append(f"Active outages  {sum(s.count for s in outages)}", style=palette.text)
-    lines.append(head)
-    if victims:
-        widest = victims[0].count
-        for s in victims[:top]:
-            line = Text(f"  {COUNTRY_NAMES.get(s.label, s.label):<15.15}", style=palette.muted)
-            line.append("█" * max(1, round(s.count / widest * 12)), style=palette.ransomware)
-            line.append(f" {s.count}", style=palette.text)
-            lines.append(line)
-    else:
-        lines.append(Text("  No victims with a country in the last 7 days", style=palette.muted))
-    if outages:
-        down = "  Down: " + "; ".join(s.label for s in outages)
-        lines.append(Text(down if len(down) < width else down[:width - 2] + "…", style=palette.warn))
-    lines.append(Text("  Outages marked at service home" if narrow else "  Outage markers sit at the service's home, not where users are hit", style=palette.muted))
+    for name, glyph, label, role in LAYERS:
+        layer = [s for s in spots if s.kind == name]
+        total = sum(s.count for s in layer)
+        line = Text()
+        line.append(f"{glyph} ", style=getattr(palette, role))
+        line.append(f"{label}  {total}", style=palette.text)
+        if name == "outage" and layer:
+            detail = "; ".join(s.label for s in layer)
+        else:
+            detail = _top(layer, top if width >= 70 else max(1, top - 1)) if layer else ""
+        if detail:
+            line.append("   " + detail, style=palette.muted)
+        if line.cell_len > width:
+            line.truncate(width - 1, overflow="ellipsis")
+        lines.append(line)
+    note = "Outages sit at the service's home" if width < 70 else "Outage markers sit at the service's home; advisories at the country that issues them"
+    lines.append(Text(note[:width], style=palette.muted))
     return lines

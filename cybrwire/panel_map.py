@@ -1,43 +1,92 @@
-"""The threat map panel: the world map and its legend, in the right-hand dashboard panel."""
+"""The threat map view: the world map, a legend per layer, the latest alerts and the activity scope.
+
+Shown as a main view (v cycles to it) and in the full-window card (m). Both use map_view_content."""
 
 from datetime import datetime, timezone
 
-from rich import box
 from rich.console import Group
-from rich.panel import Panel
+from rich.text import Text
 
-from . import worldmap
+from . import scope, worldmap
+from .incidents import age
 
 MAP_DAYS = 7
+LATEST = 4          # Alerts listed under the map
+SCOPE_ROWS = 2
+MAP_CACHE_SECONDS = 20
 
 
 class MapMixin:
-    map_step = 0  # Counts pulse steps; every spot is out of step with the others
+    map_step = 0  # Counts pulse steps; every marker is out of step with the others
+    _map_cache = None
 
     def map_spots(self):
-        return worldmap.gather_spots(self.all_alerts, datetime.now(timezone.utc), MAP_DAYS)
+        """The markers, worked out again only when the alerts change or every 20 seconds"""
+        now = datetime.now(timezone.utc)
+        alerts = self.all_alerts
+        key = (id(alerts), len(alerts), alerts[0]["title"] if alerts else "", int(now.timestamp() // MAP_CACHE_SECONDS))
+        if not self._map_cache or self._map_cache[0] != key:
+            self._map_cache = (key, worldmap.gather_spots(alerts, now, MAP_DAYS))
+        return self._map_cache[1]
 
-    def map_text(self, width: int, height: int, with_legend: bool = True):
-        """(map, legend lines) sized to fit width x height cells"""
+    def latest_lines(self, width, count=LATEST):
+        """The strongest recent alerts: what is worth knowing alongside the map"""
+        p = self.palette
+        picks = [a for a in self.all_alerts if self.is_alert(a) and a.get("kind") != "outage"]
+        picks.sort(key=lambda a: ((a.get("evidence").score if a.get("evidence") else 0), a["ts"]), reverse=True)
+        lines = [Text("LATEST", style=f"bold {p.accent}")]
+        for a in picks[:count]:
+            line = Text()
+            line.append(f" {p.severity_name(a['severity']):<10.10}", style=p.badge(a["severity"]) if a["severity"] != "info" else p.muted)
+            tail = f"  {a['source']} · {age(a['ts'])}"
+            line.append(" " + a["title"][:max(10, width - 14 - len(tail))], style=p.text)
+            line.append(tail, style=p.muted)
+            line.truncate(width, overflow="ellipsis")
+            lines.append(line)
+        if not picks:
+            lines.append(Text("  Nothing urgent in the data window", style=p.muted))
+        return lines
+
+    def map_view_content(self, width: int, height: int):
+        """The map and everything under it, sized to width x height cells"""
         spots = self.map_spots()
-        lines = worldmap.legend(spots, self.palette, width=width) if with_legend else []
-        cols, rows = worldmap.fit(width, max(worldmap.MIN_ROWS, height - len(lines) - 1))
-        return worldmap.render(cols, rows, spots, self.map_step, self.palette), lines
+        legend = worldmap.legend(spots, self.palette, width=width)
+        latest = self.latest_lines(width) if height >= 24 else []
+        counts = scope.hourly_counts(self.all_alerts, datetime.now(timezone.utc))
+        trace = scope.render(counts, min(width, 100), SCOPE_ROWS, self.map_step, self.palette) if height >= 30 else []
+        below = len(legend) + (len(latest) + 1 if latest else 0) + (len(trace) + 1 if trace else 0) + 1
+        cols, rows = worldmap.fit(width, max(worldmap.MIN_ROWS, height - below))
+        parts = [worldmap.render(cols, rows, spots, self.map_step if self.effects_on else 0, self.palette), ""]
+        parts += legend
+        if latest:
+            parts += ["", *latest]
+        if trace:
+            parts += ["", *trace]
+        return Group(*parts)
 
-    def make_threat_map_panel(self):
-        size = self.query_one("#dashboard").size
-        width, height = max(30, size.width - 6), max(12, size.height - 4)
-        picture, lines = self.map_text(width, height)
-        title, border = self.frame("THREAT MAP · last 7 days", self.panel_focus == "dashboard")
-        return Panel(Group(picture, "", *lines), title=title, subtitle=self.hint_bar([("m", "full screen"), ("v", "next view")]),
-                     border_style=border, box=box.ROUNDED, padding=(1, 2))
+    def sync_map_view(self):
+        """Fill the main-panel map view and its frame"""
+        view = self.query_one("#map-panel")
+        content = self.query_one("#map-main")
+        width = max(30, (content.size.width or view.size.width - 6) - 1)
+        height = max(10, content.size.height or view.size.height - 4)
+        content.update(self.map_view_content(width, height))
+        status = Text(" last 7 days   ", style=self.palette.muted)
+        status.append_text(self.hint_bar([("m", "full screen"), ("v", "next view")]))
+        status.append(" ")
+        title, border = self.frame("THREAT MAP", self.panel_focus == "main")
+        view.border_title = title
+        view.border_subtitle = status
+        view.styles.border = ("round", border)
 
     def map_tick(self):
-        """Pulse the markers: only the map redraws, and only while it is on screen"""
+        """Pulse the markers and move the scope. Only the map redraws, and only while it is showing."""
+        if not self.effects_on:
+            return
         self.map_step += 1
-        if self.is_loading or self.dashboard_panel_index != 3:
+        if self.is_loading or self.main_view_mode != "map" or len(self.screen_stack) > 1:
             return
         try:
-            self.query_one("#dashboard").update(self.make_threat_map_panel())
-        except Exception:  # The panel may be mid-redraw or gone; the next tick tries again
+            self.sync_map_view()
+        except Exception:  # The view may be mid-redraw or gone; the next tick tries again
             pass
