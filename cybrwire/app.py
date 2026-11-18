@@ -49,7 +49,7 @@ from .effects import EffectsMixin
 from .map_card import MapCard
 from .screens import EDITION, HelpScreen, LoadingScreen, boxed
 from .chrome import CONTENT_KINDS, CybrWireFooter, StyledHeader, WorldClock
-from .widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
+from .widgets import CardButton, DashboardPanel, IndicatorBox, IocTable, PagerBar, SearchBox, ViewTable
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -200,6 +200,21 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     #api-results {
         height: 1fr;
         scrollbar-size-vertical: 1;
+    }
+
+    #indicator-kind {
+        width: 12;
+        content-align: center middle;
+    }
+
+    #api-providers {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #ioc-heading {
+        height: auto;
+        margin-bottom: 1;
     }
     
     #search-row {
@@ -395,6 +410,11 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.api_tools_last_query = ""  # Last queried indicator
         self.api_tools_last_results = {}  # Results from all providers {provider: EnrichmentData}
         self.api_tools_loading = False  # Is query in progress
+        self.api_tools_recent = []      # Indicators looked up this session, newest first
+        self.api_tools_last_kind = ""   # ip, hash, domain or url, for the last lookup
+        self.api_tools_shown_as = ""    # What was typed, if it was defanged and had to be cleaned up
+        self.ioc_rows = []              # Suggestions in the table, in row order
+        self.ioc_signature = None
         
         # Initialize next refresh time
         self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
@@ -606,9 +626,16 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
                         yield Static("Indicator: ", id="indicator-prefix")
                         yield IndicatorBox(id="indicator-box", compact=True,
                                            placeholder="Paste an IP, file hash, domain or URL, then press Enter")
+                        yield Static(id="indicator-kind")
                         yield CardButton("Look up", id="act-lookup")
+                    yield Static(id="api-providers")
+                    yield Static(id="ioc-heading")
+                    yield IocTable(id="ioc-table", cursor_type="row", show_header=False)
                     with VerticalScroll(id="api-results"):
                         yield Static(id="api-content", expand=True)
+                    with Horizontal(classes="view-actions"):
+                        yield CardButton("Add API keys", id="act-keys")
+                        yield CardButton("New lookup", id="act-clear")
             with Vertical(id="dashboard-column"):
                 yield DashboardPanel(id="dashboard", expand=True)
                 yield PagerBar(id="dashboard-pager")
@@ -1299,7 +1326,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         actions = {"act-open": self.action_open_selected_link, "act-open-incident": self.action_open_selected_link,
                    "act-cve": self.action_open_cve_card, "act-cve-incident": self.action_open_cve_card,
                    "act-explain": self.action_explain_alert,
-                   "act-lookup": lambda: self.run_api_lookup(self.query_one("#indicator-box", IndicatorBox).value.strip())}
+                   "act-lookup": lambda: self.run_api_lookup(self.query_one("#indicator-box", IndicatorBox).value.strip()),
+                   "act-keys": self.action_manage_keys, "act-clear": self.clear_api_results}
         action = actions.get(event.button.id)
         if action:
             self.finish_typing()
@@ -1376,6 +1404,9 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     
     def on_input_changed(self, event):
         """A search filters the feed as it changes"""
+        if event.input.id == "indicator-box":
+            self.sync_api_view()  # The type label and provider list follow what is typed
+            return
         if event.input.id == "search-box" and event.value.strip() != self.search_query:
             self.search_query = event.value.strip()
             self.feed_at_top = True
@@ -1387,7 +1418,10 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             self.feed_at_top = True  # Enter again opens the top result
             self.update_display()
         elif event.input.id == "indicator-box":
-            self.run_api_lookup(event.value.strip())
+            if not event.value.strip() and self.idle_api():
+                self.run_selected_ioc()  # Enter on an empty box tries the highlighted suggestion
+            else:
+                self.run_api_lookup(event.value.strip())
     
     def check_action(self, action, parameters):
         """Single-key commands are off while typing, so 'q' in a search doesn't quit"""
@@ -1600,13 +1634,21 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             results = self.query_one("#api-results")
             if event.key == "escape":
                 event.prevent_default()
-                self.query_one("#indicator-box", IndicatorBox).value = ""
-                self.finish_typing()
-                self.update_display()
+                if self.api_tools_last_query:
+                    self.clear_api_results()  # With an answer showing, Esc goes back to the suggestions
+                else:
+                    self.query_one("#indicator-box", IndicatorBox).value = ""
+                    self.finish_typing()
+                    self.update_display()
             elif event.key == "tab":
                 event.prevent_default()
                 self.finish_typing()
                 self.action_toggle_panel_focus()
+            elif event.key in ("up", "down", "pageup", "pagedown") and self.idle_api():
+                event.prevent_default()
+                table = self.query_one("#ioc-table", IocTable)  # Arrows pick a suggestion while nothing is shown
+                {"up": table.action_cursor_up, "down": table.action_cursor_down,
+                 "pageup": table.action_page_up, "pagedown": table.action_page_down}[event.key]()
             elif event.key in ("up", "pageup"):
                 event.prevent_default()
                 results.scroll_up() if event.key == "up" else results.scroll_page_up()
@@ -1631,10 +1673,18 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             self.action_open_selected_link()
             return
         
+        if event.key == "escape" and self.main_view_mode == "api_tools" and self.api_tools_last_query:
+            event.prevent_default()
+            self.clear_api_results()
+            return
+
         if event.key == "enter" and self.main_view_mode == "api_tools":
             event.prevent_default()
-            self.focus_indicator_box()
-            self.update_display()
+            if self.idle_api() and self.ioc_rows:
+                self.run_selected_ioc()
+            else:
+                self.focus_indicator_box()
+                self.update_display()
             return
         
         # Normal key handling
@@ -1661,6 +1711,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     def active_table(self):
         """The row list in the current main view, if it has one"""
         tables = {"alerts": "#feed-table", "incidents": "#incident-table"}
+        if self.main_view_mode == "api_tools" and self.idle_api():
+            tables["api_tools"] = "#ioc-table"
         selector = tables.get(self.main_view_mode)
         return self.query_one(selector, ViewTable) if selector else None
     

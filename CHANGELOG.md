@@ -7,7 +7,10 @@
 - **Atmosphere effects**, all switched by `x`: map markers pulse and a radar sweep crosses the land; the window edge pulses when something urgent arrives (plus a FLASH banner in Cold War mode).
 - **Neon Noir**, a near-black theme with vivid pink, cyan, blue and violet, now the default for new installs. Saved choices of the older themes are kept.
 
+- **IOC Lookup page redesigned.** Opens on suggestions (your recent lookups and fresh indicators from the feeds) you can pick with the arrows or a click; names the type of what you pasted; cleans up defanged indicators (`hxxps://evil[.]com`); shows which providers can answer; and gives one verdict with a score bar and key facts per provider. Esc returns to the suggestions.
+
 ### Changed
+- The threat map now fills wide screens (it stretches up to 1.5x, then centres) instead of sliding to the left.
 - Internal: `app.py` split into screens, window chrome and one module per panel. No behaviour change.
 
 ## 1.1.0 (2026-11-17)

@@ -1,6 +1,8 @@
-"""The API Tools view: indicator lookups across the enrichment providers.
+"""The IOC lookup page (API Tools view).
 
-These are methods of the app, kept here so each panel lives in its own file."""
+Idle, it shows the box and a short list to try: your recent lookups and the freshest indicators
+from your feeds. After a lookup it shows one verdict and a row per provider. These are methods of
+the app, kept here so each panel lives in its own file."""
 
 import asyncio
 import logging
@@ -8,28 +10,91 @@ import logging
 from rich.text import Text
 from textual.widgets import Static
 
+from . import ioc
 from .enrichment import enrichment_engine
-from .widgets import IndicatorBox
+from .widgets import IndicatorBox, IocTable
 
 
 class ApiToolsMixin:
+    def idle_api(self) -> bool:
+        """True while the page is waiting for something to look up (and there is something to look up with)"""
+        return bool(enrichment_engine.providers) and not self.api_tools_last_query and not self.api_tools_loading
+
     def sync_api_view(self):
-        """The indicator box, the lookup results and the frame around them"""
+        """The box, its type label, the providers, then either the suggestions or the answer"""
         p = self.palette
         view = self.query_one("#api-view")
-        self.query_one("#indicator-row").display = bool(enrichment_engine.providers)
+        box = self.query_one("#indicator-box", IndicatorBox)
+        has_providers = bool(enrichment_engine.providers)
+        idle = self.idle_api()
+        self.query_one("#indicator-row").display = has_providers
+        self.query_one("#api-providers").display = has_providers
+        self.query_one("#ioc-heading").display = idle
+        self.query_one("#ioc-table").display = idle
+        self.query_one("#api-results").display = not idle
+        self.query_one("#act-clear").display = has_providers and not idle
+        self.query_one("#indicator-kind", Static).update(ioc.kind_chip(box.value, p))
+        typed_kind = ioc.describe(ioc.refang(box.value))[1]
+        self.query_one("#api-providers", Static).update(
+            ioc.providers_line(enrichment_engine.providers, typed_kind or self.api_tools_last_kind, p))
+        if idle:
+            self.sync_ioc_table()
         self.query_one("#api-content", Static).update(self.make_api_tools_content())
         if self.prompt == "indicator":
-            hints = [("Enter", "look up"), ("Esc", "clear"), ("v", "next view when empty")]
-        elif enrichment_engine.providers:
-            hints = [("/", "type an indicator"), ("↑↓", "scroll"), ("v", "next view")]
+            hints = [("Enter", "look up"), ("↑↓", "pick a suggestion" if idle else "scroll"), ("Esc", "clear"), ("v", "next view when empty")]
+        elif idle:
+            hints = [("↑↓", "select"), ("Enter", "look up"), ("/", "type or paste one"), ("v", "next view")]
+        elif has_providers:
+            hints = [("Esc", "new lookup"), ("/", "type another"), ("↑↓", "scroll"), ("v", "next view")]
         else:
             hints = [("Shift+K", "add keys"), ("v", "next view")]
-        status = self.hint_bar(hints)
-        title_text, border = self.frame("API TOOLS · IOC ENRICHMENT", self.panel_focus == "main")
+        title_text, border = self.frame("IOC LOOKUP", self.panel_focus == "main")
         view.border_title = title_text
-        view.border_subtitle = status
+        view.border_subtitle = self.hint_bar(hints)
         view.styles.border = ("round", border)
+
+    def sync_ioc_table(self):
+        """Suggestions to try, rebuilt only when they change"""
+        p = self.palette
+        rows = ioc.suggestions(self.api_tools_recent, self.all_alerts)
+        table = self.query_one("#ioc-table", IocTable)
+        heading = Text()
+        heading.append("TRY ONE  ", style=f"bold {p.accent}")
+        heading.append("your recent lookups, then fresh indicators from your feeds" if rows
+                       else "Nothing to suggest yet. Type or paste an IP, hash, domain or URL above.", style=p.muted)
+        self.query_one("#ioc-heading", Static).update(heading)
+        width = table.size.width or max(60, self.size.width * 3 // 4 - 8)
+        avail = max(56, width - 12)
+        value_w = min(46, int(avail * 0.45))
+        note_w = max(10, avail - 7 - 8 - value_w)
+        signature = (p.key, width, tuple((r.origin, r.value, r.note) for r in rows))
+        self.ioc_rows = rows
+        if signature == self.ioc_signature:
+            return
+        self.ioc_signature = signature
+        old = table.cursor_row
+        table.clear(columns=True)
+        for key, w in (("origin", 7), ("value", value_w), ("kind", 8), ("note", note_w)):
+            table.add_column("", key=key, width=w)
+        for r in rows:
+            label = ioc.describe(r.value)[0]
+            table.add_row(Text("RECENT" if r.origin == "recent" else "FEED", style=p.accent if r.origin == "recent" else p.muted),
+                          Text(r.value[:value_w], style=f"bold {p.text}", no_wrap=True),
+                          Text(label, style=p.muted),
+                          Text(r.note[:note_w], style=p.muted, no_wrap=True))
+        table.show_cursor = bool(rows)
+        if rows:
+            table.move_cursor(row=min(old, len(rows) - 1), animate=False)
+
+    def selected_ioc(self):
+        table = self.query_one("#ioc-table", IocTable)
+        return self.ioc_rows[table.cursor_row] if 0 <= table.cursor_row < len(self.ioc_rows) else None
+
+    def run_selected_ioc(self):
+        choice = self.selected_ioc()
+        if choice:
+            self.query_one("#indicator-box", IndicatorBox).value = choice.value
+            self.run_api_lookup(choice.value)
 
     def focus_indicator_box(self):
         if enrichment_engine.providers:
@@ -38,179 +103,42 @@ class ApiToolsMixin:
             self.prompt = box.prompt_name
 
     def run_api_lookup(self, indicator):
+        typed = indicator.strip()
+        indicator = ioc.refang(typed)  # hxxps://evil[.]com is looked up as https://evil.com
         if self.api_tools_loading or not indicator or not enrichment_engine.providers:
             return
+        box = self.query_one("#indicator-box", IndicatorBox)
+        if box.value != indicator:
+            box.value = indicator
+        self.api_tools_shown_as = typed
+        self.api_tools_last_kind = ioc.describe(indicator)[1]
+        self.api_tools_recent = [indicator] + [v for v in self.api_tools_recent if v != indicator][:ioc.MAX_RECENT - 1]
         self.api_tools_last_query = indicator
         self.api_tools_last_results = {}
         self.api_tools_loading = True
         asyncio.create_task(self._run_api_tools_query(indicator))
         self.update_display()
 
+    def clear_api_results(self):
+        """Back to the suggestions for a new lookup"""
+        self.api_tools_last_query = ""
+        self.api_tools_last_results = {}
+        self.api_tools_last_kind = ""
+        self.api_tools_shown_as = ""
+        self.query_one("#indicator-box", IndicatorBox).value = ""
+        self.finish_typing()
+        self.update_display()
+
     def make_api_tools_content(self) -> Text:
-        """Provider status and lookup results for the API Tools view"""
+        """What fills the results area: the empty state, a progress line, or the answer"""
         p = self.palette
-        content = Text()
-        
-        # Provider info with tier information
-        providers_info = {
-            "abuseipdb": {
-                "name": "AbuseIPDB",
-                "accepts": "IPs",
-                "tier_note": "(Free tier: IP lookups only)"
-            },
-            "virustotal": {
-                "name": "VirusTotal",
-                "accepts": "IPs, hashes, domains, URLs",
-                "tier_note": "(Free tier: 4 lookups/min, 500/day)"
-            },
-            "pulsedive": {
-                "name": "Pulsedive",
-                "accepts": "IPs, domains, hashes, URLs",
-                "tier_note": "(Free tier: limited indicator database)"
-            },
-            "abusech": {
-                "name": "Abuse.ch",
-                "accepts": "Hashes, URLs, IPs, domains",
-                "tier_note": "(Free Auth-Key: MalwareBazaar + URLhaus)"
-            }
-        }
-        
-        # Show which providers are configured
-        configured = [k for k in providers_info.keys() if k in enrichment_engine.providers]
-        unconfigured = [k for k in providers_info.keys() if k not in enrichment_engine.providers]
-        
-        if not configured:
-            # No providers configured
-            content.append("NO PROVIDERS CONFIGURED\n\n", style=f"bold {p.warn}")
-            content.append("Available providers:\n\n", style=p.text)
-            for key in providers_info.keys():
-                info = providers_info[key]
-                tier_note = info.get("tier_note", "")
-                content.append(f"  {info['name']}: {info['accepts']}\n", style=p.muted)
-                if tier_note:
-                    content.append(f"    {tier_note}\n", style=p.muted)
-            content.append("\nTo enable: press Shift+K to add API keys.\n", style=p.muted)
-            content.append("\nNote: Free/limited tier accounts have restrictions on indicator types.\n", style=p.warn)
-            content.append("      Upgrade to paid plans for full IOC database access.\n", style=p.warn)
-            
-        else:
-            if self.api_tools_loading:
-                content.append(f"Looking up {self.api_tools_last_query}...\n", style=f"bold {p.warn}")
-            
-            # Provider status line
-            provider_line = "Providers: "
-            for provider in configured:
-                name = providers_info[provider]['name']
-                tier_note = providers_info[provider].get("tier_note", "")
-                provider_line += f"{name}  "
-            
-            if unconfigured:
-                provider_line += f"[disabled: {', '.join([providers_info[p]['name'] for p in unconfigured])}]"
-            
-            content.append(f"{provider_line}\n\n", style=p.muted)
-            
-            # Results section
-            if self.api_tools_last_query and self.api_tools_last_results:
-                content.append("RESULTS\n\n", style=f"bold {p.accent}")
-                
-                for provider_name, enrichment_data in self.api_tools_last_results.items():
-                    if enrichment_data is None:
-                        continue
-                    
-                    # Provider header
-                    provider_info = providers_info.get(provider_name, {})
-                    provider_display = provider_info.get("name", provider_name)
-                    provider_text = provider_display
-                    content.append(f"\n{provider_text}\n", style=f"bold {p.text}")
-                    content.append("─" * 40 + "\n", style=p.muted)
-                    
-                    # Threat level with color
-                    threat_level = enrichment_data.threat_level.value.upper()
-                    threat_color = {"CLEAN": p.good, "LOW": p.good, "MEDIUM": p.warn,
-                                    "HIGH": p.bad, "CRITICAL": p.critical}.get(threat_level, p.text)
-                    
-                    content.append(f"Threat: {threat_level}  |  Score: {int(enrichment_data.reputation_score)}/100\n", style=threat_color)
-                    
-                    # Details summary - show all relevant fields
-                    if enrichment_data.details:
-                        # Format details nicely, filtering out internal/redundant fields
-                        details = enrichment_data.details
-                        
-                        # Define display order for common fields
-                        priority_fields = [
-                            "abuse_score", "report_count", "threat_type", "is_whitelisted", 
-                            "malicious_vendors", "suspicious_vendors", "undetected_vendors",
-                            "threat", "threat_feed_count", "enhanced_threat_score",
-                            "malware_family", "signature_count", "submission_count",
-                            "country", "isp", "domain", "asn", "network",
-                            "last_reported", "first_reported", "threat_feed_count"
-                        ]
-                        
-                        displayed_fields = set()
-                        
-                        # Show priority fields first
-                        for field in priority_fields:
-                            if field in details and details[field] not in [None, "", [], {}]:
-                                value = details[field]
-                                # Format arrays/lists nicely
-                                if isinstance(value, (list, tuple)):
-                                    if value:
-                                        value_str = ", ".join(str(v)[:30] for v in value[:3])
-                                        if len(value) > 3:
-                                            value_str += f"... (+{len(value)-3})"
-                                    else:
-                                        value_str = "(empty)"
-                                elif isinstance(value, dict):
-                                    value_str = f"{len(value)} items"
-                                elif isinstance(value, bool):
-                                    value_str = "✓ Yes" if value else "✗ No"
-                                else:
-                                    value_str = str(value)[:50]
-                                
-                                content.append(f"  {field}: {value_str}\n", style=p.muted)
-                                displayed_fields.add(field)
-                        
-                        # Show other interesting fields (skip internal ones)
-                        skip_fields = {"status", "status", "details", "timestamp", "analysis_stats", "sandbox_verdicts", "triage_verdicts"}
-                        for key, value in details.items():
-                            if key not in displayed_fields and key not in skip_fields and value not in [None, "", [], {}]:
-                                if not key.startswith("_"):  # Skip internal fields
-                                    if isinstance(value, (list, tuple)):
-                                        if len(value) > 0:
-                                            value_str = ", ".join(str(v)[:20] for v in value[:2])
-                                            if len(value) > 2:
-                                                value_str += f"... (+{len(value)-2})"
-                                        else:
-                                            continue
-                                    elif isinstance(value, dict):
-                                        value_str = f"{len(value)} items"
-                                    elif isinstance(value, bool):
-                                        value_str = "✓" if value else "✗"
-                                    else:
-                                        value_str = str(value)[:40]
-                                    
-                                    content.append(f"  {key}: {value_str}\n", style=p.muted)
-                    
-                    content.append("\n", style="")
-            elif self.api_tools_last_query and not self.api_tools_last_results:
-                content.append("NO RESULTS\n", style=f"bold {p.accent}")
-                content.append(f"No threat data found for: {self.api_tools_last_query}\n", style=p.muted)
-            else:
-                content.append("USAGE\n\n", style=f"bold {p.accent}")
-                content.append("Type an indicator (IP, hash, domain, URL) and press ENTER to query all configured providers.\n", style=p.text)
-                content.append("Results will display below with threat scores from each provider.\n", style=p.text)
-                content.append("\nPress Esc to clear the box and use other commands. Press / or click the box to type again.\n", style=p.muted)
-                
-                # Add API tier limitation note
-                content.append("\nAPI TIER INFORMATION\n", style=f"bold {p.accent}")
-                content.append("\nFree/limited API keys have restrictions on the indicator types they can query:\n\n", style=p.muted)
-                content.append("  VirusTotal Free:  All indicator types, 4 lookups/min, 500/day\n", style=p.muted)
-                content.append("  AbuseIPDB Free:   IP lookups only\n", style=p.muted)
-                content.append("  Pulsedive Free:   Limited indicator database\n", style=p.muted)
-                content.append("  Abuse.ch:         Free Auth-Key (hashes via MalwareBazaar; URLs/IPs/domains via URLhaus)\n", style=p.muted)
-                content.append("\nCLEAN means the provider has no record of the indicator, not that it is safe.\n", style=p.muted)
-            
-        return content
+        if not enrichment_engine.providers:
+            return ioc.render_no_providers(p)
+        if self.api_tools_loading:
+            return ioc.render_loading(self.api_tools_last_query, len(enrichment_engine.providers), p)
+        if self.api_tools_last_query:
+            return ioc.render_results(self.api_tools_last_query, self.api_tools_last_results, p, self.api_tools_shown_as)
+        return Text("")
 
     def lookup_indicator(self, alert):
         """Send an indicator from the Indicators view to API Tools and run the lookup"""
@@ -236,4 +164,4 @@ class ApiToolsMixin:
             self.api_tools_last_results = {}
         finally:
             self.api_tools_loading = False
-            self.mark_dirty()
+            self.update_display()  # The answer shows straight away, not at the next scheduled redraw

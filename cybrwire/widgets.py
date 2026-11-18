@@ -71,6 +71,13 @@ class IndicatorBox(TypingBox):
             self.app.action_toggle_view()
 
 
+class IocTable(ViewTable):
+    """Indicators to try on the IOC page: recent lookups and fresh ones from the feeds"""
+
+    def was_clicked(self) -> None:
+        self.app.run_selected_ioc()
+
+
 class PagerBar(Static):
     """Clickable paging for a paged panel, plus any extra command it offers"""
 
