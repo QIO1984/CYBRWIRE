@@ -131,6 +131,7 @@ COLD_WAR = Palette(
         "FEED STATUS": "STATION STATUS",
         "API TOOLS": "TRACE REQUEST",
         "LIVE WIRE": "TELETYPE",
+        "THREAT MAP": "THEATRE MAP",
     },
     # Military message precedence, most to least urgent
     severity_names={

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isolated  # noqa: E402,F401
 import cybrwire  # noqa: E402
 from cybrwire import ai, history, screens, chrome  # noqa: E402
+from cybrwire.map_card import MapCard  # noqa: E402
 from cybrwire import app as cybrwire_app  # noqa: E402
 from cybrwire.config import Config  # noqa: E402
 
@@ -32,6 +33,8 @@ def alert(title, source="Feed", kind="news", severity="info", hours=1, **extra):
 
 
 PANEL_ALERTS = [
+    alert("RANSOMWARE VICTIM: Beta Ltd (play) [DE]", "Ransomware.live", "ransomware", "ransomware"),
+    alert("OUTAGE · Cloudflare: elevated errors", "Cloudflare Status", "outage"),
     alert("Ivanti flaw CVE-2099-0001 exploited", "Feed A", "advisory", "zeroday"),
     alert("CVE-2099-0001 in the wild", "Feed B", "news", "exploit"),
     alert("RANSOMWARE VICTIM: Acme Corp (lockbit) [US]", "Ransomware.live", "ransomware", "ransomware"),
@@ -140,15 +143,63 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
                 await self.settle(pilot)
                 for name, panel in (("dashboard", app.make_dashboard()), ("feed status", app.make_feed_status_panel()),
                                     ("war room", app.make_war_room_panel()), ("API tools", app.make_api_tools_content()),
-                                    ("preview", app.make_alert_preview(PANEL_ALERTS[0]))):
+                                    ("preview", app.make_alert_preview(PANEL_ALERTS[0])),
+                                    ("threat map", app.make_threat_map_panel())):
                     self.assertTrue(drawn(panel).strip(), f"{name} drew nothing (cold war: {cold_war})")
-                self.assertIn("Acme", drawn(app.make_dashboard()) + drawn(app.make_alert_preview(PANEL_ALERTS[2])))
+                self.assertIn("Acme", drawn(app.make_dashboard()) + drawn(app.make_alert_preview(PANEL_ALERTS[4])))
             for _ in range(3):  # Alerts -> incidents -> API tools -> back
                 await pilot.press("v")
                 await self.settle(pilot)
             await pilot.press("tab")
             await self.settle(pilot)
             self.assertEqual(app.screen_stack[-1].__class__.__name__, "Screen")  # Nothing crashed back to a bare screen
+
+    async def test_the_threat_map_is_a_right_panel_view_and_a_full_window_card(self):
+        cybrwire_app.alert_queue[:] = PANEL_ALERTS
+        app = cybrwire_app.CybrWireApp()
+
+        async def fake_load():
+            app.pop_screen()
+            app.is_loading = False
+            app.update_display()
+
+        app.initial_load = fake_load
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("tab")  # Focus the right panel, then v steps metrics -> war room -> feed status -> map
+            for _ in range(3):
+                await pilot.press("v")
+                await self.settle(pilot)
+            self.assertEqual(app.dashboard_panel_index, 3)
+            panel = drawn(app.make_threat_map_panel())
+            self.assertIn("THREAT MAP", panel)
+            self.assertIn("Ransomware victims  2", panel)
+            first = app.map_step
+            for _ in range(3):
+                app.map_tick()  # The timer doesn't run in the harness; the pulse moves the markers
+            self.assertEqual(app.map_step, first + 3)
+            pulsed = drawn(app.make_threat_map_panel())
+            app.map_step += 1
+            self.assertNotEqual(pulsed, drawn(app.make_threat_map_panel()))  # The markers moved a step
+            await pilot.press("v")
+            await self.settle(pilot)
+            self.assertEqual(app.dashboard_panel_index, 0)  # Four views, then back round
+            await pilot.press("m")
+            await self.settle(pilot)
+            self.assertIsInstance(app.screen, MapCard)
+            before = drawn(app.screen.shown)
+            self.assertIn("Ransomware victims", before)
+            app.screen.pulse()
+            await self.settle(pilot)
+            self.assertNotEqual(before, drawn(app.screen.shown))
+            await pilot.press("m")
+            await self.settle(pilot)
+            self.assertNotIsInstance(app.screen, MapCard)
+            await pilot.press("m")
+            await self.settle(pilot)
+            await pilot.click("#map-close")
+            await self.settle(pilot)
+            self.assertNotIsInstance(app.screen, MapCard)
 
 
 if __name__ == "__main__":

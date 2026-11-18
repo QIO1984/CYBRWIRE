@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Threat map.** A world map drawn in braille dots, with pulsing markers for ransomware victims (by country) and active outages. `m` opens it full window; `v` in the right panel shows it beside the feed.
+- **Neon Noir**, a near-black theme with vivid pink, cyan, blue and violet, now the default for new installs. Saved choices of the older themes are kept.
+
+### Changed
+- Internal: `app.py` split into screens, window chrome and one module per panel. No behaviour change.
+
 ## 1.1.0 (2026-11-17)
 
 ### Added

@@ -32,6 +32,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **NEW badges** – alerts first seen since your last launch stay marked until you open them
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
+- **Threat map** – a world map in braille dots with pulsing markers for ransomware victims (by country) and active outages; `m` opens it full window, or `v` in the right panel
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
 - **Themes** – Neon Noir (default: near-black with vivid pink, cyan, blue and violet), Synthwave, Retro Warm and Amber CRT; press `t` to cycle
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
@@ -200,6 +201,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `g` | Generate a fresh AI briefing (War Room) |
 | `e` | Re-enable disabled feeds |
 | `z` | Show or hide the world clock |
+| `m` | Open the threat map full window |
 | `q` | Quit |
 
 Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
@@ -219,6 +221,10 @@ clocks:
 
 - **In Docker,** the list is one line in `cybrwire.env` (it takes priority over `usrwire.yaml`). `cybrwire.env.example` ships with the six defaults on that line and the full city list underneath: copy the cities you want onto the line, for example `CYBRWIRE_CLOCKS=NYC:America/New_York,SYD:Australia/Sydney`.
 - Restart CybrWire after changing either one.
+
+## Threat Map
+
+Press `m` for a full-window world map, or press `Tab` and then `v` until the right panel shows it. Pink markers are ransomware victims from the last 7 days, placed by the country code Ransomware.live gives (busier countries get a label); amber diamonds are active outages from the status feeds. Markers pulse out of step with each other. Outage markers sit at the service's home region, not where its users are affected, because an outage has no single place. The land is drawn with braille dots, about 1.8 degrees each, so the map keeps fine coastlines even in a small panel.
 
 ## AI Briefings
 
@@ -453,6 +459,7 @@ CybrWire is MIT licensed, but the data it reads belongs to the people who publis
 | [DShield / SANS ISC](https://isc.sans.edu) | Attacking and blocked IPs | CC BY-NC-SA 4.0: credit, non-commercial, don't resell the data |
 | [Have I Been Pwned](https://haveibeenpwned.com) | Recent data breaches | CC BY 4.0: data from haveibeenpwned.com |
 | [Ransomware.live](https://www.ransomware.live) | Ransomware victim claims | The free v2 API is for personal use; see their API PRO for business use |
+| [Natural Earth](https://www.naturalearthdata.com) | Land outlines for the threat map (110m, baked into the app as a small dot grid) | Public domain |
 | [Bulletin of the Atomic Scientists](https://thebulletin.org/doomsday-clock/) | The Doomsday Clock setting | |
 
 The remaining sources are public blogs, advisories and news feeds. Please visit the originals and support them.

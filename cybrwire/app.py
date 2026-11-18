@@ -44,6 +44,8 @@ from .panel_dashboard import DashboardMixin
 from .panel_api_tools import ApiToolsMixin
 from .panel_war_room import WarRoomMixin
 from .panel_alerts import AlertViewsMixin
+from .panel_map import MapMixin
+from .map_card import MapCard
 from .screens import EDITION, HelpScreen, LoadingScreen, boxed
 from .chrome import CONTENT_KINDS, CybrWireFooter, StyledHeader, WorldClock
 from .widgets import CardButton, DashboardPanel, IndicatorBox, PagerBar, SearchBox, ViewTable
@@ -129,7 +131,7 @@ async def fetch_breaches():
         logging.error(f"Failed to fetch breaches: {e}")
 
 
-class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, App):
+class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, MapMixin, App):
     """Textual-based CybrWire threat intelligence dashboard"""
     
     # Colors come from the active palette, registered as a Textual theme (see apply_theme)
@@ -263,6 +265,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         ("l", "jump_to_wire", "Go To Live Wire Alert"),
         ("b", "cycle_sound", "Alert Sound"),
         ("z", "toggle_clocks", "World Clock"),
+        ("m", "show_map", "Threat Map"),
         ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
@@ -287,7 +290,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     kind_index = reactive(0)  # Index into CONTENT_KINDS
     data_age_index = reactive(0)  # Cycle: 0=24h, 1=48h, 2=7d
     filter_type_index = reactive(1)  # Cycle: 0=all, 1=alerts, 2=posts
-    dashboard_panel_index = reactive(0)  # Cycle dashboard: 0=metrics, 1=failed feeds
+    dashboard_panel_index = reactive(0)  # Cycle dashboard: 0=metrics, 1=war room, 2=feed status, 3=threat map
     main_view_mode = reactive("alerts")  # alerts, incidents, or api_tools
     
     def __init__(self, cold_war=False, recency=24):
@@ -506,6 +509,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         """Show loading screen then start app"""
         self.apply_theme()
         self.query_one(WorldClock).display = self.show_clocks
+        self.set_interval(0.5, self.map_tick)  # Pulses the map's markers while it is showing
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -780,6 +784,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
                     dashboard_content = self.make_war_room_panel()
                 elif self.dashboard_panel_index == 2:
                     dashboard_content = self.make_feed_status_panel()
+                elif self.dashboard_panel_index == 3:
+                    dashboard_content = self.make_threat_map_panel()
                 else:
                     dashboard_content = self.make_dashboard()
                 
@@ -992,6 +998,11 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         STATE.save()
         self.mark_dirty()
     
+    def action_show_map(self):
+        """Full-window threat map"""
+        if not self.is_loading and not isinstance(self.screen, MapCard):
+            self.push_screen(MapCard())
+
     def action_open_cve_card(self):
         """Open the CVE card for the highlighted alert or incident"""
         cves = []
@@ -1496,7 +1507,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
                 self.focus_indicator_box()
         else:
             # Cycle through all dashboard views in right panel (0-5: metrics, war room, AI correlation, AI risk ranking, enrichment, failed feeds)
-            self.dashboard_panel_index = (self.dashboard_panel_index + 1) % 3
+            self.dashboard_panel_index = (self.dashboard_panel_index + 1) % 4
             self.dashboard_page_offset = 0
 #            logging.info(f"Dashboard view cycled to: {self.dashboard_panel_index}")
             self.update_display()
