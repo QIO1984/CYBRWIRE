@@ -85,6 +85,19 @@ SERVICE_HOMES: Dict[str, Tuple[str, float, float]] = {
     "cloudflare": ("San Francisco", 37.8, -122.4), "github": ("San Francisco", 37.8, -122.4),
     "slack": ("San Francisco", 37.8, -122.4), "discord": ("San Francisco", 37.8, -122.4),
     "openai": ("San Francisco", 37.8, -122.4), "zoom": ("San Jose", 37.3, -121.9),
+    "microsoft 365": ("Redmond", 47.6, -122.1), "azure devops": ("Redmond", 47.6, -122.1),
+    "anthropic": ("San Francisco", 37.8, -122.4), "datadog": ("New York", 40.7, -74.0),
+    "twilio": ("San Francisco", 37.8, -122.4), "digitalocean": ("New York", 40.7, -74.0),
+    "linode": ("Philadelphia", 39.95, -75.17), "ovhcloud": ("Roubaix", 50.69, 3.17),
+    "fly.io": ("Chicago", 41.9, -87.6), "netlify": ("San Francisco", 37.8, -122.4),
+    "vercel": ("San Francisco", 37.8, -122.4), "docker": ("Palo Alto", 37.4, -122.1),
+    "npm": ("San Francisco", 37.8, -122.4), "circleci": ("San Francisco", 37.8, -122.4),
+    "sentry": ("San Francisco", 37.8, -122.4), "new relic": ("San Francisco", 37.8, -122.4),
+    "mongodb": ("New York", 40.7, -74.0), "snowflake": ("Bozeman", 45.7, -111.0),
+    "hubspot": ("Cambridge", 42.37, -71.08), "box": ("Redwood City", 37.5, -122.2),
+    "dropbox": ("San Francisco", 37.8, -122.4), "figma": ("San Francisco", 37.8, -122.4),
+    "webex": ("San Jose", 37.3, -121.9), "1password": ("Toronto", 43.65, -79.38),
+    "reddit": ("San Francisco", 37.8, -122.4), "twitch": ("San Francisco", 37.8, -122.4),
 }
 
 

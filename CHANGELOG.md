@@ -7,6 +7,7 @@
 - **Atmosphere effects**, all switched by `x`: map markers pulse and a radar sweep crosses the land; the window edge pulses when something urgent arrives (plus a FLASH banner in Cold War mode).
 - **Neon Noir**, a near-black theme with vivid pink, cyan, blue and violet, now the default for new installs. Saved choices of the older themes are kept.
 
+- **Outages cover 36 services, up from 10.** Added Microsoft 365 (admin-center status), Azure DevOps, Anthropic, Datadog, Twilio, DigitalOcean, Linode, OVHcloud, Fly.io, Netlify, Vercel, Docker, npm, CircleCI, Sentry, New Relic, MongoDB, Snowflake, HubSpot, Box, Dropbox, Figma, Webex, 1Password, Reddit and Twitch, all checked live. Each has a place on the threat map. The status parser now understands feeds that carry the state in its own field.
 - **IOC Lookup page redesigned.** Opens on suggestions (your recent lookups and fresh indicators from the feeds) you can pick with the arrows or a click; names the type of what you pasted; cleans up defanged indicators (`hxxps://evil[.]com`); shows which providers can answer; and gives one verdict with a score bar and key facts per provider. Esc returns to the suggestions.
 
 ### Changed

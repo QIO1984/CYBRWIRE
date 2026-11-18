@@ -190,6 +190,7 @@ def parse_metasploit(data, source_name, source_file):
 
 SCHEDULED = re.compile(r"\b(scheduled|maintenance|lifecycle update|planned)\b", re.IGNORECASE)
 RESOLVED = re.compile(r"\b(resolved|operating normally|completed|has been fixed|recovered|no (operational )?impact)\b", re.IGNORECASE)
+AVAILABLE = re.compile(r"^(available|operational|up|ok|normal|all systems operational|no issues?)$", re.IGNORECASE)
 OUTAGE_ACTIVE_HOURS = 48  # An incident with no update for this long is history, whatever its last status says
 
 
@@ -207,8 +208,14 @@ def parse_status(text, source_name, source_file):
         summary = clean_html(e.get("summary") or e.get("description") or "")
         if ts is None or ts > now + timedelta(minutes=5) or SCHEDULED.search(raw_title):
             continue
+        # Some feeds carry the state as its own field (Microsoft 365's admin-center status, Azure DevOps events)
+        state = clean_html(str(e.get("status_state") or e.get("status") or "")).strip()
+        if state and AVAILABLE.match(state):
+            continue  # "Available" is not an incident, so nothing is listed
+        if state and state.lower() not in raw_title.lower() and not RESOLVED.search(state):
+            raw_title = f"{raw_title} ({state})"
         # The newest update comes first in the text, so its status word is the current state
-        resolved = bool(RESOLVED.search(f"{raw_title} {summary[:160]}")) or now - ts > timedelta(hours=OUTAGE_ACTIVE_HOURS)
+        resolved = bool(RESOLVED.search(f"{state} {raw_title} {summary[:160]}")) or now - ts > timedelta(hours=OUTAGE_ACTIVE_HOURS)
         title = re.sub(r"^(Service is operating normally|Informational message|Service impact|Service disruption): ?", "", raw_title, flags=re.IGNORECASE)
         title = re.sub(r"^\[?RESOLVED\]?:? ?", "", title, flags=re.IGNORECASE)
         key = title.lower()

@@ -16,7 +16,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 ## Features
 
 - **100+ curated threat intelligence sources** including CISA, vendor advisories (Fortinet, Palo Alto, Cisco, Ivanti, Microsoft), national CERTs, GitHub security advisories, Ransomware.live, ThreatFox, and more
-- **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, Indicators (what to block), and Outages (what is broken right now)
+- **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, Indicators (what to block), and Outages (what is broken right now, across 36 services)
 - **CVE scores** – CISA KEV status, CVSS severity (NVD) and EPSS exploit likelihood shown wherever a CVE appears
 - **Watchlist** – star everything that mentions the vendors, products or keywords you care about, and press `w` to see only those
 - **Search** – press `/` to filter as you type across all feeds and a year of saved history, including older alerts and indicators
@@ -102,6 +102,358 @@ A green phosphor terminal: FLASH / IMMEDIATE / PRIORITY / ROUTINE message preced
 ![Searching in Cold War mode](screenshots/cold_war_search.png)
 
 ![Cold War secure-line boot sequence](screenshots/cold_war_boot.png)
+
+### API Tools
+Look up an IP, file hash, domain or URL across every configured enrichment provider.
+
+![API Tools enrichment lookup](screenshots/api_tools.png)
+
+Press `t` to cycle themes. Your choice is remembered between runs. To retake these from live feeds, run `venv/bin/python tools/screenshots.py`.
+
+## Installation & Usage
+
+Install with [pipx](https://pipx.pypa.io) (keeps CybrWire and its dependencies out of your system Python):
+
+```bash
+pipx install git+https://github.com/QIO1984/CYBRWIRE.git
+
+# Run it! Press Shift+K in the app to add API keys (optional)
+cybrwire
+```
+
+Upgrade later by running the install command again with `--force`: `pipx install --force git+https://github.com/QIO1984/CYBRWIRE.git`. (`pipx upgrade` compares version numbers, so it can miss changes made between releases.)
+
+Your settings (`usrwire.yaml`), keys file, saved state, history and log live in `~/.config/cybrwire`. Set `CYBRWIRE_HOME` to use another folder. The curated and community feed lists ship inside the package.
+
+To run from a clone instead (for development or contributing):
+
+```bash
+git clone https://github.com/QIO1984/CYBRWIRE.git
+cd CYBRWIRE
+python3 -m venv venv && source venv/bin/activate
+pip install -e .
+cybrwire            # or: python -m cybrwire
+python -m unittest discover -s tests
+```
+
+A clone that already has local files next to the code (`usrwire.yaml`, state, history) moves them to `~/.config/cybrwire` on first launch.
+
+### Upgrading from an older clone
+
+Earlier versions kept `usrwire.yaml`, `cybrwire_state.json`, `cybrwire_history.db` and `cybrwire_secrets.yaml` next to the code. If you keep running from the clone (`pip install -e .`), they move to `~/.config/cybrwire` on first launch. If you switch to a pipx install, nothing moves on its own: quit CybrWire, then copy those files from the old folder into `~/.config/cybrwire`. Keys stored in your system keychain carry over without any copying.
+
+### In a browser or Docker
+
+CybrWire can run in a browser tab (from a clone, use `pip install -e ".[web]"` instead), using the same screens, mouse and themes through a terminal in the page:
+
+```bash
+pipx install "cybrwire[web] @ git+https://github.com/QIO1984/CYBRWIRE.git"
+cybrwire-web                      # then open http://127.0.0.1:8000
+```
+
+Or in a container (data is kept in the `cybrwire-data` volume; with Compose the volume is named after your folder, e.g. `cybrwire-src_cybrwire-data`, and is not inside the repo folder). The container listens on the network, so it **requires a password** and won't start without one:
+
+```bash
+docker build -t cybrwire .
+docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' -v cybrwire-data:/data cybrwire
+```
+
+**To keep it running in the background** (restarts after a reboot, keys included), use Docker Compose:
+
+```bash
+cp cybrwire.env.example cybrwire.env && chmod 600 cybrwire.env   # then edit it: password, clocks, keys
+docker compose up -d --build
+docker compose logs -f        # watch it; Ctrl+C leaves it running
+docker compose down           # stop it (your data stays in the volume)
+```
+
+`cybrwire.env` holds your password and API keys. It is git-ignored and never baked into the image.
+
+Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_USER` is set to).
+
+- **The login is basic.** It is one shared password over plain http, so anyone who can watch your network traffic could read it. That is fine on a home LAN or over Tailscale (which encrypts). For anything wider, put an https reverse proxy in front. Never expose it to the internet as it is: the page gives full control of the app, including your keys.
+- **Locally** (`cybrwire-web` on `127.0.0.1`) the password is optional. Set `CYBRWIRE_WEB_PASSWORD` to require one anyway. On any other address the server refuses to start without it.
+- **Keys:** a container has no system keychain. Pass keys as environment variables (`-e CYBRWIRE_ANTHROPIC_API_KEY=...`, or `--env-file`), or add them with Shift+K, which saves them to a restricted file in the volume.
+- **Links:** `Enter` opens the alert's page in a new browser tab (a container has no browser of its own). If your browser blocks the pop-up, allow it for this site.
+- Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT`, `CYBRWIRE_WEB_USER`, `CYBRWIRE_WEB_PASSWORD`, and `CYBRWIRE_WEB_URL` (forces one fixed address; normally leave it unset).
+- **Behind a reverse proxy** (Caddy, nginx): point it at the container's port and pass websockets through (Caddy's `reverse_proxy` does this by default). The page uses whatever address your browser used, so the IP address and the proxy's name both work. If you set `CYBRWIRE_WEB_URL` from an older version, remove it.
+
+### Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| `h` | Show help screen |
+| `r` | Force refresh all feeds |
+| `d` | Cycle data age (24h → 48h → 7d) |
+| `f` | Cycle filter (all → alerts only → posts only) |
+| `4` | Cycle content type (All → Advisories → News & Research → Ransomware → Indicators → Outages) |
+| `/` | Search all loaded items (`esc` clears) |
+| `w` | Show only watchlist hits, or everything |
+| `W` | Open the watchlist card: see all terms and their hits, add or remove them |
+| `u` | Group duplicate reports, or list them all |
+| `i` | Open the CVE card for the selected alert or incident |
+| `tab` | Switch between main feed and dashboard panels |
+| `v` | Cycle main view (alerts → incidents → API tools) |
+| `c` | Toggle Cold War Mode |
+| `t` | Cycle theme (Neon Noir → Synthwave → Retro Warm → Amber CRT) |
+| `↑` `↓` / click | Select an alert or incident (click again to open) |
+| `enter` | Open the selected alert or incident in your browser |
+| `a` | Explain the selected alert with AI |
+| `g` | Generate a fresh AI briefing (War Room) |
+| `e` | Re-enable disabled feeds |
+| `z` | Show or hide the world clock |
+| `m` | Open the threat map full window |
+| `x` | Effects on or off (map pulse and arrival flash) |
+| `q` | Quit |
+
+Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
+
+## World Clock
+
+A line under the title shows your local time and a few reference cities (Los Angeles, New York, London, Rome, St Petersburg, Tokyo). `+1` or `-1` marks a city that is on a different calendar day from you. Press `z` to hide or show it.
+
+- **Your zone** comes from the `TZ` setting (for Docker, add `TZ=America/New_York` or similar to `cybrwire.env`), or `timezone:` in `usrwire.yaml`, or else your computer's own zone.
+- **The default cities** are Los Angeles, New York, London, Rome, St Petersburg and Tokyo. `usrwire.example.yaml` lists one prominent city for every time zone, from Honolulu to Auckland, with the defaults marked: uncomment `clocks:` and the lines you want, and only your list is used. Zone names come from the [tz database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones), so any city works:
+
+```yaml
+clocks:
+  - "NYC: America/New_York"
+  - "SYD: Australia/Sydney"
+```
+
+- **In Docker,** the list is one line in `cybrwire.env` (it takes priority over `usrwire.yaml`). `cybrwire.env.example` ships with the six defaults on that line and the full city list underneath: copy the cities you want onto the line, for example `CYBRWIRE_CLOCKS=NYC:America/New_York,SYD:Australia/Sydney`.
+- Restart CybrWire after changing either one.
+
+## Threat Map
+
+The map is the first view when CybrWire opens (the app remembers the view you leave it on). Press `v` to step through the map, alerts, incidents and API tools, or `m` to open the map full window. Under the map are a line per layer, the latest strong alerts and a scope of alerts per hour for the last day, with a bright point sweeping along it.
+
+Four layers show on the map, each with its own marker and colour:
+
+| Marker | Layer | Where it sits |
+|---|---|---|
+| `●` pink, pulsing | Ransomware victims, last 7 days | The country in the victim post |
+| `▲` violet | Attributed activity: headlines that name China, Russia, North Korea or Iran (or a well-known group such as APT29 or Lazarus) in an APT story | That country |
+| `■` blue | National advisories from CISA, NCSC UK, JPCERT/CC, CERT-EU, ENISA, Canada's Cyber Centre and similar | The country that issues them |
+| `◆` amber | Active outages from the status feeds | The service's home region, because an outage has no single place |
+
+Where layers share a country, markers are nudged to the next cell so every layer shows. The land is drawn with braille dots, about 1.8 degrees each, so the map keeps fine coastlines even in a small window. It is an approximation built from headlines and feed names, not a measurement: attribution is only what the story says, and a marker is not a precise location.
+
+## Atmosphere
+
+These follow what is happening and switch off together with `x` (the choice is remembered):
+
+- **Pulse and sweep:** map markers pulse out of step, and a slow radar sweep brightens the land.
+- **Arrival flash:** when something urgent arrives (a newly confirmed exploit or a reported zero-day), the window edge pulses once. In Cold War mode a FLASH banner flickers across the top as well.
+
+## AI Briefings
+
+The War Room panel (`tab`, then `v`, or just press `g`) shows a briefing written by the AI provider you choose: bottom line, priority actions, active threats, notable vulnerabilities, and a watch list, based on the alerts in your current data window. Press `a` on any alert for a short explanation of it.
+
+Press `Shift+K` to choose a provider and model, then add its key. AI stays off until all of them are set, because there is no default model: you choose what you pay for. OpenAI-compatible servers also need a URL. Ollama runs models on your own machine, so no alert data leaves it.
+
+You can keep a Primary and an Alternate provider and model, and switch between them in the card with `a` or a click. Each provider keeps its own key, so switching never sends one provider's key to another.
+
+## Live Wire
+
+The bar across the top shows what the app is really doing. Its title follows each feed check as it runs, then counts down to the next one. Between arrivals, what has the strongest evidence of exploitation in the last 7 days takes turns, along with busy ransomware campaigns and new breaches, and each line says why it's there. New items with evidence, or watchlist hits, are announced as `JUST IN`. Anything new wears a `LIVE` badge in the feed for 90 seconds. Press `l` or click the bar to jump to what's on show.
+
+## Outages
+
+Thirty-six services' own public status pages are watched for incidents:
+
+- **Clouds and hosting:** AWS, Azure, Google Cloud, Cloudflare, DigitalOcean, Linode, OVHcloud, Fly.io, Netlify, Vercel
+- **Microsoft and Google:** Microsoft 365 (admin-center status), Azure DevOps, Google Workspace
+- **Developer tools and data:** GitHub, Docker, npm, CircleCI, Sentry, Datadog, New Relic, MongoDB, Snowflake
+- **Collaboration and business:** Slack, Zoom, Webex, Box, Dropbox, Figma, HubSpot, Twilio (SendGrid shares its page), 1Password
+- **AI and consumer platforms:** OpenAI, Anthropic, Discord, Reddit, Twitch
+
+An active incident shows in the Alerts list as `OUTAGE · service: ...` and as an amber diamond on the threat map. Planned maintenance and all-clears are left out of Alerts, and an incident with no update for 48 hours counts as over. Press `4` until you reach Outages to see recent incidents of both kinds. These feeds are quiet most of the time: only an active incident adds anything.
+
+**Microsoft 365 is only partly covered.** Microsoft publishes no public feed of Outlook, Teams or Exchange incidents; those go to the Microsoft 365 admin center, which needs a tenant login. What is public is a status line for the admin center itself, which changes when issues stop administrators reaching Service health. CybrWire watches that line, so it flags the large Microsoft 365 outages but not the small ones. Microsoft also posts widespread incidents on @MSFT365Status.
+
+Some well-known services have no public machine-readable status feed that CybrWire can use (Okta, PagerDuty, Fastly, GitLab, Zendesk, Shopify, Salesforce, Stripe, CrowdStrike), so they are not listed. You can add any status page that publishes RSS or Atom in your own `usrwire.yaml` with `type: status` and `kind: outage`.
+
+## Evidence
+
+Keywords can't tell you whether something is being attacked, so stories are judged on outside signals:
+
+| Label | Means |
+|---|---|
+| `CONFIRMED` | On an official exploited list: CISA KEV or ENISA EUVD. New entries show what to do, with CISA's deadline where it still applies |
+| `LIKELY` | A high EPSS exploit-likelihood score, or public exploit code plus a raised score |
+| `REPORTED` | News headlines or a CIRCL sighting say it's exploited, without official confirmation |
+
+The default **Alerts** filter (`f`) shows those, plus watchlist hits, new breaches, threat-actor stories and ransomware stories. Press `f` for everything. Search and the content types (`4`) look past it, and individual ransomware claims live under `4`. The same evidence decides the dashboard counts, sounds and notifications.
+
+Exploitation and public-exploit sightings come from [CIRCL's Vulnerability-Lookup](https://vulnerability.circl.lu), a free public service run by the Computer Incident Response Center Luxembourg. Thank you to CIRCL for running it. CybrWire asks for recent sightings only, once an hour.
+
+Public exploit code is also detected from the [Metasploit Framework](https://github.com/rapid7/metasploit-framework)'s module list (Rapid7, BSD 3-Clause licence). CybrWire downloads that one file (about 11 MB) once a day and uses it only to mark CVEs that have a working public exploit module.
+
+Feeds are checked every 5 minutes, so an alert can't appear sooner than its source publishes it and the next check finds it.
+
+Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for something newly confirmed, a reported zero-day or a watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
+
+## Keyboard or Mouse
+
+Everything for reading and moving around works both ways, so you only need the keyboard to type a search or a key.
+
+| Do this | Keyboard | Mouse |
+|---|---|---|
+| Choose a panel | `Tab` | Click it |
+| Next view in that panel | `v` | Right-click it |
+| Move through a list | `↑` `↓` `←` `→` | Wheel, or drag the scrollbar |
+| Open a row | `Enter` | Click the selected row, or the Open button |
+| Turn War Room and Feed Status pages | `←` `→` | Wheel, or Prev and Next under the panel |
+| Commands in the footer | Their keys | Click them |
+| Go to the alert on the Live Wire | `l` | Click the bar |
+
+Some terminals keep right-click for their own menu. If yours does, look for a setting that passes it to the application.
+
+## API Keys
+
+Press `Shift+K` to enter, test and remove API keys, notification targets and feed keys. Each key is tested when you enter it and takes effect straight away. Everything in the card works by keyboard or mouse.
+
+| Stored in | When | Protection |
+|---|---|---|
+| Environment variable | You set `CYBRWIRE_NVD_API_KEY` and the like, or `CYBRWIRE_NVD_API_KEY_FILE` for a mounted secret. Wins over everything else | Up to your environment |
+| System keychain | The default for new keys | Encrypted at rest by your desktop or OS |
+| `cybrwire_secrets.yaml` | Only when no keychain works, and the app warns you | Your user only, **not encrypted** |
+| `usrwire.yaml` | Old setups still work, but the app asks you to move them: press `m` in the card | Plaintext |
+
+Variable names are `CYBRWIRE_` plus `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `ABUSEIPDB_API_KEY`, `VIRUSTOTAL_API_KEY`, `PULSEDIVE_API_KEY`, `ABUSE_CH_API_KEY`, `NVD_API_KEY`, `NTFY_URL`, `NTFY_TOKEN`, `PUSHOVER_TOKEN`, `PUSHOVER_USER`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `DISCORD_WEBHOOK` or `SLACK_WEBHOOK`. A feed's key uses `FEED_` plus its name, such as `CYBRWIRE_FEED_MY_FEED`. Set `CYBRWIRE_KEYCHAIN=off` to skip the keychain.
+
+A keychain protects keys from other users, backups and accidental commits. It can't stop malware running as you, because the app itself has to be able to read them.
+
+Testing a key makes one call to that provider. AI providers only list models, which is free; AbuseIPDB, VirusTotal and Pulsedive count one lookup against your quota; feeds get one normal request; notification targets receive a real test message.
+
+## API Tier Limitations ⚠️
+
+CybrWire supports multiple threat intelligence providers with optional API key enrichment. **Free and limited API tiers have restrictions on indicator types they can query.**
+
+### VirusTotal
+- **Free Tier**: IPs, file hashes, domains, and URLs
+  - Rate limit: 4 queries/minute, 500/day quota
+- **Paid Tier**: Higher quotas and premium features
+
+### AbuseIPDB
+- **Free Tier**: IP reputation lookups only
+  - Limited to IP addresses (no hashes, domains, URLs)
+- **Paid Tier**: Enhanced features and higher rate limits
+- **When to upgrade**: For broader query quotas and advanced scoring
+
+### Pulsedive
+- **Free Tier**: Limited indicator database
+  - May not have comprehensive hash or malware data
+- **Paid Tier**: Full threat intelligence database access
+- **When to upgrade**: For comprehensive threat data across all indicator types
+
+### Abuse.ch
+- **Free**: MalwareBazaar (hashes) and URLhaus (URLs, IPs, domains)
+  - Requires a free Auth-Key from https://auth.abuse.ch/
+- **Recommended for**: Hash and malicious URL lookups
+
+### Recommendation
+
+For best results with CybrWire enrichment:
+1. **Use Abuse.ch** (free Auth-Key) for hash and URL enrichment
+2. **Use AbuseIPDB** for IP reputation (free tier available)
+3. **Use VirusTotal** for multi-engine verdicts on any indicator type
+4. **Configure multiple providers** for redundancy and broader coverage
+
+A **CLEAN** result means the provider has no record of the indicator, not that it is known to be safe.
+
+## Where Settings Live
+
+Three places hold settings, and each has one job:
+
+- **The app itself** (Shift+K, Shift+W, and the keys on the footer) for things you change while using it: API keys, notification targets, AI provider and model, watchlist, theme, filters and data age. They are saved for you.
+- **`usrwire.yaml`** for lists and preferences about *what you watch*: your own feeds above all, and optionally the watchlist, notification triggers, auto briefing switch, clock and time zone settings. It never holds keys.
+- **`cybrwire.env`** (Docker only) for the container's own settings: sign-in password, time zone, clock cities, watchlist, notification triggers, auto briefing, and API keys if you'd rather not type them into the app. A second file, **`.env`**, holds only the port.
+
+| Setting | Docker | Normal install (pipx, clone) |
+|---|---|---|
+| Sign-in password and user | `cybrwire.env`: `CYBRWIRE_WEB_PASSWORD`, `CYBRWIRE_WEB_USER` | Optional: the same variables in your shell |
+| Port | `.env`: `CYBRWIRE_PORT` | `CYBRWIRE_WEB_PORT` (browser version only) |
+| Your time zone | `cybrwire.env`: `TZ` | `TZ`, or `timezone:` in `usrwire.yaml` |
+| World clock cities | `cybrwire.env`: `CYBRWIRE_CLOCKS` | `clocks:` in `usrwire.yaml` |
+| API keys and notification targets | `cybrwire.env` (`CYBRWIRE_ANTHROPIC_API_KEY` and so on), or Shift+K | Shift+K (system keychain), or the same variables |
+| AI provider and model | Shift+K | Shift+K |
+| Watchlist | `cybrwire.env`: `CYBRWIRE_WATCHLIST`, or Shift+W | Shift+W, `watchlist:` in `usrwire.yaml`, or `CYBRWIRE_WATCHLIST` |
+| Your own feeds | `custom:` in `usrwire.yaml` | `custom:` in `usrwire.yaml` |
+| Notification triggers | `cybrwire.env`: `CYBRWIRE_NOTIFY_TRIGGERS` | `notifications:` in `usrwire.yaml`, or `CYBRWIRE_NOTIFY_TRIGGERS` |
+| Auto AI briefing at launch | `cybrwire.env`: `CYBRWIRE_AI_AUTO_BRIEFING` | `ai:` in `usrwire.yaml`, or `CYBRWIRE_AI_AUTO_BRIEFING` |
+
+If the same thing is set in two places, the environment wins over the app's saved value (and `CYBRWIRE_CLOCKS`, `CYBRWIRE_NOTIFY_TRIGGERS` and `CYBRWIRE_AI_AUTO_BRIEFING` win over their `usrwire.yaml` versions). `CYBRWIRE_WATCHLIST` adds to the other watchlist terms instead of replacing them. Triggers are a comma-separated list of `watchlist`, `confirmed`, `kev`, `zeroday`; the auto briefing is `true` or `false`.
+
+**Where the files are**
+
+| File | Normal install | Docker |
+|---|---|---|
+| `usrwire.yaml`, `cybrwire_state.json`, `cybrwire_history.db`, `cybrwire.log`, `cybrwire_secrets.yaml` | `~/.config/cybrwire/` (or the folder in `CYBRWIRE_HOME`) | `/data/` inside the container, which is a Docker volume named after your folder (for example `cybrwire-src_cybrwire-data`) |
+| `cybrwire.env`, `.env`, `compose.yaml` | not used | The folder you cloned, next to `compose.yaml`. Git ignores the two env files |
+
+To edit `usrwire.yaml` in Docker, open it where Docker keeps the volume (this needs `sudo`, because Docker's storage belongs to root), then restart:
+
+```bash
+sudo nano "$(docker volume inspect cybrwire-src_cybrwire-data --format '{{.Mountpoint}}')/usrwire.yaml"
+docker compose restart
+```
+
+`docker volume ls` shows the exact volume name if yours differs. `cybrwire_secrets.yaml` only exists when you save a key in the app with no system keychain (the Docker case); never share it.
+
+## Configuration Files
+
+- **`cybrwire.yaml`** – Curated official threat feeds (CISA, Microsoft, Talos, etc.)
+- **`usrwire.yaml`** – Yours: your feeds, watchlist and notification triggers. Created on first run from a documented template (see Where Settings Live for its path), and never holds keys
+- **`community.yaml`** – Community-contributed feeds - Submit yours via PR
+
+Feeds can be `rss`, `json` (CISA KEV, Ransomware.live, GitHub advisories, and AlienVault OTX formats),
+`txt` (IP/CIDR lists, URL lists, DShield), or `threatfox` and `urlhaus` (use your abuse.ch key).
+Give each feed a `kind` so it lands in the right group: `advisory`, `news` (the default),
+`ransomware`, or `indicators`. If a feed needs an API key, say how it is sent, and the key card gets a row for it:
+
+```yaml
+custom:
+  - name: "AlienVault OTX - Subscribed Pulses"
+    url: "https://otx.alienvault.com/api/v1/pulses/subscribed?limit=10"
+    type: json
+    key_header: X-OTX-API-KEY   # or key_param: key, for a URL parameter
+```
+
+Watchlist terms can be added in the app with `Shift+W` or listed in `usrwire.yaml`.
+They match whole words in an alert's title or description, in any case, and a trailing `*`
+matches a prefix:
+
+```yaml
+watchlist:
+  - Fortinet
+  - citrix*
+  - CVE-2024-3400
+```
+
+Notifications can go to ntfy, Pushover, Telegram, Discord or Slack. Targets are added with `Shift+K`, because their URLs work like passwords. Which events
+send one is set in a `notifications:` section (see `usrwire.yaml`). Run `cybrwire --test-notify` to check them.
+
+Every alert is saved to `cybrwire_history.db` for a year, so search can find items that feeds have dropped.
+
+Errors and feed failures are written to `cybrwire.log` in the app folder, with loaded keys masked.
+The app restricts `usrwire.yaml`, `cybrwire_secrets.yaml`, its state, history and log files to your user.
+
+## Features in Detail
+
+### War Room (AI Analysis)
+An AI briefing (see [AI Briefings](#ai-briefings)) followed by a local keyword analysis that needs no AI: top CVEs, affected software, exploit maturity, sectors, and threat actors.
+
+### Incident Correlation
+An incident is created when independent sources point at the same thing:
+- The same **CVE**, **IP address**, or **file hash** reported by two or more different feeds
+- A named **threat actor or ransomware group** appearing in two or more alerts
+
+Each incident explains itself: what it is (the CISA KEV description when the CVE is known exploited), why the alerts were grouped, when it was first and last reported and by whom, related incidents, and the latest reports.
+
+### Dashboard
+Metrics are computed from the alerts in your data window. The ransomware hotspot and most active group come from Ransomware.live victim posts, item velocity compares the last 24 hours with the 24 hours before, and the Doomsday Clock shows the [Bulletin of the Atomic Scientists](https://thebulletin.org/doomsday-clock/) setting, checked once a day.
 
 ### IOC Lookup (API Tools)
 Press `v` until you reach IOC Lookup. It looks up an IP address, file hash, domain or URL across every provider you have a key for, and shows one answer.
