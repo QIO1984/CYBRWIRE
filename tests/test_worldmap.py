@@ -47,14 +47,25 @@ class LandMask(unittest.TestCase):
 
 
 class Layout(unittest.TestCase):
-    def test_fit_keeps_the_shape_and_never_exceeds_the_room(self):
-        for width, height in ((100, 24), (45, 30), (200, 10), (30, 30), (10, 10)):
+    def test_fit_never_exceeds_the_room_and_keeps_within_the_allowed_stretch(self):
+        for width, height in ((100, 24), (45, 30), (200, 10), (300, 20), (30, 30), (10, 10)):
             cols, rows = worldmap.fit(width, height)
-            self.assertEqual(cols, rows * 5)
             self.assertGreaterEqual(rows, worldmap.MIN_ROWS)
+            self.assertGreaterEqual(cols, rows * 5)
+            self.assertLessEqual(cols, int(rows * 5 * worldmap.STRETCH))
             if width >= worldmap.MIN_ROWS * 5 and height >= worldmap.MIN_ROWS:
                 self.assertLessEqual(cols, width)
                 self.assertLessEqual(rows, height)
+
+    def test_a_wide_short_area_is_filled_by_stretching_the_map(self):
+        cols, rows = worldmap.fit(150, 20)
+        self.assertEqual(rows, 20)
+        self.assertEqual(cols, 150)  # 100 columns is true shape; 150 is the most it stretches
+        cols, rows = worldmap.fit(400, 20)
+        self.assertEqual((cols, rows), (150, 20))  # Past that it stays put and is centred
+
+    def test_an_area_with_room_to_spare_in_height_keeps_the_true_shape(self):
+        self.assertEqual(worldmap.fit(100, 60), (100, 20))
 
     def test_render_makes_exactly_cols_by_rows_cells(self):
         for cols, rows in ((100, 20), (45, 9), (25, 5)):

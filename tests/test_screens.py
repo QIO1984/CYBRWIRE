@@ -43,9 +43,9 @@ PANEL_ALERTS = [
 ]
 
 
-def drawn(renderable) -> str:
+def drawn(renderable, width: int = 100) -> str:
     """A Rich renderable as the plain text it prints"""
-    console = Console(file=io.StringIO(), width=100, force_terminal=False)
+    console = Console(file=io.StringIO(), width=width, force_terminal=False)
     console.print(renderable)
     return console.file.getvalue()
 
@@ -172,6 +172,11 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
             shown = drawn(app.map_view_content(100, 40))
             for expected in ("Ransomware victims  2", "Active outages  1", "LATEST", "ALERTS / HOUR"):
                 self.assertIn(expected, shown)
+            wide = [line for line in drawn(app.map_view_content(190, 40), 190).split("\n") if any(0x2800 < ord(ch) <= 0x28FF for ch in line)]
+            left = min(next(i for i, ch in enumerate(line) if 0x2800 < ord(ch) <= 0x28FF) for line in wide)
+            right = 190 - max(max(i for i, ch in enumerate(line) if 0x2800 < ord(ch) <= 0x28FF) for line in wide) - 1
+            self.assertLess(abs(left - right), 12)  # The land sits in the middle, not pushed to the left
+            self.assertGreater(190 - left - right, 120)  # And it fills most of the width
             before = drawn(app.map_view_content(100, 40))
             for _ in range(3):
                 app.map_tick()  # The timer doesn't run in the harness; the pulse moves markers and scope

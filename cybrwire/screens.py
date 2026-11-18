@@ -245,7 +245,7 @@ class HelpScreen(Screen):
         help_text.append("│  L              Live Wire - Jump to what's on the top bar (or click the bar)\n", style=color)
         help_text.append("│  Z              World Clock - Show or hide your time and reference cities (see readme to change them)\n", style=color)
         help_text.append("│  M              Threat Map - Full-window world map with its legend, latest alerts and activity scope (it is also the first view; V cycles views)\n", style=color)
-        help_text.append("│  X              Effects - Switch the map pulse, arrival flash and idle screensaver on or off\n", style=color)
+        help_text.append("│  X              Effects - Switch the map pulse and the arrival flash on or off\n", style=color)
         help_text.append("│  B              Alert Sound - Off, PC speaker, teletype bell, modem chirp or terminal bell\n", style=color)
         help_text.append("│  U              Group Duplicates - Merge the same story from several feeds (marked +N)\n", style=color)
         help_text.append("│  I              CVE Card - CVSS, EPSS, KEV and exploit details for the selected item\n", style=color)

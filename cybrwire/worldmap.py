@@ -130,10 +130,15 @@ def is_land(row: int, col: int) -> bool:
     return bool(_MASK[i >> 3] >> (7 - (i & 7)) & 1)
 
 
+STRETCH = 1.5  # A wide, short area may stretch the map this much wider than true shape before it is centred instead
+
+
 def fit(width: int, height: int) -> Tuple[int, int]:
-    """(columns, rows) of the biggest map that fits: it needs 5 columns for every row to keep its shape"""
+    """(columns, rows) of the biggest map that fits. True shape needs 5 columns per row; when the area is
+    wider than that, the map stretches up to 1.5x to fill it (the caller centres what is left over)."""
     rows = max(MIN_ROWS, min(height, width // 5))
-    return rows * 5, rows
+    cols = max(rows * 5, min(width, int(rows * 5 * STRETCH)))
+    return cols, rows
 
 
 def _blend(color: str, ground: str, keep: float) -> str:

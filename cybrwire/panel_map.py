@@ -4,7 +4,9 @@ Shown as a main view (v cycles to it) and in the full-window card (m). Both use 
 
 from datetime import datetime, timezone
 
+from rich.align import Align
 from rich.console import Group
+from rich.padding import Padding
 from rich.text import Text
 
 from . import scope, worldmap
@@ -48,21 +50,24 @@ class MapMixin:
         return lines
 
     def map_view_content(self, width: int, height: int):
-        """The map and everything under it, sized to width x height cells"""
+        """The map and everything under it, sized to width x height cells and centred in it"""
         spots = self.map_spots()
-        legend = worldmap.legend(spots, self.palette, width=width)
-        latest = self.latest_lines(width) if height >= 24 else []
+        text_width = min(width, 110)  # Lines of text stay readable on a very wide screen
+        legend = worldmap.legend(spots, self.palette, width=text_width)
+        latest = self.latest_lines(text_width) if height >= 24 else []
         counts = scope.hourly_counts(self.all_alerts, datetime.now(timezone.utc))
-        trace = scope.render(counts, min(width, 100), SCOPE_ROWS, self.map_step, self.palette) if height >= 30 else []
+        trace = scope.render(counts, min(text_width, 100), SCOPE_ROWS, self.map_step, self.palette) if height >= 30 else []
         below = len(legend) + (len(latest) + 1 if latest else 0) + (len(trace) + 1 if trace else 0) + 1
         cols, rows = worldmap.fit(width, max(worldmap.MIN_ROWS, height - below))
-        parts = [worldmap.render(cols, rows, spots, self.map_step if self.effects_on else 0, self.palette), ""]
+        picture = worldmap.render(cols, rows, spots, self.map_step if self.effects_on else 0, self.palette)
+        block = max(cols, text_width)  # The map and the text under it share one centred column
+        parts = [Align.center(picture, width=block), ""]
         parts += legend
         if latest:
             parts += ["", *latest]
         if trace:
             parts += ["", *trace]
-        return Group(*parts)
+        return Padding(Group(*parts), (0, 0, 0, max(0, (width - block) // 2)))
 
     def sync_map_view(self):
         """Fill the main-panel map view and its frame"""

@@ -319,9 +319,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.feed_cache = {}  # Feed name -> (when fetched, parsed items), for slow-moving lists
         self.sound = saved.get("sound", sound.OFF)
         self.show_clocks = saved.get("world_clock", True)
-        self.effects_on = bool(saved.get("effects", True))  # Pulses, arrival flashes and the idle screensaver
+        self.effects_on = bool(saved.get("effects", True))  # Map pulse and the arrival flash
         self.main_view_mode = saved.get("main_view") if saved.get("main_view") in ("map", "alerts", "incidents") else "map"
-        self.last_input = time.monotonic()
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
         self.feed_at_top = False    # Return to the first row at the next redraw
@@ -528,7 +527,6 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.apply_theme()
         self.query_one(WorldClock).display = self.show_clocks
         self.set_interval(0.5, self.map_tick)  # Pulses the map's markers while it is showing
-        self.set_interval(5, self.idle_check)  # Starts the screensaver after a while with no input
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -1023,7 +1021,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.mark_dirty()
     
     def action_toggle_effects(self):
-        """Pulses, arrival flashes and the idle screensaver, all at once"""
+        """The map pulse and the arrival flash, both at once"""
         self.effects_on = not self.effects_on
         self.save_settings()
         self.notify(f"Effects {'on' if self.effects_on else 'off'}", timeout=2)

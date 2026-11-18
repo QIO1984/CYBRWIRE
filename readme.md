@@ -33,7 +33,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Threat map** – the opening view: a world map in braille dots with pulsing markers for ransomware victims, attributed nation-state activity, national advisories and active outages, with the latest strong alerts and an activity scope underneath; `m` opens it full window
-- **Atmosphere** – a radar sweep over the map, a window-edge pulse (and a FLASH banner in Cold War mode) when something urgent arrives, and a digital-rain screensaver with live headlines after five idle minutes; `x` switches it all off
+- **Atmosphere** – a radar sweep over the map and a window-edge pulse (plus a FLASH banner in Cold War mode) when something urgent arrives; `x` switches it off
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
 - **Themes** – Neon Noir (default: near-black with vivid pink, cyan, blue and violet), Synthwave, Retro Warm and Amber CRT; press `t` to cycle
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
@@ -203,7 +203,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `e` | Re-enable disabled feeds |
 | `z` | Show or hide the world clock |
 | `m` | Open the threat map full window |
-| `x` | Effects on or off (map pulse, arrival flash, idle screensaver) |
+| `x` | Effects on or off (map pulse and arrival flash) |
 | `q` | Quit |
 
 Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
@@ -245,7 +245,6 @@ These follow what is happening and switch off together with `x` (the choice is r
 
 - **Pulse and sweep:** map markers pulse out of step, and a slow radar sweep brightens the land.
 - **Arrival flash:** when something urgent arrives (a newly confirmed exploit or a reported zero-day), the window edge pulses once. In Cold War mode a FLASH banner flickers across the top as well.
-- **Screensaver:** after five minutes without a key, click or mouse movement, the screen turns to digital rain. Headlines for the strongest recent alerts type themselves in, hang for a few seconds and fade, and the glow along the bottom follows the current threat level. Any key or click brings the dashboard back. It never starts while a card is open, while loading, or with effects off.
 
 ## AI Briefings
 

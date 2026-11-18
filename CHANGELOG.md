@@ -4,7 +4,7 @@
 
 ### Added
 - **Threat map** as the opening main view (`v` cycles views, `m` opens it full window). A world map drawn in braille dots with four marker layers: ransomware victims, attributed nation-state activity, national advisories and active outages. Under it: a legend line per layer, the latest strong alerts and an alerts-per-hour scope with a sweeping point. The app remembers the view you leave it on.
-- **Atmosphere effects**, all switched by `x`: map markers pulse and a radar sweep crosses the land; the window edge pulses when something urgent arrives (plus a FLASH banner in Cold War mode); a digital-rain screensaver with live headlines starts after five idle minutes.
+- **Atmosphere effects**, all switched by `x`: map markers pulse and a radar sweep crosses the land; the window edge pulses when something urgent arrives (plus a FLASH banner in Cold War mode).
 - **Neon Noir**, a near-black theme with vivid pink, cyan, blue and violet, now the default for new installs. Saved choices of the older themes are kept.
 
 ### Changed
