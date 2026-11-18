@@ -169,6 +169,11 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         border-subtitle-align: center;
     }
     
+    #map-main {
+        width: 100%;
+        height: 1fr;
+    }
+
     #indicator-row {
         height: 1;
         margin-bottom: 1;
