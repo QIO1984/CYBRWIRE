@@ -33,7 +33,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
-- **Retro themes** – Synthwave (default), Retro Warm and Amber CRT; press `t` to cycle
+- **Themes** – Neon Noir (default: near-black with vivid pink, cyan, blue and violet), Synthwave, Retro Warm and Amber CRT; press `t` to cycle
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
 - **Customizable recency window** (24h / 48h / 7 days)
 - **Advanced filtering** – view alerts only, incidents, or API enrichment tools
@@ -193,7 +193,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `tab` | Switch between main feed and dashboard panels |
 | `v` | Cycle main view (alerts → incidents → API tools) |
 | `c` | Toggle Cold War Mode |
-| `t` | Cycle theme (Synthwave → Retro Warm → Amber CRT) |
+| `t` | Cycle theme (Neon Noir → Synthwave → Retro Warm → Amber CRT) |
 | `↑` `↓` / click | Select an alert or incident (click again to open) |
 | `enter` | Open the selected alert or incident in your browser |
 | `a` | Explain the selected alert with AI |

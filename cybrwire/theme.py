@@ -75,6 +75,15 @@ class Palette:
 SEVERITIES = ("critical", "zeroday", "ransomware", "apt", "exploit", "info")
 
 PALETTES: Dict[str, Palette] = {p.key: p for p in [
+    # Near-black with vivid neon: hot pink focus, cyan accent, electric blue and violet for the quiet roles
+    Palette(
+        key="neon", name="Neon Noir",
+        bg="#07070d", surface="#16162e", border="#33335a", focus="#ff4fd8",
+        text="#e6e6f0", muted="#8a8ab0", accent="#00e5ff",
+        critical="#ff3b6b", zeroday="#ffd23f", ransomware="#ff4fd8",
+        apt="#a98bff", exploit="#ff8a3d", info="#6c8cff",
+        good="#39ff88", warn="#ffb000", bad="#ff5470",
+    ),
     # Warm charcoal and cream with an amber accent (Gruvbox-inspired)
     Palette(
         key="retro_warm", name="Retro Warm",
@@ -132,4 +141,4 @@ COLD_WAR = Palette(
     banner="TOP SECRET // CYBRWIRE // EYES ONLY",
 )
 
-DEFAULT_PALETTE = "synthwave"
+DEFAULT_PALETTE = "neon"
