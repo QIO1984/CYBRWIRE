@@ -19,6 +19,10 @@ def alert(title, source="Feed", kind="news", hours=1, **extra):
     return {"title": title, "source": source, "kind": kind, "ts": NOW - timedelta(hours=hours), **extra}
 
 
+def channels(color):
+    return [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+
+
 def land_at(lat, lon):
     row = int((worldmap.LAT_TOP - lat) / (worldmap.LAT_TOP - worldmap.LAT_BOTTOM) * worldmap.DOTS_HIGH)
     col = int((lon + 180) / 360 * worldmap.DOTS_WIDE)
@@ -75,7 +79,7 @@ class Layout(unittest.TestCase):
 
     def test_the_continents_show_up_as_braille_and_water_stays_blank(self):
         lines = worldmap.render(100, 20, [], 0, NEON).plain.split("\n")
-        self.assertTrue(all(0x2800 <= ord(ch) <= 0x28FF or ch == " " for line in lines for ch in line))
+        self.assertTrue(all(0x2800 <= ord(ch) <= 0x28FF or ch in " ☼" for line in lines for ch in line))  # Land, water and the sun
         self.assertGreater(sum(ch != " " for line in lines for ch in line), 500)
         self.assertEqual(lines[10][40:44], "    ")  # Open Atlantic
 
@@ -197,6 +201,52 @@ class FromAlerts(unittest.TestCase):
     def test_the_layers_use_different_colours(self):
         roles = [getattr(NEON, role) for *_rest, role in worldmap.LAYERS]
         self.assertEqual(len(set(roles)), len(roles))
+
+
+class DayAndNight(unittest.TestCase):
+    NOON_UTC = datetime(2026, 3, 20, 12, 0, tzinfo=timezone.utc)      # Near the equinox, the sun is over longitude 0
+    MIDNIGHT_UTC = datetime(2026, 3, 20, 0, 0, tzinfo=timezone.utc)   # ...and over 180 twelve hours later
+
+    def test_the_sun_is_over_the_right_place(self):
+        lat, lon = worldmap.sun_position(self.NOON_UTC)
+        self.assertAlmostEqual(lat, 0, delta=2.5)
+        self.assertAlmostEqual(lon, 0, delta=1)
+        lat, lon = worldmap.sun_position(self.MIDNIGHT_UTC)
+        self.assertAlmostEqual(abs(lon), 180, delta=1)
+        june = worldmap.sun_position(datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc))[0]
+        december = worldmap.sun_position(datetime(2026, 12, 21, 12, 0, tzinfo=timezone.utc))[0]
+        self.assertAlmostEqual(june, 23.4, delta=1.5)
+        self.assertAlmostEqual(december, -23.4, delta=1.5)
+
+    def test_daylight_is_full_under_the_sun_and_zero_opposite_it(self):
+        sun = worldmap.sun_position(self.NOON_UTC)
+        self.assertEqual(worldmap.daylight(0, 0, sun), 1.0)
+        self.assertEqual(worldmap.daylight(0, 180, sun), 0.0)
+        self.assertEqual(worldmap.daylight(0, 90, sun), 0.0 + worldmap.daylight(0, 90, sun))  # A quarter turn is dusk or dawn
+        self.assertTrue(0 < worldmap.daylight(0, 95, sun) < 1 or worldmap.daylight(0, 95, sun) in (0.0, 1.0))
+
+    def brightness_at(self, text, lat, lon, cols=100, rows=20):
+        r, c = worldmap.cell_of(Spot(lat, lon, "victim", "X"), cols, rows)
+        offset = sum(len(line) + 1 for line in text.plain.split("\n")[:r]) + c
+        style = next(span.style for span in reversed(text.spans) if span.start <= offset < span.end)
+        return sum(channels(str(style).split()[-1] if " " in str(style) else str(style)))
+
+    def test_the_night_side_is_dimmer_and_the_picture_otherwise_the_same(self):
+        noon = worldmap.render(100, 20, [], 0, NEON, when=self.NOON_UTC)
+        midnight = worldmap.render(100, 20, [], 0, NEON, when=self.MIDNIGHT_UTC)
+        self.assertEqual(noon.plain.replace("☼", " "), midnight.plain.replace("☼", " "))
+        # Africa is in daylight at noon UTC and in the dark at midnight; the Pacific the other way round
+        self.assertGreater(self.brightness_at(noon, 5, 20), self.brightness_at(midnight, 5, 20))
+        self.assertGreater(self.brightness_at(midnight, -25, 134), self.brightness_at(noon, -25, 134))
+
+    def test_a_sun_marks_where_it_is_noon(self):
+        text = worldmap.render(100, 20, [], 0, NEON, when=self.NOON_UTC).plain
+        self.assertIn("☼", text)
+        row = next(line for line in text.split("\n") if "☼" in line)
+        self.assertAlmostEqual(row.index("☼"), 50, delta=3)  # Longitude 0 is the middle of the map
+
+    def test_shading_works_in_the_cold_war_look_too(self):
+        worldmap.render(100, 20, [], 0, COLD_WAR, when=self.NOON_UTC)
 
 
 if __name__ == "__main__":

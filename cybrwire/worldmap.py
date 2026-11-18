@@ -7,7 +7,9 @@ fine coastlines. Markers step through a few glyphs and shades to pulse, each out
 """
 
 import base64
+import math
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -185,6 +187,26 @@ def _cell_dots(cols: int, rows: int) -> List[List[Tuple[int, bool]]]:
 _grid_cache: Dict[Tuple[int, int], List[List[Tuple[int, bool]]]] = {}
 
 
+NIGHT_KEEP = 0.34   # How much of its colour the night side keeps
+
+
+def sun_position(when: datetime) -> Tuple[float, float]:
+    """(latitude, longitude) of the point where the sun is straight overhead, to within a degree or two"""
+    when = when.astimezone(timezone.utc)
+    declination = -23.44 * math.cos(2 * math.pi / 365 * (when.timetuple().tm_yday + 10))
+    hours = when.hour + when.minute / 60 + when.second / 3600
+    longitude = (12 - hours) * 15
+    return declination, (longitude + 180) % 360 - 180
+
+
+def daylight(lat: float, lon: float, sun: Tuple[float, float]) -> float:
+    """1 in full day, 0 at night, easing through twilight (the sun between 6 degrees below and 3 above the horizon)"""
+    sun_lat, sun_lon = math.radians(sun[0]), math.radians(sun[1])
+    phi, delta_lon = math.radians(lat), math.radians(lon) - sun_lon
+    elevation = math.degrees(math.asin(math.sin(phi) * math.sin(sun_lat) + math.cos(phi) * math.cos(sun_lat) * math.cos(delta_lon)))
+    return max(0.0, min(1.0, (elevation + 6) / 9))
+
+
 def cell_of(spot: Spot, cols: int, rows: int) -> Optional[Tuple[int, int]]:
     if not (LAT_BOTTOM <= spot.lat <= LAT_TOP):
         return None
@@ -193,7 +215,7 @@ def cell_of(spot: Spot, cols: int, rows: int) -> Optional[Tuple[int, int]]:
     return min(row, rows - 1), min(max(col, 0), cols - 1)
 
 
-def render(cols: int, rows: int, spots: List[Spot], step: int, palette) -> Text:
+def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Optional[datetime] = None) -> Text:
     """The map as styled text. `step` counts pulse steps; each spot is out of step with the others."""
     if (cols, rows) not in _grid_cache:
         _grid_cache.clear()
@@ -201,12 +223,16 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette) -> Text:
     grid = _grid_cache[(cols, rows)]
     # A slow radar sweep brightens the land in a band that moves across the map, one pass every ~50 steps
     sweep = (step % (cols + 14)) - 7
+    sun = sun_position(when or datetime.now(timezone.utc))  # The night side is dimmed, so the map shows where it is dark now
     cells = []
-    for line in grid:
+    for r, line in enumerate(grid):
         row = []
+        lat = LAT_TOP - (r + 0.5) / len(grid) * (LAT_TOP - LAT_BOTTOM)
         for c, (v, coast) in enumerate(line):
             glow = max(0.0, 1 - abs(c - sweep) / 6)
             keep = (0.7 + 0.3 * glow) if coast else (0.38 + 0.55 * glow)
+            lon = (c + 0.5) / cols * 360 - 180
+            keep *= NIGHT_KEEP + (1 - NIGHT_KEEP) * daylight(lat, lon, sun)
             row.append((chr(0x2800 + v) if v else " ", _blend(palette.accent, palette.bg, keep)))
         cells.append(row)
     placed: Dict[Tuple[int, int], Spot] = {}
@@ -231,8 +257,11 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette) -> Text:
         else:
             glyph, keep = ("◆" if spot.kind == "outage" else "■"), 1.0
         cells[r][c] = (glyph, _blend(color, palette.bg, keep))
+    sun_cell = cell_of(Spot(sun[0], sun[1], "sun", ""), cols, rows)
+    if sun_cell and sun_cell not in placed:
+        cells[sun_cell[0]][sun_cell[1]] = ("☼", palette.zeroday)  # Where it is noon
     # Labels for the busiest few: to the right of the marker, else the left, else a row above or below
-    taken = set(placed)
+    taken = set(placed) | ({sun_cell} if sun_cell else set())
     labelled = [kv for kv in placed.items() if kv[1].kind != "advisory"]
     for (r, c), spot in sorted(labelled, key=lambda kv: -kv[1].count)[:10 if cols >= MIN_LABEL_COLS else 0]:
         text = spot.label.split(",")[0][:12] + (f" {spot.count}" if spot.kind in ("victim", "actor") and spot.count > 1 else "")
@@ -323,6 +352,6 @@ def legend(spots: List[Spot], palette, top: int = 3, width: int = 80) -> List[Te
         if line.cell_len > width:
             line.truncate(width - 1, overflow="ellipsis")
         lines.append(line)
-    note = "Outages sit at the service's home" if width < 70 else "Outage markers sit at the service's home; advisories at the country that issues them"
+    note = "Outages sit at the service's home" if width < 70 else "Outage markers sit at the service's home; advisories at the country that issues them; ☼ is the sun"
     lines.append(Text(note[:width], style=palette.muted))
     return lines
