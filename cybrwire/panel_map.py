@@ -28,8 +28,12 @@ class MapMixin:
         alerts = self.all_alerts
         key = (id(alerts), len(alerts), alerts[0]["title"] if alerts else "", int(now.timestamp() // MAP_CACHE_SECONDS))
         if not self._map_cache or self._map_cache[0] != key:
-            self._map_cache = (key, worldmap.gather_spots(alerts, now, MAP_DAYS))
+            self._map_cache = (key, worldmap.gather_spots(alerts, now, MAP_DAYS), worldmap.gather_arcs(alerts, now, MAP_DAYS))
         return self._map_cache[1]
+
+    def map_arcs(self):
+        self.map_spots()  # Refreshes the cache that holds both
+        return self._map_cache[2]
 
     def latest_lines(self, width, count=LATEST):
         """The strongest recent alerts: what is worth knowing alongside the map"""
@@ -53,13 +57,14 @@ class MapMixin:
         """The map and everything under it, sized to width x height cells and centred in it"""
         spots = self.map_spots()
         text_width = min(width, 110)  # Lines of text stay readable on a very wide screen
-        legend = worldmap.legend(spots, self.palette, width=text_width)
+        arcs = self.map_arcs()
+        legend = worldmap.legend(spots, self.palette, width=text_width, arcs=arcs)
         latest = self.latest_lines(text_width) if height >= 24 else []
         counts = scope.hourly_counts(self.all_alerts, datetime.now(timezone.utc))
         trace = scope.render(counts, min(text_width, 100), SCOPE_ROWS, self.map_step, self.palette) if height >= 30 else []
         below = len(legend) + (len(latest) + 1 if latest else 0) + (len(trace) + 1 if trace else 0) + 1
         cols, rows = worldmap.fit(width, max(worldmap.MIN_ROWS, height - below))
-        picture = worldmap.render(cols, rows, spots, self.map_step if self.effects_on else 0, self.palette)
+        picture = worldmap.render(cols, rows, spots, self.map_step if self.effects_on else 0, self.palette, arcs=arcs)
         block = max(cols, text_width)  # The map and the text under it share one centred column
         parts = [Align.center(picture, width=block), ""]
         parts += legend

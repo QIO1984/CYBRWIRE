@@ -111,6 +111,25 @@ ORIGIN_PATTERNS: Dict[str, "re.Pattern"] = {code: re.compile(pattern, re.IGNOREC
     "IR": r"\b(iran\w*|tehran|irgc|muddywater|oilrig|charming kitten|apt ?(33|34|35))\b",
 }.items()}
 
+# Countries named in a headline as the target of attributed activity. The uppercase abbreviations are case-sensitive
+# (so "us" the pronoun doesn't count); everything inside (?i:...) is not.
+TARGET_PATTERNS: Dict[str, "re.Pattern"] = {code: re.compile(pattern) for code, pattern in {
+    "US": r"(?i:united states|americans?\b|america\b)|\bU\.S\.|\bUSA?\b", "GB": r"(?i:britain|british|united kingdom|england)|\bUK\b",
+    "DE": r"(?i:german\w*)", "FR": r"(?i:france|french)", "IT": r"(?i:italy|italian)", "ES": r"(?i:spain|spanish)",
+    "NL": r"(?i:netherlands|dutch)", "BE": r"(?i:belgi\w+)", "PL": r"(?i:poland|polish)", "UA": r"(?i:ukrain\w*)",
+    "JP": r"(?i:japan\w*)", "KR": r"(?i:south korea\w*)", "TW": r"(?i:taiwan\w*)", "IN": r"(?i:india\b|indian\b)",
+    "IL": r"(?i:israel\w*)", "SA": r"(?i:saudi)", "AE": r"(?i:emirates)|\bUAE\b", "TR": r"(?i:turkey|turkish|t[uü]rkiye)",
+    "EG": r"(?i:egypt\w*)", "AU": r"(?i:australia\w*)", "NZ": r"(?i:new zealand)", "CA": r"(?i:canad\w+)",
+    "MX": r"(?i:mexic\w+)", "BR": r"(?i:brazil\w*)", "AR": r"(?i:argentin\w+)", "ZA": r"(?i:south africa\w*)",
+    "NG": r"(?i:nigeria\w*)", "SG": r"(?i:singapore)", "VN": r"(?i:vietnam\w*)", "PH": r"(?i:philippine\w*)",
+    "ID": r"(?i:indonesia\w*)", "TH": r"(?i:thailand)", "MY": r"(?i:malaysia\w*)", "PK": r"(?i:pakistan\w*)",
+    "SE": r"(?i:sweden|swedish)", "NO": r"(?i:norway|norwegian)", "FI": r"(?i:finland|finnish)", "DK": r"(?i:denmark|danish)",
+    "CH": r"(?i:switzerland|swiss)", "AT": r"(?i:austria\w*)", "CZ": r"(?i:czech\w*)", "RO": r"(?i:romania\w*)",
+    "GR": r"(?i:greece|greek)", "PT": r"(?i:portugal|portuguese)", "IE": r"(?i:ireland|irish)",
+    "LT": r"(?i:lithuania\w*)", "LV": r"(?i:latvia\w*)", "EE": r"(?i:estonia\w*)",
+    "CN": r"(?i:china|chinese)", "RU": r"(?i:russia\w*)", "IR": r"(?i:iran\w*)", "KP": r"(?i:north korea\w*)",
+}.items()}
+
 # Which country an advisory source speaks for (matched at the start of the feed's name)
 SOURCE_COUNTRIES: Dict[str, str] = {
     "cisa": "US", "us-cert": "US", "nist": "US", "ncsc uk": "GB", "cyber.gc.ca": "CA", "jpcert": "JP",
@@ -127,6 +146,13 @@ LAYERS = (
     ("advisory", "■", "National advisories", "info"),
 )
 PRIORITY = {name: i for i, (name, *_rest) in enumerate(LAYERS)}
+
+
+@dataclass
+class Arc:
+    source: str   # Country code the activity is attributed to
+    target: str   # Country code named in the same headline
+    count: int = 1
 
 
 @dataclass
@@ -215,7 +241,8 @@ def cell_of(spot: Spot, cols: int, rows: int) -> Optional[Tuple[int, int]]:
     return min(row, rows - 1), min(max(col, 0), cols - 1)
 
 
-def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Optional[datetime] = None) -> Text:
+def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Optional[datetime] = None,
+           arcs: Optional[List[Arc]] = None) -> Text:
     """The map as styled text. `step` counts pulse steps; each spot is out of step with the others."""
     if (cols, rows) not in _grid_cache:
         _grid_cache.clear()
@@ -246,6 +273,27 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
             if 0 <= r < rows and 0 <= c < cols and (r, c) not in placed:
                 placed[(r, c)] = spot
                 break
+    # Arcs: a dotted curve from the attributed country to each country named with it, with a bright point travelling along it
+    arc_cells = set()
+    for n, arc in enumerate(arcs or []):
+        a = cell_of(Spot(*COUNTRIES[arc.source], "actor", arc.source), cols, rows)
+        b = cell_of(Spot(*COUNTRIES[arc.target], "victim", arc.target), cols, rows)
+        if not a or not b or a == b:
+            continue
+        path = [cell for cell in arc_path(a, b, rows) if 0 <= cell[0] < rows and 0 <= cell[1] < cols and cell not in placed]
+        if not path:
+            continue
+        head = (step + n * 5) % (len(path) + 6)  # A short pause at the end before it starts again
+        for i, (r, c) in enumerate(path):
+            behind = head - i
+            if behind == 0:
+                glyph, keep = "●", 1.0
+            elif 0 < behind <= 2:
+                glyph, keep = "•", 0.8
+            else:
+                glyph, keep = "·", 0.42
+            cells[r][c] = (glyph, _blend(palette.apt, palette.bg, keep))
+            arc_cells.add((r, c))
     roles = {name: role for name, _glyph, _label, role in LAYERS}
     for (r, c), spot in placed.items():
         color = getattr(palette, roles[spot.kind])
@@ -261,7 +309,7 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
     if sun_cell and sun_cell not in placed:
         cells[sun_cell[0]][sun_cell[1]] = ("☼", palette.zeroday)  # Where it is noon
     # Labels for the busiest few: to the right of the marker, else the left, else a row above or below
-    taken = set(placed) | ({sun_cell} if sun_cell else set())
+    taken = set(placed) | arc_cells | ({sun_cell} if sun_cell else set())
     labelled = [kv for kv in placed.items() if kv[1].kind != "advisory"]
     for (r, c), spot in sorted(labelled, key=lambda kv: -kv[1].count)[:10 if cols >= MIN_LABEL_COLS else 0]:
         text = spot.label.split(",")[0][:12] + (f" {spot.count}" if spot.kind in ("victim", "actor") and spot.count > 1 else "")
@@ -327,6 +375,43 @@ def gather_spots(alerts: List[dict], now, days: int = 7) -> List[Spot]:
     return spots
 
 
+def gather_arcs(alerts: List[dict], now, days: int = 7, limit: int = 8) -> List[Arc]:
+    """From an attributed country to each other country named in the same APT headline, busiest first"""
+    from collections import Counter
+    from datetime import timedelta
+
+    cutoff = now - timedelta(days=days)
+    pairs: Counter = Counter()
+    for alert in alerts:
+        if alert["ts"] < cutoff or alert.get("severity") != "apt":
+            continue
+        title = alert["title"]
+        origin = next((code for code, pattern in ORIGIN_PATTERNS.items() if pattern.search(title)), None)
+        if not origin:
+            continue
+        for code, pattern in TARGET_PATTERNS.items():
+            if code != origin and code in COUNTRIES and pattern.search(title):
+                pairs[(origin, code)] += 1
+    return [Arc(a, b, n) for (a, b), n in pairs.most_common(limit)]
+
+
+def arc_path(start, end, rows: int):
+    """Cells along a curve from one cell to another, bowed toward the top of the map like a great circle"""
+    (r0, c0), (r1, c1) = start, end
+    span = max(abs(r1 - r0), abs(c1 - c0), 1)
+    lift = min(rows * 0.5, span * 0.28)
+    control = ((r0 + r1) / 2 - lift, (c0 + c1) / 2)
+    cells = []
+    for i in range(span * 2 + 1):
+        t = i / (span * 2)
+        r = (1 - t) ** 2 * r0 + 2 * (1 - t) * t * control[0] + t ** 2 * r1
+        c = (1 - t) ** 2 * c0 + 2 * (1 - t) * t * control[1] + t ** 2 * c1
+        cell = (round(r), round(c))
+        if cell not in cells:
+            cells.append(cell)
+    return cells
+
+
 def _top(spots: List[Spot], n: int) -> str:
     from .panel_dashboard import COUNTRY_NAMES
     names = {"CN": "China", "RU": "Russia", "KP": "North Korea", "IR": "Iran", "BE": "EU (CERT-EU)", "GR": "EU (ENISA)"}
@@ -334,7 +419,7 @@ def _top(spots: List[Spot], n: int) -> str:
     return " · ".join(f"{names.get(s.label) or COUNTRY_NAMES.get(s.label, s.label)} {s.count}" for s in ranked)
 
 
-def legend(spots: List[Spot], palette, top: int = 3, width: int = 80) -> List[Text]:
+def legend(spots: List[Spot], palette, top: int = 3, width: int = 80, arcs: Optional[List[Arc]] = None) -> List[Text]:
     """One line per layer under the map: its marker, total and the busiest places, clipped to the width"""
     lines = []
     for name, glyph, label, role in LAYERS:
@@ -349,6 +434,17 @@ def legend(spots: List[Spot], palette, top: int = 3, width: int = 80) -> List[Te
             detail = _top(layer, top if width >= 70 else max(1, top - 1)) if layer else ""
         if detail:
             line.append("   " + detail, style=palette.muted)
+        if line.cell_len > width:
+            line.truncate(width - 1, overflow="ellipsis")
+        lines.append(line)
+    if arcs:
+        from .panel_dashboard import COUNTRY_NAMES
+        names = {"CN": "China", "RU": "Russia", "KP": "North Korea", "IR": "Iran"}
+        line = Text()
+        line.append("↝ ", style=palette.apt)
+        line.append(f"Attributed targets  {sum(a.count for a in arcs)}", style=palette.text)
+        shown = " · ".join(f"{names.get(a.source, a.source)} → {COUNTRY_NAMES.get(a.target, a.target)}" for a in arcs[:max(1, top - 1)])
+        line.append("   " + shown, style=palette.muted)
         if line.cell_len > width:
             line.truncate(width - 1, overflow="ellipsis")
         lines.append(line)

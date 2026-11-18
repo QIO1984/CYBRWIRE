@@ -249,5 +249,62 @@ class DayAndNight(unittest.TestCase):
         worldmap.render(100, 20, [], 0, COLD_WAR, when=self.NOON_UTC)
 
 
+class Arcs(unittest.TestCase):
+    def apt(self, title, hours=1):
+        return alert(title, hours=hours, severity="apt")
+
+    def test_an_arc_runs_from_the_attributed_country_to_each_other_country_named(self):
+        alerts = [self.apt("China-linked APT41 targets Taiwan telecoms"),
+                  self.apt("Russia-linked hackers hit US and German ministries"),
+                  self.apt("Chinese hackers breach Taiwan semiconductor firm")]
+        arcs = {(a.source, a.target): a.count for a in worldmap.gather_arcs(alerts, NOW)}
+        self.assertEqual(arcs, {("CN", "TW"): 2, ("RU", "US"): 1, ("RU", "DE"): 1})
+
+    def test_nothing_is_drawn_without_a_named_target_or_attribution_or_in_time(self):
+        alerts = [self.apt("Lazarus group steals crypto"),                       # No target named
+                  alert("China hits Taiwan", severity="info"),       # Not an APT story
+                  self.apt("China-linked group hits Taiwan", hours=24 * 9),     # Too old
+                  self.apt("Iran-linked group attacks Iran water plants")]      # The only country named is its own
+        self.assertEqual(worldmap.gather_arcs(alerts, NOW), [])
+
+    def test_us_the_pronoun_is_not_the_united_states(self):
+        self.assertEqual(worldmap.gather_arcs([self.apt("Chinese hackers target us all, researchers say")], NOW), [])
+        self.assertEqual([a.target for a in worldmap.gather_arcs([self.apt("Chinese hackers target the US power grid")], NOW)], ["US"])
+
+    def test_north_korea_is_not_south_korea_and_arcs_are_capped_busiest_first(self):
+        arcs = worldmap.gather_arcs([self.apt("North Korean hackers target South Korean banks")] * 3, NOW)
+        self.assertEqual([(a.source, a.target) for a in arcs], [("KP", "KR")])
+        many = [self.apt(f"Chinese APT hits {name}") for name in ("Japan", "Taiwan", "India", "Canada", "France", "Spain", "Italy",
+                                                                 "Poland", "Sweden", "Norway", "Brazil", "Mexico")]
+        self.assertEqual(len(worldmap.gather_arcs(many, NOW)), 8)
+
+    def test_an_arc_is_drawn_between_its_ends_and_a_bright_point_travels_along_it(self):
+        arc = [worldmap.Arc("CN", "US", 2)]
+        plain = worldmap.render(100, 20, [], 0, NEON).plain
+        drawn = [worldmap.render(100, 20, [], step, NEON, arcs=arc).plain for step in range(0, 40, 4)]
+        self.assertTrue(all(d != plain for d in drawn))
+        self.assertGreater(len(set(drawn)), 4)  # The comet moves
+        self.assertTrue(any("●" in d for d in drawn))
+
+    def test_arcs_do_not_cover_markers(self):
+        us = Spot(*worldmap.COUNTRIES["US"], "victim", "US", 9)
+        text = worldmap.render(100, 20, [us], 0, NEON, arcs=[worldmap.Arc("CN", "US", 1)]).plain
+        self.assertTrue(any(glyph in text for glyph in worldmap.PULSE))
+
+    def test_the_legend_names_the_busiest_pairs_and_stays_the_same_without_arcs(self):
+        arcs = [worldmap.Arc("CN", "TW", 3), worldmap.Arc("RU", "UA", 2)]
+        with_arcs = [line.plain for line in worldmap.legend([], NEON, width=100, arcs=arcs)]
+        without = [line.plain for line in worldmap.legend([], NEON, width=100)]
+        self.assertEqual(len(with_arcs), len(without) + 1)
+        self.assertTrue(any("Attributed targets  5" in line and "China → Taiwan" in line for line in with_arcs))
+
+    def test_arc_paths_start_and_end_at_their_cells_and_bow_toward_the_top(self):
+        path = worldmap.arc_path((10, 20), (10, 60), 20)
+        self.assertEqual(path[0], (10, 20))
+        self.assertEqual(path[-1], (10, 60))
+        self.assertLess(min(r for r, _c in path), 10)  # It rises above both ends
+        self.assertEqual(worldmap.arc_path((5, 5), (5, 5), 20), [(5, 5)])
+
+
 if __name__ == "__main__":
     unittest.main()
