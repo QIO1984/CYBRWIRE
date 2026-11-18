@@ -47,6 +47,7 @@ from .panel_alerts import AlertViewsMixin
 from .panel_map import MapMixin
 from .effects import EffectsMixin
 from .map_card import MapCard
+from .theme_card import ThemeCard
 from .screens import EDITION, HelpScreen, LoadingScreen, boxed
 from .chrome import CONTENT_KINDS, CybrWireFooter, StyledHeader, WorldClock
 from .widgets import CardButton, DashboardPanel, IndicatorBox, IocTable, PagerBar, SearchBox, ViewTable
@@ -303,6 +304,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         ("c", "toggle_cold_war", "Cold War Mode"),
         ("g", "ai_refresh", "AI Briefing"),
         ("t", "cycle_theme", "Cycle Theme"),
+        ("T", "theme_picker", "Theme Picker"),
         ("h", "show_help", "Help"),
         ("q", "quit", "Quit"),
     ]
@@ -1757,17 +1759,28 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.dashboard_page_offset = max(0, self.dashboard_page_offset - 1)
         self.call_later(self.update_display)
     
+    def set_theme_by_key(self, key):
+        """Switch to a named theme (and out of Cold War mode, which has its own key)"""
+        if key not in PALETTES:
+            return
+        self.theme_mode = key
+        if self.cold_war_mode:
+            self.cold_war_mode = False
+        self.apply_theme()
+        self.save_settings()
+        self.call_later(self.update_display)
+
     def action_cycle_theme(self):
         """Cycle through the color themes (Cold War is separate, on 'c')"""
         keys = list(PALETTES)
         current_idx = keys.index(self.theme_mode) if self.theme_mode in keys else 0
-        self.theme_mode = keys[(current_idx + 1) % len(keys)]
-        if self.cold_war_mode:
-            self.cold_war_mode = False  # 't' means "show me the themes"
-        self.apply_theme()
-        self.save_settings()
+        self.set_theme_by_key(keys[(current_idx + 1) % len(keys)])
         self.notify(f"Theme: {self.palette.name}", timeout=2)
-        self.call_later(self.update_display)
+
+    def action_theme_picker(self):
+        """Pick a theme from a list, previewed live"""
+        if not self.is_loading and not isinstance(self.screen, ThemeCard):
+            self.push_screen(ThemeCard())
     
     def on_click(self, event) -> None:
         """Clicking a panel selects it, and right-clicking it also does what v does there"""

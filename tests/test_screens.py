@@ -235,6 +235,69 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
         cybrwire_app.STATE.settings = {"main_view": "api_tools"}
         self.assertEqual(cybrwire_app.CybrWireApp().main_view_mode, "map")  # API tools is never the opening view
 
+    async def test_the_theme_picker_previews_live_and_the_cycle_visits_every_theme(self):
+        from cybrwire.theme_card import ThemeCard
+        from cybrwire.theme import PALETTES
+        app = cybrwire_app.CybrWireApp()
+
+        async def fake_load():
+            app.pop_screen()
+            app.is_loading = False
+            app.update_display()
+
+        app.initial_load = fake_load
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            start = app.theme_mode
+            seen = {start}
+            for _ in range(len(PALETTES)):
+                await pilot.press("t")
+                seen.add(app.theme_mode)
+            self.assertEqual(seen, set(PALETTES))
+            self.assertEqual(app.theme_mode, start)  # A full lap comes back to where it began
+            await pilot.press("T")
+            await self.settle(pilot)
+            self.assertIsInstance(app.screen, ThemeCard)
+            self.assertEqual(app.theme_mode, start)
+            await pilot.press("down")
+            await self.settle(pilot)
+            moved = app.theme_mode
+            self.assertNotEqual(moved, start)
+            self.assertEqual(app.theme, f"cybrwire-{moved}")  # The window changed under the card
+            self.assertEqual(cybrwire_app.STATE.settings["theme"], moved)
+            await pilot.press("escape")
+            await self.settle(pilot)
+            self.assertNotIsInstance(app.screen, ThemeCard)
+            self.assertEqual(app.theme_mode, moved)  # Esc keeps what was previewed
+
+    async def test_picking_a_theme_leaves_cold_war_mode(self):
+        app = cybrwire_app.CybrWireApp()
+
+        async def fake_load():
+            app.pop_screen()
+            app.is_loading = False
+            app.update_display()
+
+        app.initial_load = fake_load
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            await pilot.press("c")
+            await self.settle(pilot)
+            self.assertTrue(app.cold_war_mode)
+            app.set_theme_by_key("tron")
+            self.assertFalse(app.cold_war_mode)
+            self.assertEqual(app.palette.key, "tron")
+
+    def test_themed_boot_screens_keep_the_api_step_third_and_have_seven_steps(self):
+        from cybrwire.theme import PALETTES
+        for key in ("blade_runner", "matrix", "newsroom"):
+            screen = screens.LoadingScreen(PALETTES[key])
+            self.assertEqual(len(screen.messages), 7)
+            self.assertEqual(screen.messages[2], "CHECKING APIS...")
+            self.assertEqual(screen.messages[1], PALETTES[key].boot[0])
+        plain = screens.LoadingScreen(PALETTES["neon"])
+        self.assertEqual(plain.messages[1], "TAPPING WIRES...")
+
 
 if __name__ == "__main__":
     unittest.main()

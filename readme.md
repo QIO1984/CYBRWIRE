@@ -35,7 +35,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Threat map** – the opening view: a world map in braille dots with pulsing markers for ransomware victims, attributed nation-state activity, national advisories and active outages, with the latest strong alerts and an activity scope underneath; `m` opens it full window
 - **Atmosphere** – a radar sweep over the map and a window-edge pulse (plus a FLASH banner in Cold War mode) when something urgent arrives; `x` switches it off
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
-- **Themes** – Neon Noir (default: near-black with vivid pink, cyan, blue and violet), Synthwave, Retro Warm and Amber CRT; press `t` to cycle
+- **Twelve themes** – Neon Noir (the default), Blade Runner, Tron, Ghost Shell, Vaporwave, Arctic, Ember, Matrix, Newsroom, Synthwave, Retro Warm (Gruvbox-style) and Amber CRT; `t` cycles, `Shift+T` opens a picker with live preview. Cold War mode stays on `c`
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
 - **Customizable recency window** (24h / 48h / 7 days)
 - **Advanced filtering** – view alerts only, incidents, or API enrichment tools
@@ -195,7 +195,8 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `tab` | Switch between main feed and dashboard panels |
 | `v` | Cycle main view (alerts → incidents → API tools) |
 | `c` | Toggle Cold War Mode |
-| `t` | Cycle theme (Neon Noir → Synthwave → Retro Warm → Amber CRT) |
+| `t` | Cycle theme (all twelve) |
+| `T` | Open the theme picker (previews live as you move) |
 | `↑` `↓` / click | Select an alert or incident (click again to open) |
 | `enter` | Open the selected alert or incident in your browser |
 | `a` | Explain the selected alert with AI |

@@ -34,6 +34,8 @@ class Palette:
     warn: str
     bad: str
     monochrome: bool = False  # Cold War: one hue; urgency shown by brightness and reverse video
+    pure: bool = False        # A period simulation (Cold War, Amber CRT): no mood tinting or other colour effects added on top
+    boot: tuple = ()          # Optional flavour lines for the loading screen, in place of the usual ones
     # Optional flavor: panel names, severity names and a timestamp style for this palette
     titles: Dict[str, str] = field(default_factory=dict)
     severity_names: Dict[str, str] = field(default_factory=dict)
@@ -84,6 +86,95 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
         apt="#a98bff", exploit="#ff8a3d", info="#6c8cff",
         good="#39ff88", warn="#ffb000", bad="#ff5470",
     ),
+    # Rain-soaked night city: warm amber focus against teal, on blue-black
+    Palette(
+        key="blade_runner", name="Blade Runner",
+        bg="#07090f", surface="#141b27", border="#2b3a4a", focus="#ff9d2e",
+        text="#dfe6ee", muted="#7d8fa3", accent="#2fe0d0",
+        critical="#ff4d3d", zeroday="#ffd23f", ransomware="#ff7aa8",
+        apt="#8aa4ff", exploit="#ff9d2e", info="#5db7ff",
+        good="#3df2a5", warn="#ffb000", bad="#ff5470",
+        boot=("RUNNING VOIGHT-KAMPFF...", "TRACING REPLICANT NETWORKS...", "READING THE RAIN...", "MORE HUMAN THAN HUMAN...", "ENHANCE..."),
+    ),
+    # Electric cyan grid on pure black with one orange accent
+    Palette(
+        key="tron", name="Tron",
+        bg="#02060a", surface="#0a1b29", border="#124560", focus="#00f0ff",
+        text="#d4f1ff", muted="#5e9ab8", accent="#ff8a00",
+        critical="#ff4a4a", zeroday="#ffe14d", ransomware="#ff6ad5",
+        apt="#8f7bff", exploit="#ff8a00", info="#4fb8ff",
+        good="#38ffa0", warn="#ffb300", bad="#ff5470",
+        boot=("ENTERING THE GRID...", "DEREZZING STALE FEEDS...", "CHARGING IDENTITY DISC...", "SYNCING WITH THE MCP...", "GREETINGS, PROGRAM."),
+    ),
+    # Cold teal and mint with magenta flashes on near-black green
+    Palette(
+        key="ghost_shell", name="Ghost Shell",
+        bg="#040c0e", surface="#0b2025", border="#1c4e54", focus="#3dffd0",
+        text="#d2f6ef", muted="#5f9d97", accent="#ff4f9a",
+        critical="#ff4f6e", zeroday="#f6ff6a", ransomware="#ff4f9a",
+        apt="#9d8cff", exploit="#ffa04d", info="#52d6ff",
+        good="#3dffd0", warn="#ffc24d", bad="#ff5470",
+        boot=("DIVING THE NET...", "GHOST-HACKING THE FEEDS...", "SYNCING WITH THE SHELL...", "THE NET IS VAST...", "STAND ALONE COMPLEX..."),
+    ),
+    # Soft pink, lavender and mint on deep purple
+    Palette(
+        key="vaporwave", name="Vaporwave",
+        bg="#0f0819", surface="#221540", border="#4a2f7a", focus="#ff71ce",
+        text="#f2e9ff", muted="#a98fd8", accent="#01cdfe",
+        critical="#ff4f7b", zeroday="#fffb96", ransomware="#ff71ce",
+        apt="#b967ff", exploit="#ff9a76", info="#7fb4ff",
+        good="#05ffa1", warn="#ffd166", bad="#ff5c8a",
+        boot=("A E S T H E T I C...", "LOADING THE MALL...", "RENDERING PALM TREES...", "WINDOWS 95 STARTUP...", "ｖａｐｏｒｗａｖｅ"),
+    ),
+    # Cool whites and blues on dark slate: calm for a screen that stays on
+    Palette(
+        key="arctic", name="Arctic",
+        bg="#080e15", surface="#142130", border="#2b425a", focus="#8fd3ff",
+        text="#e8f4ff", muted="#7f9bb3", accent="#5cc8ff",
+        critical="#ff5c6e", zeroday="#ffe27a", ransomware="#ff8fc8",
+        apt="#a9b8ff", exploit="#ffa86b", info="#7cc4ff",
+        good="#5af0b4", warn="#ffc857", bad="#ff6b7f",
+        boot=("CHECKING THE ICE...", "READING THE AURORA...", "COOLING THE CORE...", "ALL QUIET AT THE POLE...", "CLEAR SKIES..."),
+    ),
+    # A war-room glow: deep reds and oranges on black
+    Palette(
+        key="ember", name="Ember",
+        bg="#0b0605", surface="#241210", border="#4d241a", focus="#ff5a2e",
+        text="#f4ded4", muted="#a47e70", accent="#ffb347",
+        critical="#ff3350", zeroday="#ffe066", ransomware="#ff7aa2",
+        apt="#c792ff", exploit="#ff8a3d", info="#ffa07a",
+        good="#9be564", warn="#ffb347", bad="#ff4d4d",
+        boot=("STOKING THE FIRE...", "READING THE EMBERS...", "WAR ROOM ON STANDBY...", "STAY HOT...", "WATCHING THE SMOKE..."),
+    ),
+    # Green on black, but severity keeps its own colours (Cold War mode is the fully mono one)
+    Palette(
+        key="matrix", name="Matrix",
+        bg="#010803", surface="#06260f", border="#0f5124", focus="#00ff55",
+        text="#b8ffcb", muted="#3f9e5d", accent="#7dffa0",
+        critical="#ff3b3b", zeroday="#eaff4a", ransomware="#ff5ad1",
+        apt="#5ad1ff", exploit="#ffa63a", info="#58d68d",
+        good="#00ff55", warn="#ffd23f", bad="#ff5470",
+        boot=("WAKE UP...", "THE MATRIX HAS YOU...", "FOLLOW THE WHITE RABBIT...", "FREE YOUR FEEDS...", "THERE IS NO SPOON."),
+    ),
+    # Black, white and grey: only severity gets colour, so anything coloured is news
+    Palette(
+        key="newsroom", name="Newsroom",
+        bg="#0a0a0a", surface="#1c1c1c", border="#383838", focus="#f2f2f2",
+        text="#e6e6e6", muted="#8c8c8c", accent="#ffffff",
+        critical="#ff3b30", zeroday="#ffd60a", ransomware="#ff6fae",
+        apt="#b79cff", exploit="#ff9f0a", info="#9a9a9a",
+        good="#4cd964", warn="#ffd60a", bad="#ff453a",
+        boot=("GOING TO PRESS...", "CHECKING THE WIRE...", "VERIFYING SOURCES...", "STOP THE PRESSES...", "READ ALL ABOUT IT..."),
+    ),
+    # 1980s neon, toned down: deep navy with soft magenta and cyan
+    Palette(
+        key="synthwave", name="Synthwave",
+        bg="#16152b", surface="#2c2852", border="#4a4380", focus="#ff7edb",
+        text="#e6e1ff", muted="#8f89c0", accent="#72f1e8",
+        critical="#fe4f5e", zeroday="#fede5d", ransomware="#ff7edb",
+        apt="#b893ce", exploit="#f97e72", info="#8f89c0",
+        good="#72f1b8", warn="#fede5d", bad="#fe4f5e",
+    ),
     # Warm charcoal and cream with an amber accent (Gruvbox-inspired)
     Palette(
         key="retro_warm", name="Retro Warm",
@@ -101,15 +192,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
         critical="#ff5a36", zeroday="#ffd27a", ransomware="#ffc040",
         apt="#e8a33a", exploit="#ffb000", info="#a8700f",
         good="#ffcc66", warn="#ffb000", bad="#ff5a36",
-    ),
-    # 1980s neon, toned down: deep navy with soft magenta and cyan
-    Palette(
-        key="synthwave", name="Synthwave",
-        bg="#16152b", surface="#2c2852", border="#4a4380", focus="#ff7edb",
-        text="#e6e1ff", muted="#8f89c0", accent="#72f1e8",
-        critical="#fe4f5e", zeroday="#fede5d", ransomware="#ff7edb",
-        apt="#b893ce", exploit="#f97e72", info="#8f89c0",
-        good="#72f1b8", warn="#fede5d", bad="#fe4f5e",
+        pure=True,
     ),
 ]}
 
@@ -123,6 +206,7 @@ COLD_WAR = Palette(
     apt="#5cff6e", exploit="#5cff6e", info="#1a8f33",
     good="#29d94a", warn="#5cff6e", bad="#5cff6e",
     monochrome=True,
+    pure=True,
     titles={
         "GLOBAL THREAT FEED": "SIGINT INTERCEPTS",
         "WAR ROOM DASHBOARD": "SITUATION ROOM",

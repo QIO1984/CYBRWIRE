@@ -223,7 +223,7 @@ class HelpScreen(Screen):
         help_text.append("│\n", style=accent)
         help_text.append("│  [NORMAL MODE] (default)\n", style=f"bold {accent}")
         help_text.append("│    Colorful display with theme cycling (press 'T')\n", style=color)
-        help_text.append("│    Themes: Neon Noir (default), Synthwave, Retro Warm, Amber CRT\n", style=color)
+        help_text.append("│    Themes: 12, from Neon Noir (default) to Amber CRT; Shift+T picks one from a list\n", style=color)
         help_text.append("│\n", style=accent)
         help_text.append("│  [COLD WAR MODE] (Press 'C' to toggle)\n", style=f"bold {accent}")
         help_text.append("│    Classic green-on-black terminal aesthetic (Matrix-style)\n", style=color)
@@ -255,7 +255,7 @@ class HelpScreen(Screen):
         help_text.append("│  C              Toggle Cold War Mode - Switch between colorful and green-only\n", style=color)
         help_text.append("│  G              AI Briefing - Generate a fresh briefing in the War Room\n", style=color)
         help_text.append("│  A              Explain Alert - AI explanation of the selected alert\n", style=color)
-        help_text.append("│  T              Cycle Theme - Neon Noir / Synthwave / Retro Warm / Amber CRT (leaves Cold War mode)\n", style=color)
+        help_text.append("│  T              Cycle Theme - through all twelve (leaves Cold War mode); Shift+T opens a picker with live preview\n", style=color)
         help_text.append("│  H              Show This Help - Display help screen\n", style=color)
         help_text.append("│  Q / Esc        Quit / Close Help - Exit application or close help screen\n", style=color)
         help_text.append("│\n", style=accent)
@@ -310,15 +310,17 @@ class LoadingScreen(Screen):
             "DECRYPTING TRAFFIC...",
             "COLLATING INTERCEPTS...",
             "STAND BY FOR TRAFFIC...",
-        ] if self.cold_war_mode else [
-            "INITIALIZING...",
-            "TAPPING WIRES...",
-            "CHECKING APIS...",
-            "CONNECTIONS ESTABLISHED...",
-            "PULLING LATEST...",
-            "GENERATING ALERTS...",
-            "STAND BY..."
-        ]
+        ] if self.cold_war_mode else (
+            # A themed boot keeps the "CHECKING APIS..." step in third place, where the API names are listed
+            ["INITIALIZING...", palette.boot[0], "CHECKING APIS...", *palette.boot[1:5]] if len(palette.boot) >= 5 else [
+                "INITIALIZING...",
+                "TAPPING WIRES...",
+                "CHECKING APIS...",
+                "CONNECTIONS ESTABLISHED...",
+                "PULLING LATEST...",
+                "GENERATING ALERTS...",
+                "STAND BY..."
+            ])
         self.feed_spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self.completed_messages = []  # Track completed messages for stacking
         self.configured_apis = list(configured_apis)  # Shown under "CHECKING APIS..."
