@@ -111,6 +111,11 @@ class Markers(unittest.TestCase):
         self.assertNotIn("US 14", worldmap.render(45, 9, spots, 0, NEON).plain)
         self.assertIn("US 14", worldmap.render(100, 20, spots, 0, NEON).plain)
 
+    def test_a_radar_sweep_moves_across_the_land_without_changing_the_drawing(self):
+        a, b = worldmap.render(100, 20, [], 5, NEON), worldmap.render(100, 20, [], 40, NEON)
+        self.assertEqual(a.plain, b.plain)                       # Same land
+        self.assertNotEqual([str(sp.style) for sp in a.spans], [str(sp.style) for sp in b.spans])  # Brightened elsewhere
+
     def test_the_cold_war_palette_draws_too(self):
         text = worldmap.render(60, 12, [Spot(39, -98, "victim", "US", 3)], 1, COLD_WAR)
         self.assertEqual(len(text.plain.split("\n")), 12)

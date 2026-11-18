@@ -32,7 +32,8 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **NEW badges** – alerts first seen since your last launch stay marked until you open them
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
-- **Threat map** – a world map in braille dots with pulsing markers for ransomware victims (by country) and active outages; `m` opens it full window, or `v` in the right panel
+- **Threat map** – the opening view: a world map in braille dots with pulsing markers for ransomware victims, attributed nation-state activity, national advisories and active outages, with the latest strong alerts and an activity scope underneath; `m` opens it full window
+- **Atmosphere** – a radar sweep over the map, a window-edge pulse (and a FLASH banner in Cold War mode) when something urgent arrives, and a digital-rain screensaver with live headlines after five idle minutes; `x` switches it all off
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
 - **Themes** – Neon Noir (default: near-black with vivid pink, cyan, blue and violet), Synthwave, Retro Warm and Amber CRT; press `t` to cycle
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
@@ -202,6 +203,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `e` | Re-enable disabled feeds |
 | `z` | Show or hide the world clock |
 | `m` | Open the threat map full window |
+| `x` | Effects on or off (map pulse, arrival flash, idle screensaver) |
 | `q` | Quit |
 
 Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
@@ -224,7 +226,26 @@ clocks:
 
 ## Threat Map
 
-Press `m` for a full-window world map, or press `Tab` and then `v` until the right panel shows it. Pink markers are ransomware victims from the last 7 days, placed by the country code Ransomware.live gives (busier countries get a label); amber diamonds are active outages from the status feeds. Markers pulse out of step with each other. Outage markers sit at the service's home region, not where its users are affected, because an outage has no single place. The land is drawn with braille dots, about 1.8 degrees each, so the map keeps fine coastlines even in a small panel.
+The map is the first view when CybrWire opens (the app remembers the view you leave it on). Press `v` to step through the map, alerts, incidents and API tools, or `m` to open the map full window. Under the map are a line per layer, the latest strong alerts and a scope of alerts per hour for the last day, with a bright point sweeping along it.
+
+Four layers show on the map, each with its own marker and colour:
+
+| Marker | Layer | Where it sits |
+|---|---|---|
+| `●` pink, pulsing | Ransomware victims, last 7 days | The country in the victim post |
+| `▲` violet | Attributed activity: headlines that name China, Russia, North Korea or Iran (or a well-known group such as APT29 or Lazarus) in an APT story | That country |
+| `■` blue | National advisories from CISA, NCSC UK, JPCERT/CC, CERT-EU, ENISA, Canada's Cyber Centre and similar | The country that issues them |
+| `◆` amber | Active outages from the status feeds | The service's home region, because an outage has no single place |
+
+Where layers share a country, markers are nudged to the next cell so every layer shows. The land is drawn with braille dots, about 1.8 degrees each, so the map keeps fine coastlines even in a small window. It is an approximation built from headlines and feed names, not a measurement: attribution is only what the story says, and a marker is not a precise location.
+
+## Atmosphere
+
+These follow what is happening and switch off together with `x` (the choice is remembered):
+
+- **Pulse and sweep:** map markers pulse out of step, and a slow radar sweep brightens the land.
+- **Arrival flash:** when something urgent arrives (a newly confirmed exploit or a reported zero-day), the window edge pulses once. In Cold War mode a FLASH banner flickers across the top as well.
+- **Screensaver:** after five minutes without a key, click or mouse movement, the screen turns to digital rain. Headlines for the strongest recent alerts type themselves in, hang for a few seconds and fade, and the glow along the bottom follows the current threat level. Any key or click brings the dashboard back. It never starts while a card is open, while loading, or with effects off.
 
 ## AI Briefings
 

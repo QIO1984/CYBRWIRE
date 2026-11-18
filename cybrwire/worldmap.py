@@ -181,8 +181,16 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette) -> Text:
         _grid_cache.clear()
         _grid_cache[(cols, rows)] = _cell_dots(cols, rows)
     grid = _grid_cache[(cols, rows)]
-    shore, inland = palette.accent, _blend(palette.accent, palette.bg, 0.4)
-    cells = [[(chr(0x2800 + v) if v else " ", shore if coast else inland) for v, coast in line] for line in grid]
+    # A slow radar sweep brightens the land in a band that moves across the map, one pass every ~50 steps
+    sweep = (step % (cols + 14)) - 7
+    cells = []
+    for line in grid:
+        row = []
+        for c, (v, coast) in enumerate(line):
+            glow = max(0.0, 1 - abs(c - sweep) / 6)
+            keep = (0.7 + 0.3 * glow) if coast else (0.38 + 0.55 * glow)
+            row.append((chr(0x2800 + v) if v else " ", _blend(palette.accent, palette.bg, keep)))
+        cells.append(row)
     placed: Dict[Tuple[int, int], Spot] = {}
     nudges = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (-1, -1), (1, -1), (-1, 1))
     for spot in sorted(spots, key=lambda s: (PRIORITY.get(s.kind, 9), -s.count)):  # Outages first, then busiest

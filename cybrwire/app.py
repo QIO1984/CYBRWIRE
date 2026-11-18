@@ -45,6 +45,7 @@ from .panel_api_tools import ApiToolsMixin
 from .panel_war_room import WarRoomMixin
 from .panel_alerts import AlertViewsMixin
 from .panel_map import MapMixin
+from .effects import EffectsMixin
 from .map_card import MapCard
 from .screens import EDITION, HelpScreen, LoadingScreen, boxed
 from .chrome import CONTENT_KINDS, CybrWireFooter, StyledHeader, WorldClock
@@ -131,7 +132,7 @@ async def fetch_breaches():
         logging.error(f"Failed to fetch breaches: {e}")
 
 
-class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, MapMixin, App):
+class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, MapMixin, EffectsMixin, App):
     """Textual-based CybrWire threat intelligence dashboard"""
     
     # Colors come from the active palette, registered as a Textual theme (see apply_theme)
@@ -169,6 +170,12 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         border-subtitle-align: center;
     }
     
+    #flash-banner {
+        height: 1;
+        display: none;
+        text-style: bold;
+    }
+
     #map-main {
         width: 100%;
         height: 1fr;
@@ -521,6 +528,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.apply_theme()
         self.query_one(WorldClock).display = self.show_clocks
         self.set_interval(0.5, self.map_tick)  # Pulses the map's markers while it is showing
+        self.set_interval(5, self.idle_check)  # Starts the screensaver after a while with no input
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -572,6 +580,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         yield StyledHeader(show_clock=True, icon="◆")
         yield WorldClock(CONFIG.timezone, CONFIG.clocks, id="worldclock")
         yield LiveWirePanel(id="ticker")
+        yield Static(id="flash-banner")  # Cold War: FLASH when something urgent arrives
         
         # Always create both layouts, use CSS to control visibility
         with Horizontal(id="main-layout"):
@@ -758,6 +767,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
                 pass
             await asyncio.gather(self.fetch_feeds(), fetch_breaches(), self.refresh_doomsday())
             self.announce_arrivals(self.last_arrivals)
+            self.arrival_effect(self.last_arrivals)
             await self.send_notifications()
             self.next_refresh = datetime.now(timezone.utc) + timedelta(seconds=REFRESH_INTERVAL)
             self.mark_dirty()
