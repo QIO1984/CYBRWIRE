@@ -29,6 +29,22 @@ class VersionTests(unittest.TestCase):
                 with open(os.path.join(ROOT, "cybrwire", name)) as f:
                     self.assertNotRegex(f.read(), r"CybrWire/\d", name)
 
+    def test_the_screens_show_the_real_version(self):
+        from cybrwire import app
+        self.assertIn(f"v{cybrwire.__version__} LEGENDARY", app.CybrWireApp.TITLE)
+        self.assertEqual(app.EDITION, f"v{cybrwire.__version__} LEGENDARY // EDITION")
+        box_width = len("╔" + "═" * 104 + "╗")
+        for text in (app.EDITION, f"{app.EDITION} // *COLD*WAR*MODE*"):
+            line = app.boxed(text)
+            self.assertEqual(len(line), box_width)
+            self.assertIn(text, line)
+
+    def test_no_screen_text_hardcodes_a_release_number(self):
+        for name in os.listdir(os.path.join(ROOT, "cybrwire")):
+            if name.endswith(".py"):
+                with open(os.path.join(ROOT, "cybrwire", name)) as f:
+                    self.assertNotRegex(f.read(), r"v\d+\.\d+ LEGENDARY|W I R E {1,2}\d+\.\d+ {1,2}H E L P", name)
+
     def test_pyproject_reads_the_version_from_the_package(self):
         with open(os.path.join(ROOT, "pyproject.toml")) as f:
             text = f.read()

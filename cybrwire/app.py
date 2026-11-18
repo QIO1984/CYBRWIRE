@@ -79,6 +79,14 @@ console = Console(color_system="truecolor", theme=Theme({
     "new": "bold reverse white on #00ff00",
 }))
 
+EDITION = f"v{__version__} LEGENDARY // EDITION"
+
+
+def boxed(text: str, width: int = 104) -> str:
+    """One line of the startup banner box, centred"""
+    return "║" + text.center(width) + "║"
+
+
 HEADERS = {"User-Agent": USER_AGENT}
 HEAT_BAR_WIDTH = 33
 REFRESH_INTERVAL = 300
@@ -171,7 +179,7 @@ class HelpScreen(Screen):
         # Header
         help_text.append("\n", style=color)
         help_text.append("═" * 100 + "\n", style=color)
-        help_text.append(" " * 30 + "C Y B R W I R E  1.0  H E L P  S C R E E N\n", style=f"bold {color}")
+        help_text.append(" " * 30 + f"C Y B R W I R E  {__version__}  H E L P  S C R E E N\n", style=f"bold {color}")
         help_text.append("═" * 100 + "\n\n", style=color)
         help_text.append("Press ESC or 'Q' to close help\n\n", style=self.palette.muted)
         
@@ -466,7 +474,7 @@ class LoadingScreen(Screen):
                 ("║  ------------     ----     -----------  ----   ----   ----------  --------  ----   ----  ------------  ║", "green"),
                 ("║  ************     ****     ***********  ****    ****   ********   ********  ****    **** ************  ║", "green"),
                 ("║                                                                                                        ║", "green"),
-                ("║                                 v1.0 LEGENDARY // EDITION // *COLD*WAR*MODE*                           ║", "green"),
+                (boxed(f"{EDITION} // *COLD*WAR*MODE*"), "green"),
                 ("╚════════════════════════════════════════════════════════════════════════════════════════════════════════╝", "green"),
                 ("                              By: GitHub/QIO1984 // The Hacker known as MADNOTE", "green"),
             ]
@@ -483,7 +491,7 @@ class LoadingScreen(Screen):
                 ("║  ------------     ----     -----------  ----   ----   ----------  --------  ----   ----  ------------  ║", "#00ffff"),
                 ("║  ************     ****     ***********  ****    ****   ********   ********  ****    **** ************  ║", "#0099ff"),
                 ("║                                                                                                        ║", "#6666ff"),
-                ("║                                       v1.0 LEGENDARY // EDITION                                        ║", "#ff00ff"),
+                (boxed(EDITION), "#ff00ff"),
                 ("╚════════════════════════════════════════════════════════════════════════════════════════════════════════╝", "#ff00ff"),
                 ("                            By: GitHub/QIO1984 // The Hacker known as MADNOTE", "#00ffff"),
             ]
@@ -761,7 +769,7 @@ class CybrWireApp(App):
     }
     """
     
-    TITLE = " C Y B R W I R E // v1.0 LEGENDARY EDITION "
+    TITLE = f" C Y B R W I R E // v{__version__} LEGENDARY EDITION "
     
     BINDINGS = [
         ("r", "refresh", "Force Refresh"),
@@ -3280,7 +3288,7 @@ def startup_prompts():
         ("║  ------------     ----     -----------  ----   ----   ----------  --------  ----   ----  ------------  ║", "#00ffff"),
         ("║  ************     ****     ***********  ****    ****   ********   ********  ****    **** ************  ║", "#0099ff"),
         ("║                                                                                                        ║", "#6666ff"),
-        ("║                                       v1.0 LEGENDARY // EDITION                                        ║", "#ff00ff"),
+        (boxed(EDITION), "#ff00ff"),
         ("╚════════════════════════════════════════════════════════════════════════════════════════════════════════╝", "#ff00ff"),
         ("                            By: GitHub/QIO1984 // The Hacker known as MADNOTE", "#00ffff"),
     ]
