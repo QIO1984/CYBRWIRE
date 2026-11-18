@@ -46,6 +46,7 @@ from .panel_war_room import WarRoomMixin
 from .panel_alerts import AlertViewsMixin
 from .panel_map import MapMixin
 from .effects import EffectsMixin
+from . import web_sound
 from .map_card import MapCard
 from .theme_card import ThemeCard
 from .screens import EDITION, HelpScreen, LoadingScreen, boxed
@@ -300,6 +301,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         ("m", "show_map", "Threat Map"),
         ("x", "toggle_effects", "Effects"),
         ("k", "toggle_kiosk", "Kiosk"),
+        ("B", "toggle_hum", "Ambient Hum"),
         ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
@@ -342,6 +344,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.sound = saved.get("sound", sound.OFF)
         self.show_clocks = saved.get("world_clock", True)
         self.effects_on = bool(saved.get("effects", True))  # Map pulse and the arrival flash
+        self.hum_on = bool(saved.get("hum", False))           # Optional quiet ambient hum
         self.kiosk_on = bool(saved.get("kiosk", False))      # Rotate the main view when nobody is using it
         self.kiosk_last_move = time.monotonic()
         self.last_input = time.monotonic()
@@ -449,6 +452,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             "world_clock": self.show_clocks,
             "effects": self.effects_on,
             "kiosk": self.kiosk_on,
+            "hum": self.hum_on,
             "main_view": self.main_view_mode if self.main_view_mode in ("map", "alerts", "incidents") else "alerts",
         }
         STATE.save()
@@ -563,6 +567,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.set_interval(1.0, self.kiosk_tick)  # Rotates the main view in kiosk mode
         self.set_interval(0.1, self.typing_tick)  # Types urgent new alerts into the feed
         self.set_interval(0.2, self.heartbeat_tick)  # The header-corner trace
+        if self.hum_on:
+            self.set_timer(1.5, lambda: self.set_hum(True) or setattr(self, "hum_on", False))  # Back on after a restart; off if it can't start
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -898,7 +904,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.sound = sound.next_tone(self.sound)
         self.save_settings()
         self.notify(f"Alert sound: {sound.label(self.sound)}", timeout=2)
-        sound.play(self.sound, self.bell)
+        self.play_sound(self.sound)
     
     def action_jump_to_wire(self):
         """Show what's on the Live Wire in the feed"""
@@ -950,7 +956,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
     def announce_arrivals(self, arrivals):
         """One sound per check at most, and only for what's worth interrupting someone for"""
         if self.sound != sound.OFF and any((a.get("evidence") and a["evidence"].urgent) or self.watchlist.hits(a) for a in arrivals):
-            sound.play(self.sound, self.bell)
+            self.play_sound(self.sound)
     
     def is_alert(self, item):
         """Something happening that you may need to act on, rather than general reading"""
@@ -1069,6 +1075,41 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.save_settings()
         self.notify(f"Effects {'on' if self.effects_on else 'off'}", timeout=2)
         self.update_display()
+
+    def play_sound(self, name):
+        """On a local speaker, or sent to the page when served in a browser"""
+        if name == sound.OFF or name not in sound.TONES:
+            return
+        if sound.in_browser():
+            write = getattr(getattr(self, "_driver", None), "write_meta", None)
+            if write:
+                write({"type": web_sound.MESSAGE, "name": "bell" if name == sound.TERMINAL_BELL else name})
+            return
+        sound.play(name, self.bell)
+
+    def set_hum(self, on):
+        """Start or stop the ambient hum, in the browser or on a local speaker. False if it could not start."""
+        if sound.in_browser():
+            write = getattr(getattr(self, "_driver", None), "write_meta", None)
+            if write:
+                write({"type": web_sound.MESSAGE, "hum": bool(on)})
+            return bool(write)
+        if on:
+            return sound.HUM.start()
+        sound.HUM.stop()
+        return True
+
+    def action_toggle_hum(self):
+        """A very quiet ambient hum (separate from the alert sound)"""
+        want = not self.hum_on
+        if want and not self.set_hum(True):
+            self.notify("No audio player found for the hum (pw-play, paplay or aplay)", timeout=4)
+            return
+        if not want:
+            self.set_hum(False)
+        self.hum_on = want
+        self.save_settings()
+        self.notify(f"Ambient hum {'on' if want else 'off'}", timeout=2)
 
     def action_toggle_kiosk(self):
         """Kiosk mode: the main view rotates between the map, alerts and incidents when nobody is using the app"""

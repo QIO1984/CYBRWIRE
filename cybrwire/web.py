@@ -165,6 +165,9 @@ def main() -> None:
     fixed_url = os.environ.get("CYBRWIRE_WEB_URL") or None
     print(startup_message(host, port, user, bool(password), os.path.exists("/.dockerenv")), flush=True)
 
+    from . import web_sound
+    web_sound.install()  # Sound in the browser: the app's tones, played by the page
+
     class AuthServer(Server):
         async def handle_index(self, request):
             if not fixed_url:  # Page and live connection must use the address the browser came by
@@ -176,6 +179,8 @@ def main() -> None:
             app = await super()._make_app()
             if password:
                 app.middlewares.append(make_auth_middleware(user, password))
+            app.router.add_get(web_sound.SCRIPT_PATH, web_sound.script_response)
+            app.middlewares.append(web_sound.make_middleware())  # Innermost: sees the page before sign-in logic does nothing more to it
             return app
 
     AuthServer(f'"{sys.executable}" -m cybrwire', host=host, port=port, title="CybrWire",

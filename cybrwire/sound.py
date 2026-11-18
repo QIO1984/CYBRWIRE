@@ -57,12 +57,36 @@ def modem_chirp() -> List[float]:
     return samples
 
 
+def sonar_ping() -> List[float]:
+    """A submarine ping: a pure 1250 Hz tone that rings down, then a softer echo"""
+    samples = []
+    for i in range(int(RATE * 0.95)):
+        t = i / RATE
+        ping = math.sin(2 * math.pi * 1250 * t) * math.exp(-7 * t)
+        echo = 0.35 * math.sin(2 * math.pi * 1250 * (t - 0.32)) * math.exp(-7 * (t - 0.32)) if t >= 0.32 else 0.0
+        samples.append(ping + echo)
+    return samples
+
+
+HUM_SECONDS = 10  # Every frequency below fits a whole number of cycles in this, so the loop has no seam
+
+
+def ambient_hum() -> List[float]:
+    """A very quiet low drone: 55 Hz against 55.5 Hz beats slowly, with a soft octave above"""
+    samples = []
+    for i in range(int(RATE * HUM_SECONDS)):
+        t = i / RATE
+        samples.append(0.5 * (math.sin(2 * math.pi * 55 * t) + math.sin(2 * math.pi * 55.5 * t)) * 0.5 + 0.25 * math.sin(2 * math.pi * 110 * t))
+    return [x * 0.4 for x in samples]
+
+
 # What b cycles through, in order
 TONES: Dict[str, Tuple[str, Optional[Callable[[], List[float]]]]] = {
     OFF: ("Off", None),
     "pc": ("PC speaker", pc_speaker),
     "teletype": ("Teletype bell", teletype_bell),
     "modem": ("Modem chirp", modem_chirp),
+    "sonar": ("Sonar ping", sonar_ping),
     TERMINAL_BELL: ("Terminal bell", None),
 }
 
@@ -76,12 +100,12 @@ def label(name: str) -> str:
     return TONES.get(name, TONES[OFF])[0]
 
 
-def write_wav(path: str, samples: List[float]) -> None:
-    fade = max(1, int(RATE * FADE_SECONDS))
+def write_wav(path: str, samples: List[float], fade_ends: bool = True) -> None:
+    fade = max(1, int(RATE * FADE_SECONDS)) if fade_ends else 1
     count = len(samples)
     frames = bytearray()
     for i, sample in enumerate(samples):
-        edge = min(1.0, i / fade, (count - 1 - i) / fade)
+        edge = min(1.0, i / fade, (count - 1 - i) / fade) if fade_ends else 1.0
         frames += struct.pack("<h", int(sample * edge * VOLUME * 32767))
     with wave.open(path, "wb") as f:
         f.setnchannels(1)
@@ -134,3 +158,60 @@ def play(name: str, bell: Callable[[], None]) -> None:
         bell()
         return
     threading.Thread(target=_run_player, args=(player, tone_file(name)), daemon=True).start()
+
+
+def in_browser() -> bool:
+    """Served in a browser: there is no local speaker to use, so sounds are sent to the page instead"""
+    return "web_driver" in os.environ.get("TEXTUAL_DRIVER", "")
+
+
+class Hum:
+    """The optional ambient hum: a seamless ten-second loop played over and over by whatever player exists.
+    There is a brief gap each time the player restarts, which is why it is kept so quiet."""
+
+    def __init__(self) -> None:
+        self.running = False
+        self.proc: Optional[subprocess.Popen] = None
+        self.thread: Optional[threading.Thread] = None
+        self.path: Optional[str] = None
+
+    def start(self) -> bool:
+        """False if there is no audio player to use"""
+        global _folder
+        if self.running:
+            return True
+        player = find_player()
+        if not player:
+            return False
+        if self.path is None:
+            if _folder is None:
+                _folder = tempfile.mkdtemp(prefix="cybrwire-sound-")
+                atexit.register(shutil.rmtree, _folder, ignore_errors=True)
+            self.path = os.path.join(_folder, "hum.wav")
+            write_wav(self.path, ambient_hum(), fade_ends=False)
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, args=(player,), daemon=True)
+        self.thread.start()
+        atexit.register(self.stop)
+        return True
+
+    def _loop(self, player: str) -> None:
+        while self.running:
+            try:
+                self.proc = subprocess.Popen([player, self.path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.proc.wait()
+            except OSError as e:
+                logging.warning(f"Could not play the ambient hum: {type(e).__name__}")
+                self.running = False
+
+    def stop(self) -> None:
+        self.running = False
+        proc = self.proc
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+
+HUM = Hum()

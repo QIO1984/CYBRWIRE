@@ -269,6 +269,60 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(a[1:], b[:-1])
         self.assertEqual(effects.ecg_frame(0, 10), effects.ecg_frame(10, 10))
 
+    async def test_sounds_go_to_a_local_speaker_or_to_the_browser_page(self):
+        from cybrwire import sound, web_sound
+        app = self.make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.settle(pilot)
+            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.linux_driver:LinuxDriver"}), \
+                    mock.patch.object(sound, "play") as play:
+                app.play_sound("sonar")
+                app.play_sound("off")
+                app.play_sound("nonsense")
+            play.assert_called_once_with("sonar", app.bell)
+            driver = mock.Mock()
+            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.web_driver:WebDriver"}), \
+                    mock.patch.object(app, "_driver", driver), mock.patch.object(sound, "play") as play:
+                app.play_sound("teletype")
+                app.play_sound("bell")
+                app.play_sound("off")
+            play.assert_not_called()
+            self.assertEqual([c.args[0] for c in driver.write_meta.call_args_list],
+                             [{"type": web_sound.MESSAGE, "name": "teletype"}, {"type": web_sound.MESSAGE, "name": "bell"}])
+
+    async def test_the_ambient_hum_toggles_saves_and_explains_when_there_is_no_player(self):
+        from cybrwire import sound, web_sound
+        app = self.make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.settle(pilot)
+            self.assertFalse(app.hum_on)
+            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.linux_driver:LinuxDriver"}):
+                with mock.patch.object(sound.HUM, "start", return_value=False):
+                    await pilot.press("B")
+                    await self.settle(pilot)
+                    self.assertFalse(app.hum_on)  # No player: it says so and stays off
+                with mock.patch.object(sound.HUM, "start", return_value=True) as start, mock.patch.object(sound.HUM, "stop") as stop:
+                    await pilot.press("B")
+                    await self.settle(pilot)
+                    self.assertTrue(app.hum_on)
+                    self.assertTrue(cybrwire_app.STATE.settings["hum"])
+                    start.assert_called_once()
+                    await pilot.press("B")
+                    await self.settle(pilot)
+                    self.assertFalse(app.hum_on)
+                    stop.assert_called_once()
+            driver = mock.Mock()
+            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.web_driver:WebDriver"}), mock.patch.object(app, "_driver", driver):
+                app.action_toggle_hum()
+            self.assertTrue(app.hum_on)
+            driver.write_meta.assert_called_with({"type": web_sound.MESSAGE, "hum": True})
+
+    async def test_the_hum_choice_is_remembered(self):
+        cybrwire_app.STATE.settings = {"hum": True, "alerts_default": True}
+        self.assertTrue(cybrwire_app.CybrWireApp().hum_on)
+        cybrwire_app.STATE.settings = {"alerts_default": True}
+        self.assertFalse(cybrwire_app.CybrWireApp().hum_on)
+
 
 def plain_text(text):
     return text.plain

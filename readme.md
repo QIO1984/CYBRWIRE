@@ -33,7 +33,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Threat map** – the opening view: a world map in braille dots with pulsing markers for ransomware victims, attributed nation-state activity, national advisories and active outages, with the latest strong alerts and an activity scope underneath; `m` opens it full window
-- **Atmosphere** – a radar sweep over the map and a window-edge pulse (plus a FLASH banner in Cold War mode) when something urgent arrives; `x` switches it off
+- **Atmosphere** – a threat-level mood tint on the borders, a radar sweep and day/night shading on the map, attack arcs, urgent alerts that type themselves in, a heartbeat in the header, a kiosk mode that rotates the views, and optional sounds; `x` switches the effects off
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
 - **Twelve themes** – Neon Noir (the default), Blade Runner, Tron, Ghost Shell, Vaporwave, Arctic, Ember, Matrix, Newsroom, Synthwave, Retro Warm (Gruvbox-style) and Amber CRT; `t` cycles, `Shift+T` opens a picker with live preview. Cold War mode stays on `c`
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
@@ -204,7 +204,9 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `e` | Re-enable disabled feeds |
 | `z` | Show or hide the world clock |
 | `m` | Open the threat map full window |
-| `x` | Effects on or off (map pulse and arrival flash) |
+| `x` | Effects on or off (mood tint, map pulse, arrival flash, typed-in rows, heartbeat) |
+| `k` | Kiosk mode on or off (rotate the main view when nobody is using the app) |
+| `B` | Ambient hum on or off |
 | `q` | Quit |
 
 Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/cybrwire_state.json`, so later launches skip the startup questions. Run `cybrwire --setup` to answer them again.
@@ -242,10 +244,16 @@ Where layers share a country, markers are nudged to the next cell so every layer
 
 ## Atmosphere
 
-These follow what is happening and switch off together with `x` (the choice is remembered):
+These follow what is happening. `x` switches the effects off together and the choice is remembered; kiosk mode (`k`) and the sounds are separate.
 
-- **Pulse and sweep:** map markers pulse out of step, and a slow radar sweep brightens the land.
-- **Arrival flash:** when something urgent arrives (a newly confirmed exploit or a reported zero-day), the window edge pulses once. In Cold War mode a FLASH banner flickers across the top as well.
+- **Mood lighting:** the focused panel's border, its title bar and the Live Wire's border tint slowly toward amber and then red as the Heat Level on the dashboard (the share of stories that are threats) rises, and fade back when it falls. The tint glides rather than jumps. It is never applied in Cold War mode or the Amber CRT theme, which stay pure simulations.
+- **Map:** markers pulse out of step, a slow radar sweep brightens the land, and the night side of the world is dimmed to follow the sun (a ☼ marks where it is noon). Faint arcs run from a country that an APT story attributes activity to, to the countries named in the same headline, with a bright point travelling along each.
+- **Arrival flash:** when something urgent arrives (a newly confirmed exploit or a reported zero-day), the window edge pulses once and the alert types itself into the feed. In Cold War mode a FLASH banner flickers across the top as well.
+- **Heartbeat:** the header corner shows a heartbeat trace whose rhythm follows how much has arrived in the last hour. It is a plain diamond in Cold War mode and Amber CRT.
+- **Loading screen:** each new theme has its own boot lines.
+- **Kiosk mode (`k`):** for a screen that stays on. The main view rotates between the map, alerts and incidents every 30 seconds while nobody is using the app. Any key or click pauses it for two minutes, it leaves the IOC lookup and any open card alone, and it stays on after a restart.
+
+**Sounds.** Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp, sonar ping or the terminal bell. Each plays when you choose it, and one sounds at most once per check, for something newly confirmed, a reported zero-day or a watchlist hit. `Shift+B` turns on a very quiet ambient hum. In a terminal the sounds come from a local audio player (`pw-play`, `paplay` or `aplay`), and without one the terminal bell is used. In the browser version the app sends the sounds to the page, which plays them with WebAudio. Browsers keep audio locked until you have pressed a key or clicked in the page, so the first alert after opening the tab can be silent. This leans on textual-serve internals, so it is the part to check first if the browser version goes quiet after an update. The hum loops a short file with a brief gap at each restart, which is why it is kept so quiet.
 
 ## AI Briefings
 
@@ -293,7 +301,7 @@ Public exploit code is also detected from the [Metasploit Framework](https://git
 
 Feeds are checked every 5 minutes, so an alert can't appear sooner than its source publishes it and the next check finds it.
 
-Press `b` to choose an alert sound: off (the default), PC speaker, teletype bell, modem chirp or your terminal's bell. Each plays when you choose it. It sounds at most once per check, for something newly confirmed, a reported zero-day or a watchlist hit. Without an audio player, as over SSH, the terminal bell is used instead.
+The alert sounds and the ambient hum are described under Atmosphere.
 
 ## Keyboard or Mouse
 
