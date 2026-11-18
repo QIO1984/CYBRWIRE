@@ -341,6 +341,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.kiosk_on = bool(saved.get("kiosk", False))      # Rotate the main view when nobody is using it
         self.kiosk_last_move = time.monotonic()
         self.last_input = time.monotonic()
+        self.typing = {}  # Alert key -> when its title started typing into the feed (None until it is first drawn)
         self.main_view_mode = saved.get("main_view") if saved.get("main_view") in ("map", "alerts", "incidents") else "map"
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
@@ -556,6 +557,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.set_interval(0.5, self.map_tick)  # Pulses the map's markers while it is showing
         self.set_interval(2.0, self.mood_tick)  # Eases the threat-level tint of the borders
         self.set_interval(1.0, self.kiosk_tick)  # Rotates the main view in kiosk mode
+        self.set_interval(0.1, self.typing_tick)  # Types urgent new alerts into the feed
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -1145,7 +1147,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         elif STATE.is_new(a):
             title.append(" NEW ", style=f"bold {p.bg} on {p.accent}")
             title.append(" ")
-        title.append(a["title"], style=title_style)
+        title.append(self.typed_title(a), style=title_style)
         if selected and p.monochrome:
             title.append(" █", style=f"blink {p.focus}")  # teletype cursor
         return title

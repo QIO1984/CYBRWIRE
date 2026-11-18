@@ -6,6 +6,9 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from textual import events
+from textual.coordinate import Coordinate
+
+from .state import alert_key
 
 from .worldmap import _blend
 
@@ -16,6 +19,8 @@ CALM_BELOW = 30          # Heat Level (percent of stories that are threats) unde
 RED_FROM = 60            # ...and from which the tint is fully red
 MOOD_STEPS = 12          # The tint moves in this many steps, so it redraws rarely
 MOOD_EASE = 0.25         # How far the shown level moves toward the real one each tick: changes glide, they don't jump
+TYPE_CHARS_PER_SECOND = 45  # How fast an urgent new alert types itself into the feed
+MAX_TYPED = 3              # At most this many at once: a flood of arrivals is not a show
 KIOSK_SECONDS = 30         # Time on each view
 KIOSK_PAUSE_SECONDS = 120  # After you touch the app, kiosk mode waits this long before moving on again
 KIOSK_VIEWS = ("map", "alerts", "incidents")
@@ -27,6 +32,51 @@ class EffectsMixin:
         if isinstance(event, (events.Key, events.MouseDown, events.MouseMove, events.MouseScrollDown, events.MouseScrollUp)):
             self.last_input = time.monotonic()
         await super().on_event(event)
+
+    # ---- typed-in rows
+    def start_typing(self, alerts) -> None:
+        """Mark urgent new alerts to type themselves into the feed. The clock starts when the row is first drawn."""
+        if not self.effects_on:
+            return
+        for a in alerts[:MAX_TYPED]:
+            self.typing.setdefault(alert_key(a), None)
+
+    def typed_title(self, a) -> str:
+        """The alert's title as far as it has been typed (with a cursor), or all of it"""
+        title = a["title"]
+        key = alert_key(a)
+        if key not in self.typing or not self.effects_on:
+            return title
+        if self.typing[key] is None:
+            self.typing[key] = time.monotonic()
+        shown = int((time.monotonic() - self.typing[key]) * TYPE_CHARS_PER_SECOND)
+        return title if shown >= len(title) else title[:shown] + "▌"
+
+    def typing_tick(self) -> None:
+        """Redraw just the title cell of each row that is still typing, and forget the ones that finished"""
+        if not self.typing or self.is_loading or len(self.screen_stack) > 1:
+            return  # Nothing to do, or the feed is not on screen (loading, or a card is open)
+        now = time.monotonic()
+        by_key = {alert_key(a): i for i, a in enumerate(self.feed_rows)}
+        table = self.query_one("#feed-table") if self.main_view_mode == "alerts" else None
+        for key, started in list(self.typing.items()):
+            if started is None:
+                continue
+            done = (now - started) * TYPE_CHARS_PER_SECOND >= 200 or key not in by_key
+            row = by_key.get(key)
+            if row is not None and table is not None:
+                a = self.feed_rows[row]
+                finished = (now - started) * TYPE_CHARS_PER_SECOND >= len(a["title"])
+                try:
+                    table.update_cell_at(Coordinate(row, 3), self.feed_title_cell(a, row == table.cursor_row), update_width=False)
+                except Exception:
+                    pass  # The table is being rebuilt; the next tick finds the row again
+                done = done or finished
+            if done:
+                del self.typing[key]
+        for key, started in list(self.typing.items()):
+            if started is not None and now - started > 30:
+                del self.typing[key]  # Never drawn within half a minute (another view): drop it
 
     # ---- kiosk mode
     def kiosk_tick(self) -> None:
@@ -84,6 +134,7 @@ class EffectsMixin:
         if not urgent:
             return
         self.flash_edge()
+        self.start_typing(urgent)
         if self.cold_war_mode:
             self.flash_banner(urgent[0])
 

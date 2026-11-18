@@ -167,6 +167,63 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
         cybrwire_app.STATE.settings = {"alerts_default": True}
         self.assertFalse(cybrwire_app.CybrWireApp().kiosk_on)
 
+    async def test_urgent_new_alerts_type_themselves_into_the_feed(self):
+        app = self.make_app()
+        urgent = alert("CISA adds a long vulnerability title to KEV today", "critical", "CISA KEV",
+                       evidence=Evidence(CONFIRMED, 150, ["CISA KEV today"], recent=True))
+        cybrwire_app.alert_queue[:] = [urgent, alert("Routine post")]
+        async with app.run_test(size=(140, 40)) as pilot:
+            await self.settle(pilot)
+            app.main_view_mode = "alerts"
+            app.update_display()
+            app.arrival_effect([urgent])
+            await self.settle(pilot)
+            self.assertIn(cybrwire_app.alert_key(urgent), app.typing)
+            full = urgent["title"]
+            first = app.feed_title_cell(urgent, False).plain.strip()  # The clock starts at the first draw
+            self.assertTrue(first.endswith("▌") or first.endswith(full))
+            key = cybrwire_app.alert_key(urgent)
+            app.typing[key] = cybrwire_app.time.monotonic() - 0.2   # About nine characters in
+            partial = app.feed_title_cell(urgent, False).plain
+            self.assertIn("▌", partial)
+            self.assertNotIn(full, partial)
+            self.assertTrue(full.startswith(partial.replace("▌", "").strip().split("  ")[-1][:6]))
+            app.typing[key] = cybrwire_app.time.monotonic() - 10     # Long finished
+            self.assertIn(full, app.feed_title_cell(urgent, False).plain)
+            app.typing_tick()
+            self.assertNotIn(key, app.typing)  # Forgotten once it has finished typing
+
+    async def test_a_typing_row_is_redrawn_in_place(self):
+        app = self.make_app()
+        urgent = alert("A fairly long urgent headline that takes a moment to type in", "critical", "CISA KEV",
+                       evidence=Evidence(CONFIRMED, 150, ["CISA KEV today"], recent=True))
+        cybrwire_app.alert_queue[:] = [urgent]
+        async with app.run_test(size=(140, 40)) as pilot:
+            await self.settle(pilot)
+            app.main_view_mode = "alerts"
+            app.update_display()
+            await self.settle(pilot)
+            app.typing[cybrwire_app.alert_key(urgent)] = cybrwire_app.time.monotonic() - 0.3
+            app.typing_tick()
+            table = app.query_one("#feed-table")
+            shown = table.get_row_at(0)[3].plain
+            self.assertIn("▌", shown)
+            self.assertLess(len(shown.replace("▌", "").strip()), len(urgent["title"]))
+
+    async def test_nothing_types_with_effects_off_or_for_ordinary_alerts(self):
+        app = self.make_app()
+        urgent = alert("CVE added to KEV", "critical", "CISA KEV", evidence=Evidence(CONFIRMED, 150, ["CISA KEV today"], recent=True))
+        async with app.run_test(size=(140, 40)) as pilot:
+            await self.settle(pilot)
+            app.effects_on = False
+            app.start_typing([urgent])
+            self.assertEqual(app.typing, {})
+            app.effects_on = True
+            app.arrival_effect([alert("Routine")])
+            self.assertEqual(app.typing, {})
+            app.start_typing([alert(f"urgent {i}", "critical", evidence=Evidence(CONFIRMED, 1, [], recent=True)) for i in range(10)])
+            self.assertEqual(len(app.typing), 3)  # At most three at a time
+
 
 def plain_text(text):
     return text.plain
