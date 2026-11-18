@@ -2,7 +2,10 @@
 light that tints the borders as the threat level rises. Both obey the Effects switch (x), and the
 period simulations (Cold War mode, the Amber CRT theme) never get the mood light."""
 
+import time
 from datetime import datetime, timedelta, timezone
+
+from textual import events
 
 from .worldmap import _blend
 
@@ -13,10 +16,32 @@ CALM_BELOW = 30          # Heat Level (percent of stories that are threats) unde
 RED_FROM = 60            # ...and from which the tint is fully red
 MOOD_STEPS = 12          # The tint moves in this many steps, so it redraws rarely
 MOOD_EASE = 0.25         # How far the shown level moves toward the real one each tick: changes glide, they don't jump
+KIOSK_SECONDS = 30         # Time on each view
+KIOSK_PAUSE_SECONDS = 120  # After you touch the app, kiosk mode waits this long before moving on again
+KIOSK_VIEWS = ("map", "alerts", "incidents")
 THREATS = ("critical", "zeroday", "ransomware", "apt", "exploit")
 
 
 class EffectsMixin:
+    async def on_event(self, event) -> None:
+        if isinstance(event, (events.Key, events.MouseDown, events.MouseMove, events.MouseScrollDown, events.MouseScrollUp)):
+            self.last_input = time.monotonic()
+        await super().on_event(event)
+
+    # ---- kiosk mode
+    def kiosk_tick(self) -> None:
+        """Move the main view along the rotation when nobody is using the app"""
+        if not self.kiosk_on or self.is_loading or len(self.screen_stack) > 1 or self.prompt:
+            return
+        now = time.monotonic()
+        if now - self.last_input < KIOSK_PAUSE_SECONDS or now - self.kiosk_last_move < KIOSK_SECONDS:
+            return
+        if self.main_view_mode not in KIOSK_VIEWS:
+            return  # Someone left it on a tool (IOC lookup): leave it there
+        self.main_view_mode = KIOSK_VIEWS[(KIOSK_VIEWS.index(self.main_view_mode) + 1) % len(KIOSK_VIEWS)]
+        self.kiosk_last_move = now
+        self.update_display()
+
     mood_heat = 0.0   # What the tint currently shows, 0-100
     mood_q = 0        # That, in steps
 

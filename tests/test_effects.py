@@ -107,6 +107,70 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one("#flash-banner").display)
             self.assertEqual(edge(app), "")
 
+    async def test_kiosk_mode_rotates_the_views_only_when_nobody_is_using_the_app(self):
+        app = self.make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.settle(pilot)
+            self.assertEqual(app.main_view_mode, "map")
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "map")  # Off by default
+            await pilot.press("k")
+            await self.settle(pilot)
+            self.assertTrue(app.kiosk_on)
+            self.assertTrue(cybrwire_app.STATE.settings["kiosk"])
+            self.assertIn("kiosk on", plain_text(app.hint_bar([("x", "y")])))
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "map")  # You just pressed a key: it waits
+            app.last_input -= 1000
+            app.kiosk_last_move -= 1000
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "alerts")
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "alerts")  # Thirty seconds on each view
+            for expected in ("incidents", "map", "alerts"):
+                app.kiosk_last_move -= 1000
+                app.kiosk_tick()
+                self.assertEqual(app.main_view_mode, expected)
+
+    async def test_kiosk_mode_leaves_tools_cards_and_typing_alone_and_any_input_pauses_it(self):
+        app = self.make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.settle(pilot)
+            app.kiosk_on = True
+            app.last_input -= 1000
+            app.kiosk_last_move -= 1000
+            app.main_view_mode = "api_tools"
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "api_tools")
+            app.main_view_mode = "map"
+            app.prompt = "search"
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "map")
+            app.prompt = None
+            await pilot.press("h")  # The help screen is open
+            await self.settle(pilot)
+            app.last_input -= 1000
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "map")
+            await pilot.press("escape")
+            await self.settle(pilot)
+            app.last_input -= 1000
+            app.kiosk_last_move -= 1000
+            await pilot.press("space")  # Input pauses it again
+            await self.settle(pilot)
+            app.kiosk_tick()
+            self.assertEqual(app.main_view_mode, "map")
+
+    async def test_kiosk_mode_is_remembered_between_launches(self):
+        cybrwire_app.STATE.settings = {"kiosk": True, "alerts_default": True}
+        self.assertTrue(cybrwire_app.CybrWireApp().kiosk_on)
+        cybrwire_app.STATE.settings = {"alerts_default": True}
+        self.assertFalse(cybrwire_app.CybrWireApp().kiosk_on)
+
+
+def plain_text(text):
+    return text.plain
+
 
 if __name__ == "__main__":
     unittest.main()

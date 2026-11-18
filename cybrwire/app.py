@@ -295,6 +295,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         ("z", "toggle_clocks", "World Clock"),
         ("m", "show_map", "Threat Map"),
         ("x", "toggle_effects", "Effects"),
+        ("k", "toggle_kiosk", "Kiosk"),
         ("K", "manage_keys", "API Keys"),
         ("i", "open_cve_card", "CVE Card"),
         ("u", "toggle_grouping", "Group Duplicates"),
@@ -337,6 +338,9 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.sound = saved.get("sound", sound.OFF)
         self.show_clocks = saved.get("world_clock", True)
         self.effects_on = bool(saved.get("effects", True))  # Map pulse and the arrival flash
+        self.kiosk_on = bool(saved.get("kiosk", False))      # Rotate the main view when nobody is using it
+        self.kiosk_last_move = time.monotonic()
+        self.last_input = time.monotonic()
         self.main_view_mode = saved.get("main_view") if saved.get("main_view") in ("map", "alerts", "incidents") else "map"
         self.feed_rows = []         # Alerts in the table, in row order
         self.feed_signature = None  # What the table is showing, to skip needless rebuilds
@@ -439,6 +443,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             "sound": self.sound,
             "world_clock": self.show_clocks,
             "effects": self.effects_on,
+            "kiosk": self.kiosk_on,
             "main_view": self.main_view_mode if self.main_view_mode in ("map", "alerts", "incidents") else "alerts",
         }
         STATE.save()
@@ -550,6 +555,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.query_one(WorldClock).display = self.show_clocks
         self.set_interval(0.5, self.map_tick)  # Pulses the map's markers while it is showing
         self.set_interval(2.0, self.mood_tick)  # Eases the threat-level tint of the borders
+        self.set_interval(1.0, self.kiosk_tick)  # Rotates the main view in kiosk mode
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -1057,6 +1063,15 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.notify(f"Effects {'on' if self.effects_on else 'off'}", timeout=2)
         self.update_display()
 
+    def action_toggle_kiosk(self):
+        """Kiosk mode: the main view rotates between the map, alerts and incidents when nobody is using the app"""
+        self.kiosk_on = not self.kiosk_on
+        self.kiosk_last_move = time.monotonic()
+        self.save_settings()
+        self.notify("Kiosk mode on: the view rotates every 30 seconds. Any key pauses it for 2 minutes" if self.kiosk_on
+                    else "Kiosk mode off", timeout=4)
+        self.update_display()
+
     def action_show_map(self):
         """Full-window threat map"""
         if not self.is_loading and not isinstance(self.screen, MapCard):
@@ -1089,6 +1104,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         """'key description' pairs with keys in the accent color"""
         p = self.palette
         text = Text()
+        if self.kiosk_on:
+            hints = [*hints, ("k", "kiosk on")]
         for i, (key, desc) in enumerate(hints):
             if i:
                 text.append("   ")
