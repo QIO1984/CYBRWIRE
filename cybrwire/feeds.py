@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 import feedparser
 import httpx
 
+from . import USER_AGENT
+
 MAX_TITLE_LEN = 200  # The feed table truncates to fit the screen
 
 # Full CISA KEV catalog (CVE ID -> description), refreshed with the KEV feed.
@@ -114,7 +116,7 @@ DOOMSDAY_PATTERN = re.compile(r"It is (?:now )?(\d+(?:\.\d+)?) (seconds|minutes)
 async def fetch_doomsday_seconds() -> int:
     """Read the current Doomsday Clock setting from the Bulletin's page description"""
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
-                                 headers={"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}) as c:
+                                 headers={"User-Agent": USER_AGENT}) as c:
         r = await c.get(DOOMSDAY_URL)
         r.raise_for_status()
     match = DOOMSDAY_PATTERN.search(r.text)

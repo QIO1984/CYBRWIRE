@@ -1,0 +1,32 @@
+# Changelog
+
+## 1.1.0 (2026-11-17)
+
+### Added
+- **Browser and Docker mode.** `cybrwire-web` serves the app in a browser, and a Dockerfile and `compose.yaml` run it in the background. A real sign-in page protects it (a cookie lasts 30 days), and the server refuses to listen on the network without a password. The page follows the address your browser used, so IP addresses and reverse proxies (Caddy, nginx) both work. Links open in a new tab.
+- **World clock** under the title: your local time plus six reference cities by default. `z` toggles it. Set cities with `CYBRWIRE_CLOCKS` (Docker) or `clocks:` in `usrwire.yaml`; `cybrwire.env.example` lists one city per time zone.
+- **Outages.** Ten status-page feeds (cloud, mail, chat and more) in a new Outages group. Active incidents appear in Alerts and the all-clear moves to history.
+- **Metasploit modules** as a public-exploit signal for CVEs.
+- **Settings in `cybrwire.env`** for Docker: `CYBRWIRE_WATCHLIST`, `CYBRWIRE_NOTIFY_TRIGGERS`, `CYBRWIRE_AI_AUTO_BRIEFING`, as well as `TZ` and `CYBRWIRE_CLOCKS`. Only your own feeds still need `usrwire.yaml`.
+- `cybrwire --version`.
+- Readme: "Where Settings Live" tables, Data Sources and Credits, and Docker, Compose and proxy notes.
+
+### Changed
+- The Live Wire dot breathes calmly between checks; the title and feed text stay steady and are no longer repainted by the pulse.
+- Packaged for `pipx install`: user data lives in `~/.config/cybrwire` (or `CYBRWIRE_HOME`).
+- Feeds now identify themselves as `CybrWire/<version>`, taken from the one version number in `cybrwire/__init__.py`.
+- Provider terms respected: credits for Spamhaus, DShield, HIBP, NVD, FIRST EPSS and Ransomware.live, and the NVD notice on the CVE card.
+
+### Fixed
+- Feeds that lost their query string (VulDB, Cyber.gc.ca, GitHub advisories, Ars Technica, Dr.Web, ENISA) work again.
+- Duplicate and stale status-page incidents no longer flood Outages.
+
+### Removed
+- Dead or unusable feeds: Android Security Bulletins, OpenPhish (its terms bar threat-intelligence use) and the ACSC feeds (the site never answers CybrWire). An ACSC example remains, commented out, in `usrwire.yaml`.
+
+### Planned
+- Easier editing of custom feeds in Docker.
+
+## 1.0.0
+
+First public version: terminal dashboard with the Live Wire, evidence-ranked alerts, CVE cards with EPSS and CVSS, watchlist, notifications, AI briefings, themes and history.

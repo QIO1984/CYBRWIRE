@@ -20,6 +20,7 @@ from rich import box
 from collections import Counter
 from .enrichment import enrichment_engine, initialize_enrichment
 from . import ai
+from . import USER_AGENT, __version__
 from . import paths
 from .config import ENRICHMENT_SLOTS as ENRICHMENT_KEYS, RedactingFormatter, load_config, redact, secure_file
 from .keystore import FILE, OLD_COPY, SECRETS_FILE, SLOTS_BY_ID
@@ -78,7 +79,7 @@ console = Console(color_system="truecolor", theme=Theme({
     "new": "bold reverse white on #00ff00",
 }))
 
-HEADERS = {"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}
+HEADERS = {"User-Agent": USER_AGENT}
 HEAT_BAR_WIDTH = 33
 REFRESH_INTERVAL = 300
 SIGHTING_DAYS = 7
@@ -125,7 +126,7 @@ async def fetch_breaches():
     if _breaches_checked is not None and time.monotonic() - _breaches_checked < BREACH_CHECK_SECONDS:
         return
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": "CybrWire/1.0 (+https://github.com/QIO1984/CYBRWIRE)"}, timeout=10) as c:
+        async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, timeout=10) as c:
             r = await c.get("https://haveibeenpwned.com/api/v3/breaches")
             breaches = r.json()
             # Get the 7 most recently added breaches (sorted by AddedDate, not BreachDate)
@@ -3221,6 +3222,7 @@ def main():
     parser.add_argument("--digest", nargs="?", const=24, type=int, metavar="HOURS",
                         help="print a plain-text summary of the last HOURS (default 24) and exit")
     parser.add_argument("--test-notify", action="store_true", help="send a test message to the configured notification targets and exit")
+    parser.add_argument("--version", action="version", version=f"CybrWire {__version__}")
     args = parser.parse_args()
     
     if args.digest is not None:

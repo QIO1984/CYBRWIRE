@@ -9,19 +9,19 @@
 
 CYBRWIRE pulls the latest alerts from dozens of top security sources (CISA KEV, The Hacker News, Krebs, BleepingComputer, ZDI, Kaspersky, VulDB, and many more), classifies them by severity, and displays them in a continuously updating, color-rich TUI built with **[Textual](https://github.com/Textualize/textual)** and **[Rich](https://github.com/Textualize/rich)**.
 
-CYBRWIRE also includes tools (via api keys) to identify malicious IPs and query databases for malicous file hashes.
+CYBRWIRE also includes tools (via api keys) to identify malicious IPs and query databases for malicious file hashes.
 
 More than just a glorified feed-reader, CYBRWIRE is designed for security analysts, red teamers, blue teamers, and anyone who wants to keep an eye on the threat landscape without leaving the terminal.
 
 ## Features
 
-- **85+ curated threat intelligence sources** including CISA, vendor advisories (Fortinet, Palo Alto, Cisco, Ivanti, Microsoft), national CERTs, GitHub security advisories, Ransomware.live, ThreatFox, and more
+- **100+ curated threat intelligence sources** including CISA, vendor advisories (Fortinet, Palo Alto, Cisco, Ivanti, Microsoft), national CERTs, GitHub security advisories, Ransomware.live, ThreatFox, and more
 - **Grouped by what you need** – press `4` to switch between Advisories (what to patch), News & Research, Ransomware, Indicators (what to block), and Outages (what is broken right now)
 - **CVE scores** – CISA KEV status, CVSS severity (NVD) and EPSS exploit likelihood shown wherever a CVE appears
 - **Watchlist** – star everything that mentions the vendors, products or keywords you care about, and press `w` to see only those
 - **Search** – press `/` to filter as you type across all feeds and a year of saved history, including older alerts and indicators
 - **Duplicate grouping** – the same story from several feeds becomes one row marked `+N`; `u` lists every report
-- **Notifications** – push watchlist hits, new KEV entries or zero-days to ntfy, Discord or Slack
+- **Notifications** – push watchlist hits, new KEV entries or zero-days to ntfy, Pushover, Telegram, Discord or Slack
 - **Digest mode** – `cybrwire --digest` prints a plain-text summary for a terminal, pipe or cron job, with no AI calls
 - **CVE card** – press `i` for CVSS, EPSS, CISA KEV status, exploit links, affected products and which of your feeds report it
 - **Multi-format feed support** – JSON, RSS, and plain text feeds
@@ -159,7 +159,7 @@ docker run --rm -p 8000:8000 -e CYBRWIRE_WEB_PASSWORD='pick-a-long-one' -v cybrw
 **To keep it running in the background** (restarts after a reboot, keys included), use Docker Compose:
 
 ```bash
-cp cybrwire.env.example cybrwire.env && chmod 600 cybrwire.env   # then edit it: password, URL, keys
+cp cybrwire.env.example cybrwire.env && chmod 600 cybrwire.env   # then edit it: password, clocks, keys
 docker compose up -d --build
 docker compose logs -f        # watch it; Ctrl+C leaves it running
 docker compose down           # stop it (your data stays in the volume)
@@ -172,7 +172,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 - **The login is basic.** It is one shared password over plain http, so anyone who can watch your network traffic could read it. That is fine on a home LAN or over Tailscale (which encrypts). For anything wider, put an https reverse proxy in front. Never expose it to the internet as it is: the page gives full control of the app, including your keys.
 - **Locally** (`cybrwire-web` on `127.0.0.1`) the password is optional. Set `CYBRWIRE_WEB_PASSWORD` to require one anyway. On any other address the server refuses to start without it.
 - **Keys:** a container has no system keychain. Pass keys as environment variables (`-e CYBRWIRE_ANTHROPIC_API_KEY=...`, or `--env-file`), or add them with Shift+K, which saves them to a restricted file in the volume.
-- **Links:** `Enter` can't open your browser from inside a container; copy the address from the alert instead.
+- **Links:** `Enter` opens the alert's page in a new browser tab (a container has no browser of its own). If your browser blocks the pop-up, allow it for this site.
 - Settings: `CYBRWIRE_WEB_HOST`, `CYBRWIRE_WEB_PORT`, `CYBRWIRE_WEB_USER`, `CYBRWIRE_WEB_PASSWORD`, and `CYBRWIRE_WEB_URL` (forces one fixed address; normally leave it unset).
 - **Behind a reverse proxy** (Caddy, nginx): point it at the container's port and pass websockets through (Caddy's `reverse_proxy` does this by default). The page uses whatever address your browser used, so the IP address and the proxy's name both work. If you set `CYBRWIRE_WEB_URL` from an older version, remove it.
 
@@ -206,7 +206,7 @@ Your data age, display mode, theme and filters are saved in `~/.config/cybrwire/
 
 ## World Clock
 
-A line under the title shows your local time and a few reference cities (New York, Los Angeles, London, Rome, St Petersburg, Tokyo). `+1` or `-1` marks a city that is on a different calendar day from you. Press `z` to hide or show it.
+A line under the title shows your local time and a few reference cities (Los Angeles, New York, London, Rome, St Petersburg, Tokyo). `+1` or `-1` marks a city that is on a different calendar day from you. Press `z` to hide or show it.
 
 - **Your zone** comes from the `TZ` setting (for Docker, add `TZ=America/New_York` or similar to `cybrwire.env`), or `timezone:` in `usrwire.yaml`, or else your computer's own zone.
 - **The default cities** are Los Angeles, New York, London, Rome, St Petersburg and Tokyo. `usrwire.example.yaml` lists one prominent city for every time zone, from Honolulu to Auckland, with the defaults marked: uncomment `clocks:` and the lines you want, and only your list is used. Zone names come from the [tz database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones), so any city works:
@@ -434,6 +434,8 @@ Query threat intelligence APIs directly from CybrWire:
 - `pyyaml` – YAML configuration files
 - `textual` – TUI framework
 - `anthropic` – Only used when the AI provider is `anthropic`
+- `tzdata` – Time zone names for the world clock
+- `textual-serve` – Only for the browser and Docker version (the `web` extra)
 
 ## Data Sources and Credits
 
@@ -442,7 +444,7 @@ CybrWire is MIT licensed, but the data it reads belongs to the people who publis
 | Source | What it gives CybrWire | Terms to know |
 |---|---|---|
 | [NVD](https://nvd.nist.gov) (NIST) | CVSS scores and descriptions | *This product uses the NVD API but is not endorsed or certified by the NVD.* |
-| [FIRST EPSS](https://www.first.org/epss) | Exploit likelihood | Free; FIRST asks that EPSS is credited |
+| [FIRST EPSS](https://www.first.org/epss) | Exploit likelihood | Free; FIRST asks for credit where possible: *See EPSS at https://www.first.org/epss* |
 | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | Known exploited vulnerabilities | US government data |
 | [ENISA EUVD](https://euvd.enisa.europa.eu) | Exploited vulnerabilities (EU) | |
 | [CIRCL Vulnerability-Lookup](https://vulnerability.circl.lu) | Exploitation sightings | See the Evidence section |
