@@ -224,6 +224,51 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
             app.start_typing([alert(f"urgent {i}", "critical", evidence=Evidence(CONFIRMED, 1, [], recent=True)) for i in range(10)])
             self.assertEqual(len(app.typing), 3)  # At most three at a time
 
+    async def test_the_header_corner_shows_a_heartbeat_that_stops_in_the_period_simulations(self):
+        from cybrwire.chrome import StyledHeader
+        app = self.make_app()
+        async with app.run_test(size=(140, 40)) as pilot:
+            await self.settle(pilot)
+            app.set_theme_by_key("neon")
+            header = app.query_one(StyledHeader)
+            app.heartbeat_tick()
+            first = header.icon
+            self.assertTrue(first.startswith("[") and any(ch in first for ch in "▁▂▆█▃"))
+            for _ in range(6):
+                app.heartbeat_tick()
+            self.assertNotEqual(header.icon, first)  # The trace scrolls
+            app.effects_on = False
+            app.heartbeat_tick()
+            self.assertEqual(header.icon, "◆")
+            app.effects_on = True
+            for key in ("amber_crt",):
+                app.set_theme_by_key(key)
+                app.heartbeat_tick()
+                self.assertEqual(header.icon, "◆", key)
+            app.set_theme_by_key("neon")
+            await pilot.press("c")
+            await self.settle(pilot)
+            app.heartbeat_tick()
+            self.assertEqual(header.icon, "◆")  # Cold War mode keeps its plain header
+
+    def test_busier_feeds_have_closer_heartbeats(self):
+        from cybrwire import effects
+        periods = [effects.beat_period(rate) for rate in (0, 4, 10, 20, 40, 400)]
+        self.assertEqual(periods, sorted(periods, reverse=True))
+        self.assertGreater(periods[0], periods[-1])
+        for period in periods:
+            frame = effects.ecg_frame(3, period)
+            self.assertEqual(len(frame), effects.ECG_WIDTH)
+            self.assertTrue(set(frame) <= set("▁▂▆█▃"))
+        beats = lambda p: sum(effects.ecg_frame(0, p).count("█") for _ in (0,))
+        self.assertGreaterEqual(beats(5), beats(14))
+
+    def test_the_trace_scrolls_one_cell_per_step_and_repeats(self):
+        from cybrwire import effects
+        a, b = effects.ecg_frame(0, 10), effects.ecg_frame(1, 10)
+        self.assertEqual(a[1:], b[:-1])
+        self.assertEqual(effects.ecg_frame(0, 10), effects.ecg_frame(10, 10))
+
 
 def plain_text(text):
     return text.plain

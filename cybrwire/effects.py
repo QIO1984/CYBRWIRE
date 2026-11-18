@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from textual import events
+from textual.css.query import NoMatches
 from textual.coordinate import Coordinate
 
 from .state import alert_key
@@ -24,10 +25,49 @@ MAX_TYPED = 3              # At most this many at once: a flood of arrivals is n
 KIOSK_SECONDS = 30         # Time on each view
 KIOSK_PAUSE_SECONDS = 120  # After you touch the app, kiosk mode waits this long before moving on again
 KIOSK_VIEWS = ("map", "alerts", "incidents")
+ECG_WIDTH = 12              # Cells of trace in the header corner
+ECG_BEAT = "▂▆█▃"           # One heartbeat; the rest of each period is flat line
 THREATS = ("critical", "zeroday", "ransomware", "apt", "exploit")
 
 
+def beat_period(rate: float) -> int:
+    """Cells between heartbeats: the more has arrived in the last hour, the closer together they come"""
+    return 14 if rate < 5 else 10 if rate < 15 else 7 if rate < 30 else 5
+
+
+def ecg_frame(offset: int, period: int, width: int = ECG_WIDTH) -> str:
+    """`width` cells of a repeating heartbeat trace, scrolled along by `offset`"""
+    wave = ECG_BEAT + "▁" * max(1, period - len(ECG_BEAT))
+    return (wave * (width // len(wave) + 3))[offset % len(wave):][:width]
+
+
 class EffectsMixin:
+    _ecg_offset = 0
+    _ecg_rate = None
+
+    def heartbeat_tick(self) -> None:
+        """The header corner shows a heartbeat trace whose rhythm follows how much is arriving. It is a plain
+        diamond with effects off and in the period simulations."""
+        from .chrome import StyledHeader
+        if len(self.screen_stack) > 1 or self.is_loading:
+            return
+        try:
+            header = self.query_one(StyledHeader)
+        except Exception:
+            return
+        if not self.effects_on or self.palette.pure or self.palette.monochrome:
+            if header.icon != "◆":
+                header.icon = "◆"
+            return
+        now = time.monotonic()
+        if self._ecg_rate is None or now - self._ecg_rate[0] > 30:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+            recent = sum(1 for a in self.all_alerts if a["ts"] >= cutoff and not a.get("undated") and a.get("kind") != "indicators")
+            self._ecg_rate = (now, recent)
+        self._ecg_offset += 1
+        trace = ecg_frame(self._ecg_offset, beat_period(self._ecg_rate[1]))
+        header.icon = f"[{self.palette.accent}]{trace}[/]"
+
     async def on_event(self, event) -> None:
         if isinstance(event, (events.Key, events.MouseDown, events.MouseMove, events.MouseScrollDown, events.MouseScrollUp)):
             self.last_input = time.monotonic()
@@ -58,7 +98,10 @@ class EffectsMixin:
             return  # Nothing to do, or the feed is not on screen (loading, or a card is open)
         now = time.monotonic()
         by_key = {alert_key(a): i for i, a in enumerate(self.feed_rows)}
-        table = self.query_one("#feed-table") if self.main_view_mode == "alerts" else None
+        try:
+            table = self.query_one("#feed-table") if self.main_view_mode == "alerts" else None
+        except NoMatches:
+            return  # The window is closing, or being rebuilt
         for key, started in list(self.typing.items()):
             if started is None:
                 continue
