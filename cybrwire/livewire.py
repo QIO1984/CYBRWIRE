@@ -300,13 +300,14 @@ class LiveWirePanel(Static):
         p = app.palette
         title, subtitle, body = self.title_text(clock), self.subtitle_text(), self.body_text(clock)
         shown = app.wire.shown
-        state = (p.key, title.markup, subtitle.markup, body.markup)
+        border = p.accent if shown and shown.arrival else app.mood(p.border, 0.9)  # The quiet border takes the threat tint most
+        state = (p.key, title.markup, subtitle.markup, body.markup, border)
         if state == self.drawn:
             return
         previous, self.drawn = self.drawn, state
         self.border_title = title
         self.border_subtitle = subtitle
-        self.styles.border = ("round", p.accent if shown and shown.arrival else p.border)
+        self.styles.border = ("round", border)
         if previous is None or previous[0] != state[0] or previous[3] != state[3]:
             self.update(body)  # The dot breathing alone must not repaint the feed text
 

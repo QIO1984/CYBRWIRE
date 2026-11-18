@@ -549,6 +549,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.apply_theme()
         self.query_one(WorldClock).display = self.show_clocks
         self.set_interval(0.5, self.map_tick)  # Pulses the map's markers while it is showing
+        self.set_interval(2.0, self.mood_tick)  # Eases the threat-level tint of the borders
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))
         self.refresher_task = asyncio.create_task(self.initial_load())
     
@@ -1434,7 +1435,8 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         p = self.palette
         title = p.title(title)
         if focused:
-            return Text(f" {title} ", style=f"bold {p.bg} on {p.focus}"), p.focus
+            focus = self.mood(p.focus)  # Tinted toward amber and red as the threat level rises
+            return Text(f" {title} ", style=f"bold {p.bg} on {focus}"), focus
         return Text(f" {title} ", style=f"bold {p.muted}"), p.border
     
     def bar(self, pct, color, width=HEAT_BAR_WIDTH):

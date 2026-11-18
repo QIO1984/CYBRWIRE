@@ -298,6 +298,35 @@ class ScreensDraw(unittest.IsolatedAsyncioTestCase):
         plain = screens.LoadingScreen(PALETTES["neon"])
         self.assertEqual(plain.messages[1], "TAPPING WIRES...")
 
+    async def test_mood_lighting_tints_the_focused_frame_but_not_in_the_period_simulations(self):
+        app = cybrwire_app.CybrWireApp()
+
+        async def fake_load():
+            app.pop_screen()
+            app.is_loading = False
+            app.update_display()
+
+        app.initial_load = fake_load
+        async with app.run_test(size=(160, 45)) as pilot:
+            await self.settle(pilot)
+            app.set_theme_by_key("neon")
+            calm = app.frame("X", True)[1]
+            self.assertEqual(calm, app.palette.focus)
+            app.mood_heat = 100.0
+            hot = app.frame("X", True)[1]
+            self.assertNotEqual(hot, calm)
+            self.assertEqual(app.frame("X", False)[1], app.palette.border)  # Only the focused panel takes the tint
+            app.set_theme_by_key("amber_crt")
+            self.assertEqual(app.frame("X", True)[1], app.palette.focus)
+            app.set_theme_by_key("neon")
+            await pilot.press("c")
+            await self.settle(pilot)
+            self.assertTrue(app.cold_war_mode)
+            self.assertEqual(app.frame("X", True)[1], app.palette.focus)  # Cold War mode stays pure
+            app.effects_on = False
+            app.cold_war_mode = False
+            self.assertEqual(app.frame("X", True)[1], app.palette.focus)
+
 
 if __name__ == "__main__":
     unittest.main()
