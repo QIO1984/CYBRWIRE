@@ -213,7 +213,7 @@ def _cell_dots(cols: int, rows: int) -> List[List[Tuple[int, bool]]]:
 _grid_cache: Dict[Tuple[int, int], List[List[Tuple[int, bool]]]] = {}
 
 
-NIGHT_KEEP = 0.34   # How much of its colour the night side keeps
+NIGHT_KEEP = 0.5    # How much of its colour the night side keeps
 
 
 def sun_position(when: datetime) -> Tuple[float, float]:
@@ -291,7 +291,7 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
             elif 0 < behind <= 2:
                 glyph, keep = "•", 0.8
             else:
-                glyph, keep = "·", 0.42
+                glyph, keep = "·", 0.6
             cells[r][c] = (glyph, _blend(palette.apt, palette.bg, keep))
             arc_cells.add((r, c))
     roles = {name: role for name, _glyph, _label, role in LAYERS}
