@@ -332,8 +332,8 @@ A **CLEAN** result means the provider has no record of the indicator, not that i
 Three places hold settings, and each has one job:
 
 - **The app itself** (Shift+K, Shift+W, and the keys on the footer) for things you change while using it: API keys, notification targets, AI provider and model, watchlist, theme, filters and data age. They are saved for you.
-- **`usrwire.yaml`** for lists and preferences about *what you watch*: your own feeds, notification triggers, the auto briefing switch, and optional watchlist, clock and time zone settings. It never holds keys.
-- **`cybrwire.env`** (Docker only) for the container's own settings: sign-in password, time zone, clock cities, and API keys if you'd rather not type them into the app. A second file, **`.env`**, holds only the port.
+- **`usrwire.yaml`** for lists and preferences about *what you watch*: your own feeds above all, and optionally the watchlist, notification triggers, auto briefing switch, clock and time zone settings. It never holds keys.
+- **`cybrwire.env`** (Docker only) for the container's own settings: sign-in password, time zone, clock cities, watchlist, notification triggers, auto briefing, and API keys if you'd rather not type them into the app. A second file, **`.env`**, holds only the port.
 
 | Setting | Docker | Normal install (pipx, clone) |
 |---|---|---|
@@ -343,12 +343,12 @@ Three places hold settings, and each has one job:
 | World clock cities | `cybrwire.env`: `CYBRWIRE_CLOCKS` | `clocks:` in `usrwire.yaml` |
 | API keys and notification targets | `cybrwire.env` (`CYBRWIRE_ANTHROPIC_API_KEY` and so on), or Shift+K | Shift+K (system keychain), or the same variables |
 | AI provider and model | Shift+K | Shift+K |
-| Watchlist | Shift+W in the app | Shift+W, or `watchlist:` in `usrwire.yaml` |
+| Watchlist | `cybrwire.env`: `CYBRWIRE_WATCHLIST`, or Shift+W | Shift+W, `watchlist:` in `usrwire.yaml`, or `CYBRWIRE_WATCHLIST` |
 | Your own feeds | `custom:` in `usrwire.yaml` | `custom:` in `usrwire.yaml` |
-| Notification triggers | `notifications:` in `usrwire.yaml` | `notifications:` in `usrwire.yaml` |
-| Auto AI briefing at launch | `ai:` in `usrwire.yaml` | `ai:` in `usrwire.yaml` |
+| Notification triggers | `cybrwire.env`: `CYBRWIRE_NOTIFY_TRIGGERS` | `notifications:` in `usrwire.yaml`, or `CYBRWIRE_NOTIFY_TRIGGERS` |
+| Auto AI briefing at launch | `cybrwire.env`: `CYBRWIRE_AI_AUTO_BRIEFING` | `ai:` in `usrwire.yaml`, or `CYBRWIRE_AI_AUTO_BRIEFING` |
 
-If the same thing is set in two places, the environment wins over the app's saved value (and `CYBRWIRE_CLOCKS` wins over `clocks:`).
+If the same thing is set in two places, the environment wins over the app's saved value (and `CYBRWIRE_CLOCKS`, `CYBRWIRE_NOTIFY_TRIGGERS` and `CYBRWIRE_AI_AUTO_BRIEFING` win over their `usrwire.yaml` versions). `CYBRWIRE_WATCHLIST` adds to the other watchlist terms instead of replacing them. Triggers are a comma-separated list of `watchlist`, `confirmed`, `kev`, `zeroday`; the auto briefing is `true` or `false`.
 
 **Where the files are**
 

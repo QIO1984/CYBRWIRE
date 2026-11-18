@@ -253,6 +253,39 @@ def _prepare_feed(src: Dict[str, Any], source_file: str) -> Dict[str, Any]:
     return feed
 
 
+NOTIFY_TRIGGERS = ("watchlist", "confirmed", "kev", "zeroday")
+_TRUE, _FALSE = {"1", "true", "yes", "on"}, {"0", "false", "no", "off"}
+
+
+def _env_list(name: str) -> List[str]:
+    return [p.strip() for p in os.environ.get(name, "").split(",") if p.strip()]
+
+
+def apply_env_settings(config: Config) -> None:
+    """
+    The three usrwire.yaml settings that can also be set in the environment (cybrwire.env in Docker):
+    CYBRWIRE_NOTIFY_TRIGGERS replaces notifications.triggers, CYBRWIRE_AI_AUTO_BRIEFING replaces
+    ai.auto_briefing, and CYBRWIRE_WATCHLIST adds terms to the watchlist. Blank means not set.
+    """
+    triggers = [t.lower() for t in _env_list("CYBRWIRE_NOTIFY_TRIGGERS")]
+    unknown = [t for t in triggers if t not in NOTIFY_TRIGGERS]
+    if unknown:
+        logging.warning(f"Ignoring unknown CYBRWIRE_NOTIFY_TRIGGERS {unknown}; choose from {list(NOTIFY_TRIGGERS)}")
+    triggers = [t for t in triggers if t in NOTIFY_TRIGGERS]
+    if triggers:
+        config.notifications["triggers"] = triggers
+
+    value = os.environ.get("CYBRWIRE_AI_AUTO_BRIEFING", "").strip().lower()
+    if value in _TRUE | _FALSE:
+        config.ai["auto_briefing"] = value in _TRUE
+    elif value:
+        logging.warning("Ignoring CYBRWIRE_AI_AUTO_BRIEFING: use true or false")
+
+    for term in _env_list("CYBRWIRE_WATCHLIST"):
+        if term not in config.watchlist:
+            config.watchlist.append(term)
+
+
 def load_config() -> Config:
     convert_user_file(APP_DIR)
     create_user_file(APP_DIR)
@@ -298,6 +331,8 @@ def load_config() -> Config:
     for name in ("usrwire.yaml", "cybrwire_local.yaml"):
         config.clocks = files[name].get("clocks") or config.clocks
         config.timezone = files[name].get("timezone") or config.timezone
+
+    apply_env_settings(config)
 
     # Keys found in the YAML above are replaced by whatever outranks them in the key store
     config.keys = KeyStore(APP_DIR)
