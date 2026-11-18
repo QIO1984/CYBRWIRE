@@ -1,5 +1,5 @@
 """
-Serve CybrWire in a browser (needs the "web" extra: pip install "cybrwire[web]").
+Serve CybrWire in a browser (needs the "web" extra: pip install -e ".[web]" in a clone, or pipx install "cybrwire[web] @ git+https://github.com/QIO1984/CYBRWIRE.git").
 
 The page is a terminal in the browser. It is protected by a sign-in page (a cookie is kept for 30 days):
 set CYBRWIRE_WEB_PASSWORD (and optionally CYBRWIRE_WEB_USER, default "cybrwire"). On localhost
@@ -152,7 +152,7 @@ def main() -> None:
     try:
         from textual_serve.server import Server
     except ImportError:
-        sys.exit('The browser version needs an extra package: pip install "cybrwire[web]"')
+        sys.exit('The browser version needs the "web" extra: pip install -e ".[web]" in a clone, or see the readme')
 
     host = os.environ.get("CYBRWIRE_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("CYBRWIRE_WEB_PORT", "8000"))

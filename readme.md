@@ -142,10 +142,10 @@ Earlier versions kept `usrwire.yaml`, `cybrwire_state.json`, `cybrwire_history.d
 
 ### In a browser or Docker
 
-CybrWire can run in a browser tab, using the same screens, mouse and themes through a terminal in the page:
+CybrWire can run in a browser tab (from a clone, use `pip install -e ".[web]"` instead), using the same screens, mouse and themes through a terminal in the page:
 
 ```bash
-pip install "cybrwire[web]"
+pipx install "cybrwire[web] @ git+https://github.com/QIO1984/CYBRWIRE.git"
 cybrwire-web                      # then open http://127.0.0.1:8000
 ```
 
