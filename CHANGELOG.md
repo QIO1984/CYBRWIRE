@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-18)
 
 ### Added
 - **Threat map** as the opening main view (`v` cycles views, `m` opens it full window). A world map drawn in braille dots with four marker layers: ransomware victims, attributed nation-state activity, national advisories and active outages. Under it: a legend line per layer, the latest strong alerts and an alerts-per-hour scope with a sweeping point. The app remembers the view you leave it on.
@@ -19,6 +19,7 @@
 
 ### Changed
 - The threat map now fills wide screens (it stretches up to 1.5x, then centres) instead of sliding to the left.
+- The loading screen is centred in the window.
 - Internal: `app.py` split into screens, window chrome and one module per panel. No behaviour change.
 
 ## 1.1.0 (2026-11-17)
