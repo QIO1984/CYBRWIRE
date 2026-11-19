@@ -36,6 +36,7 @@ class Palette:
     monochrome: bool = False  # Cold War: one hue; urgency shown by brightness and reverse video
     pure: bool = False        # A period simulation (Cold War, Amber CRT): no mood tinting or other colour effects added on top
     boot: tuple = ()          # Optional flavour lines for the loading screen, in place of the usual ones
+    blurb: str = ""           # One short line describing the look, shown in the theme picker
     # Optional flavor: panel names, severity names and a timestamp style for this palette
     titles: Dict[str, str] = field(default_factory=dict)
     severity_names: Dict[str, str] = field(default_factory=dict)
@@ -80,6 +81,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Near-black with vivid neon: hot pink focus, cyan accent, electric blue and violet for the quiet roles
     Palette(
         key="neon", name="Neon Noir",
+        blurb="default: pink, cyan and violet on near-black",
         bg="#07070d", surface="#16162e", border="#33335a", focus="#ff4fd8",
         text="#e6e6f0", muted="#8a8ab0", accent="#00e5ff",
         critical="#ff3b6b", zeroday="#ffd23f", ransomware="#ff4fd8",
@@ -89,6 +91,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Rain-soaked night city: warm amber focus against teal, on blue-black
     Palette(
         key="blade_runner", name="Blade Runner",
+        blurb="amber and teal, a rain-soaked night city",
         bg="#07090f", surface="#141b27", border="#2b3a4a", focus="#ff9d2e",
         text="#dfe6ee", muted="#7d8fa3", accent="#2fe0d0",
         critical="#ff4d3d", zeroday="#ffd23f", ransomware="#ff7aa8",
@@ -99,6 +102,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Electric cyan grid on pure black with one orange accent
     Palette(
         key="tron", name="Tron",
+        blurb="electric cyan grid, one orange accent",
         bg="#02060a", surface="#0a1b29", border="#124560", focus="#00f0ff",
         text="#d4f1ff", muted="#5e9ab8", accent="#ff8a00",
         critical="#ff4a4a", zeroday="#ffe14d", ransomware="#ff6ad5",
@@ -109,6 +113,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Cold teal and mint with magenta flashes on near-black green
     Palette(
         key="ghost_shell", name="Ghost Shell",
+        blurb="teal and mint with magenta flashes",
         bg="#040c0e", surface="#0b2025", border="#1c4e54", focus="#3dffd0",
         text="#d2f6ef", muted="#5f9d97", accent="#ff4f9a",
         critical="#ff4f6e", zeroday="#f6ff6a", ransomware="#ff4f9a",
@@ -119,6 +124,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Soft pink, lavender and mint on deep purple
     Palette(
         key="vaporwave", name="Vaporwave",
+        blurb="pastel pink, lavender and mint on purple",
         bg="#0f0819", surface="#221540", border="#4a2f7a", focus="#ff71ce",
         text="#f2e9ff", muted="#a98fd8", accent="#01cdfe",
         critical="#ff4f7b", zeroday="#fffb96", ransomware="#ff71ce",
@@ -129,6 +135,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Cool whites and blues on dark slate: calm for a screen that stays on
     Palette(
         key="arctic", name="Arctic",
+        blurb="ice blues on slate, calm all day",
         bg="#080e15", surface="#142130", border="#2b425a", focus="#8fd3ff",
         text="#e8f4ff", muted="#7f9bb3", accent="#5cc8ff",
         critical="#ff5c6e", zeroday="#ffe27a", ransomware="#ff8fc8",
@@ -139,6 +146,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # A war-room glow: deep reds and oranges on black
     Palette(
         key="ember", name="Ember",
+        blurb="war-room reds and oranges",
         bg="#0b0605", surface="#241210", border="#4d241a", focus="#ff5a2e",
         text="#f4ded4", muted="#a47e70", accent="#ffb347",
         critical="#ff3350", zeroday="#ffe066", ransomware="#ff7aa2",
@@ -149,6 +157,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Green on black, but severity keeps its own colours (Cold War mode is the fully mono one)
     Palette(
         key="matrix", name="Matrix",
+        blurb="green on black, severity keeps its colour",
         bg="#010803", surface="#06260f", border="#0f5124", focus="#00ff55",
         text="#b8ffcb", muted="#3f9e5d", accent="#7dffa0",
         critical="#ff3b3b", zeroday="#eaff4a", ransomware="#ff5ad1",
@@ -159,6 +168,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Black, white and grey: only severity gets colour, so anything coloured is news
     Palette(
         key="newsroom", name="Newsroom",
+        blurb="black and white, only severity in colour",
         bg="#0a0a0a", surface="#1c1c1c", border="#383838", focus="#f2f2f2",
         text="#e6e6e6", muted="#8c8c8c", accent="#ffffff",
         critical="#ff3b30", zeroday="#ffd60a", ransomware="#ff6fae",
@@ -169,6 +179,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # 1980s neon, toned down: deep navy with soft magenta and cyan
     Palette(
         key="synthwave", name="Synthwave",
+        blurb="toned-down 80s neon on deep navy",
         bg="#16152b", surface="#2c2852", border="#4a4380", focus="#ff7edb",
         text="#e6e1ff", muted="#8f89c0", accent="#72f1e8",
         critical="#fe4f5e", zeroday="#fede5d", ransomware="#ff7edb",
@@ -178,6 +189,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Warm charcoal and cream with an amber accent (Gruvbox-inspired)
     Palette(
         key="retro_warm", name="Retro Warm",
+        blurb="warm charcoal and amber, Gruvbox-style",
         bg="#1d1b19", surface="#3a3530", border="#5a524a", focus="#d8a657",
         text="#ddc7a1", muted="#928374", accent="#d8a657",
         critical="#ea6962", zeroday="#e78a4e", ransomware="#d3869b",
@@ -187,6 +199,7 @@ PALETTES: Dict[str, Palette] = {p.key: p for p in [
     # Amber phosphor monochrome; red is kept only for critical
     Palette(
         key="amber_crt", name="Amber CRT",
+        blurb="period simulation: amber phosphor, one hue",
         bg="#120c04", surface="#33220a", border="#6b4714", focus="#ffb000",
         text="#ffb000", muted="#a8700f", accent="#ffd27a",
         critical="#ff5a36", zeroday="#ffd27a", ransomware="#ffc040",
@@ -207,6 +220,7 @@ COLD_WAR = Palette(
     good="#29d94a", warn="#5cff6e", bad="#5cff6e",
     monochrome=True,
     pure=True,
+    blurb="Cold War mode: green phosphor (on c)",
     titles={
         "GLOBAL THREAT FEED": "SIGINT INTERCEPTS",
         "WAR ROOM DASHBOARD": "SITUATION ROOM",

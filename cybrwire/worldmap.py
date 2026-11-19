@@ -243,7 +243,7 @@ def cell_of(spot: Spot, cols: int, rows: int) -> Optional[Tuple[int, int]]:
 
 
 def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Optional[datetime] = None,
-           arcs: Optional[List[Arc]] = None) -> Text:
+           arcs: Optional[List[Arc]] = None) -> Text:  # `arcs` (source -> target pairs) make the linked countries breathe in turn
     """The map as styled text. `step` counts pulse steps; each spot is out of step with the others."""
     if (cols, rows) not in _grid_cache:
         _grid_cache.clear()
@@ -263,6 +263,18 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
             keep *= NIGHT_KEEP + (1 - NIGHT_KEEP) * daylight(lat, lon, sun)
             row.append((chr(0x2800 + v) if v else " ", _blend(palette.accent, palette.bg, keep)))
         cells.append(row)
+    # Linked countries breathe in turn: the source of an attributed story glows, then the countries it names do,
+    # so the direction reads without drawing anything over the map
+    targets: Dict[str, int] = {}
+    for arc in arcs or []:
+        if arc.target in COUNTRIES:
+            targets[arc.target] = targets.get(arc.target, 0) + arc.count
+    linked_sources = {arc.source for arc in arcs or []}
+    link_phase = (step // 2) % 2
+    have_source = {spot.label for spot in spots if spot.kind == "actor"}
+    spots = list(spots) + [Spot(*COUNTRIES[code], "target", code, n) for code, n in targets.items()]
+    spots += [Spot(*COUNTRIES[arc.source], "actor", arc.source, arc.count) for arc in arcs or []
+              if arc.source in COUNTRIES and arc.source not in have_source and not have_source.add(arc.source)]
     placed: Dict[Tuple[int, int], Spot] = {}
     nudges = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (-1, -1), (1, -1), (-1, 1))
     for spot in sorted(spots, key=lambda s: (PRIORITY.get(s.kind, 9), -s.count)):  # Outages first, then busiest
@@ -274,35 +286,19 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
             if 0 <= r < rows and 0 <= c < cols and (r, c) not in placed:
                 placed[(r, c)] = spot
                 break
-    # Arcs: a smooth bow from the attributed country to each country named with it, drawn in braille dots over open
-    # water only (it passes behind the land), with a bright stretch travelling along it
-    arc_cells = set()
-    arc_style = {}  # cell -> (extra dot bits, brightness)
-    for n, arc in enumerate(arcs or []):
-        dots = arc_dots(COUNTRIES[arc.source], COUNTRIES[arc.target], cols, rows)
-        if len(dots) < 3:
-            continue
-        head = (step * 2 + n * 9) % (len(dots) + 12)  # A short rest at the end before it starts again
-        for i, (x, y) in enumerate(dots):
-            cell = (y // 4, x // 2)
-            if cell in placed or grid[cell[0]][cell[1]][0]:
-                continue  # Over land the arc passes behind the continent, so the map itself is never touched
-            bit = DOT_BITS[(x % 2, y % 4)]
-            behind = head - i
-            keep = 1.0 if 0 <= behind <= 3 else 0.82 if 3 < behind <= 7 else 0.6
-            bits, best = arc_style.get(cell, (0, 0.0))
-            arc_style[cell] = (bits | bit, max(best, keep))
-    for (r, c), (bits, keep) in arc_style.items():
-        cells[r][c] = (chr(0x2800 + bits), _blend(palette.apt, palette.bg, keep))
-        arc_cells.add((r, c))
     roles = {name: role for name, _glyph, _label, role in LAYERS}
+    roles["target"] = "apt"
     for (r, c), spot in placed.items():
         color = getattr(palette, roles[spot.kind])
         phase = (step + r * 3 + c) % len(PULSE)
         if spot.kind == "victim":
             glyph, keep = PULSE[phase], PULSE_SHADE[phase]
+        elif spot.kind == "actor" and spot.label in linked_sources:
+            glyph, keep = ("▲", 1.0) if link_phase == 0 else ("△", 0.55)
         elif spot.kind == "actor":
             glyph, keep = ("▲" if phase < 2 else "△"), 1.0
+        elif spot.kind == "target":
+            glyph, keep = ("◉", 1.0) if link_phase == 1 else ("○", 0.55)
         else:
             glyph, keep = ("◆" if spot.kind == "outage" else "■"), 1.0
         cells[r][c] = (glyph, _blend(color, palette.bg, keep))
@@ -310,8 +306,8 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
     if sun_cell and sun_cell not in placed:
         cells[sun_cell[0]][sun_cell[1]] = ("☼", palette.zeroday)  # Where it is noon
     # Labels for the busiest few: to the right of the marker, else the left, else a row above or below
-    taken = set(placed) | arc_cells | ({sun_cell} if sun_cell else set())
-    labelled = [kv for kv in placed.items() if kv[1].kind != "advisory"]
+    taken = set(placed) | ({sun_cell} if sun_cell else set())
+    labelled = [kv for kv in placed.items() if kv[1].kind not in ("advisory", "target")]
     for (r, c), spot in sorted(labelled, key=lambda kv: -kv[1].count)[:10 if cols >= MIN_LABEL_COLS else 0]:
         text = spot.label.split(",")[0][:12] + (f" {spot.count}" if spot.kind in ("victim", "actor") and spot.count > 1 else "")
         for row, start in ((r, c + 2), (r, c - 1 - len(text)), (r - 1, c + 2), (r + 1, c + 2)):
@@ -396,31 +392,6 @@ def gather_arcs(alerts: List[dict], now, days: int = 7, limit: int = 8) -> List[
     return [Arc(a, b, n) for (a, b), n in pairs.most_common(limit)]
 
 
-def arc_dots(source: Tuple[float, float], target: Tuple[float, float], cols: int, rows: int) -> List[Tuple[int, int]]:
-    """Braille dots (x, y) along a smooth bow from one (latitude, longitude) to another, in order. Dots are
-    finer than cells (2 across, 4 down), so the curve is smooth, and it bows toward the top of the map."""
-    wide, high = cols * 2, rows * 4
-
-    def to_dot(lat_lon):
-        lat, lon = lat_lon
-        return (lon + 180) / 360 * wide, (LAT_TOP - lat) / (LAT_TOP - LAT_BOTTOM) * high
-
-    (x0, y0), (x1, y1) = to_dot(source), to_dot(target)
-    length = math.hypot(x1 - x0, y1 - y0)
-    lift = min(high * 0.5, length * 0.32)
-    cx, cy = (x0 + x1) / 2, min(y0, y1) - lift  # The control point sits above both ends
-    dots: List[Tuple[int, int]] = []
-    steps = max(8, int(length * 1.5))
-    for i in range(steps + 1):
-        t = i / steps
-        x = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t ** 2 * x1
-        y = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t ** 2 * y1
-        dot = (int(x), int(y))
-        if 0 <= dot[0] < wide and 0 <= dot[1] < high and (not dots or dots[-1] != dot):
-            dots.append(dot)
-    return dots
-
-
 def _top(spots: List[Spot], n: int) -> str:
     from .panel_dashboard import COUNTRY_NAMES
     names = {"CN": "China", "RU": "Russia", "KP": "North Korea", "IR": "Iran", "BE": "EU (CERT-EU)", "GR": "EU (ENISA)"}
@@ -450,13 +421,13 @@ def legend(spots: List[Spot], palette, top: int = 3, width: int = 80, arcs: Opti
         from .panel_dashboard import COUNTRY_NAMES
         names = {"CN": "China", "RU": "Russia", "KP": "North Korea", "IR": "Iran"}
         line = Text()
-        line.append("↝ ", style=palette.apt)
+        line.append("○ ", style=palette.apt)
         line.append(f"Attributed targets  {sum(a.count for a in arcs)}", style=palette.text)
         shown = " · ".join(f"{names.get(a.source, a.source)} → {COUNTRY_NAMES.get(a.target, a.target)}" for a in arcs[:max(1, top - 1)])
         line.append("   " + shown, style=palette.muted)
         if line.cell_len > width:
             line.truncate(width - 1, overflow="ellipsis")
         lines.append(line)
-    note = "Outages sit at the service's home" if width < 70 else "Outage markers sit at the service's home; advisories at the country that issues them; ☼ is the sun"
+    note = "Outages sit at the service's home" if width < 70 else "Outages sit at the service's home; advisories at the country that issues them; ☼ is the sun"
     lines.append(Text(note[:width], style=palette.muted))
     return lines

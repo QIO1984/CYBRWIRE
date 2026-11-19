@@ -224,7 +224,7 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
             app.start_typing([alert(f"urgent {i}", "critical", evidence=Evidence(CONFIRMED, 1, [], recent=True)) for i in range(10)])
             self.assertEqual(len(app.typing), 3)  # At most three at a time
 
-    async def test_the_header_corner_shows_a_heartbeat_that_stops_in_the_period_simulations(self):
+    async def test_the_title_bar_carries_a_heartbeat_out_both_sides_and_stays_plain_in_the_period_simulations(self):
         from cybrwire.chrome import StyledHeader
         app = self.make_app()
         async with app.run_test(size=(140, 40)) as pilot:
@@ -232,24 +232,61 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
             app.set_theme_by_key("neon")
             header = app.query_one(StyledHeader)
             app.heartbeat_tick()
-            first = header.icon
-            self.assertTrue(first.startswith("[") and any("\u2800" < ch <= "\u28ff" for ch in first))
-            for _ in range(6):
+            line = header.line().plain
+            title = app.title.strip()
+            self.assertEqual(len(line), 140)                                   # Exactly as wide as the window
+            left, _, rest = line.partition("  " + title + "  ")
+            right = rest[:len(left)]
+            self.assertTrue(left and all("\u2800" <= ch <= "\u28ff" for ch in left))
+            self.assertTrue(all("\u2800" <= ch <= "\u28ff" for ch in right))
+            self.assertEqual(len(left), len(right))                              # Symmetrical about the title
+            self.assertRegex(line[-10:], r"^ \d\d:\d\d:\d\d $")                  # The clock is at the right end
+            for _ in range(4):
                 app.heartbeat_tick()
-            self.assertNotEqual(header.icon, first)  # The trace scrolls
+            self.assertNotEqual(header.line().plain, line)                       # It moves
             app.effects_on = False
             app.heartbeat_tick()
-            self.assertEqual(header.icon, "◆")
+            plain = header.line().plain
+            self.assertFalse(any("\u2800" <= ch <= "\u28ff" for ch in plain))
+            self.assertIn(title, plain)
             app.effects_on = True
             for key in ("amber_crt",):
                 app.set_theme_by_key(key)
                 app.heartbeat_tick()
-                self.assertEqual(header.icon, "◆", key)
+                self.assertFalse(any("\u2800" <= ch <= "\u28ff" for ch in header.line().plain), key)
             app.set_theme_by_key("neon")
             await pilot.press("c")
             await self.settle(pilot)
             app.heartbeat_tick()
-            self.assertEqual(header.icon, "◆")  # Cold War mode keeps its plain header
+            self.assertFalse(any("\u2800" <= ch <= "\u28ff" for ch in header.line().plain))  # Cold War keeps its banner plain
+
+    def test_the_two_sides_are_mirror_images_and_the_beats_travel_outward(self):
+        from cybrwire import effects
+        def mirror(char):  # Swap the left and right dot columns of a braille cell
+            bits = ord(char) - 0x2800
+            out = 0
+            for a, b in ((0x01, 0x08), (0x02, 0x10), (0x04, 0x20), (0x40, 0x80)):
+                out |= (b if bits & a else 0) | (a if bits & b else 0)
+            return chr(0x2800 + out)
+        right = effects.ecg_side(7, 30, 20, "right")
+        left = effects.ecg_side(7, 30, 20, "left")
+        self.assertEqual([mirror(c) for c, _k in reversed(left)], [c for c, _k in right])
+        later = effects.ecg_side(9, 30, 20, "right")  # Two dots on is one cell outward
+        self.assertEqual([c for c, _k in later][1:], [c for c, _k in right][:-1])
+
+    def test_the_trace_is_one_thin_unbroken_line_that_fades_toward_the_edge(self):
+        from cybrwire import effects
+        cells = effects.ecg_side(0, 30, 24, "right")
+        self.assertEqual(len(cells), 24)
+        self.assertTrue(all("\u2800" <= c <= "\u28ff" for c, _k in cells))
+        for c, _k in cells:
+            self.assertLess(bin(ord(c) - 0x2800).count("1"), 7)  # No filled blocks: a line, not bars
+        for x in range(48):  # Every dot column has a dot: unbroken from the title to the edge
+            bits = ord(cells[x // 2][0]) - 0x2800
+            self.assertTrue(bits & (0x47 if x % 2 == 0 else 0xB8), f"gap at dot column {x}")
+        brightness = [k for _c, k in cells]
+        self.assertEqual(brightness, sorted(brightness, reverse=True))
+        self.assertGreater(brightness[0], brightness[-1] + 0.4)
 
     def test_busier_feeds_have_closer_heartbeats(self):
         from cybrwire import effects
@@ -257,22 +294,8 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(periods, sorted(periods, reverse=True))
         self.assertGreater(periods[0], periods[-1])
         def spikes(period):  # Cells with a dot in the top row: one per spike
-            frame = effects.ecg_frame(0, period, 80)
-            return sum(1 for ch in frame if ord(ch) & 0x09)
+            return sum(1 for c, _k in effects.ecg_side(0, period, 80, "right") if ord(c) & 0x09)
         self.assertGreater(spikes(effects.beat_period(100)), spikes(effects.beat_period(0)))
-
-    def test_the_trace_is_one_thin_line_not_bars(self):
-        from cybrwire import effects
-        frame = effects.ecg_frame(0, 30)
-        self.assertEqual(len(frame), effects.ECG_WIDTH)
-        self.assertTrue(all("\u2800" <= ch <= "\u28ff" for ch in frame))
-        for cell in frame:  # Never more than a column of dots joined to its neighbour: no filled blocks
-            self.assertLess(bin(ord(cell) & 0xFF).count("1"), 7)
-        # Every column has a dot, so the line is unbroken from end to end
-        for x in range(effects.ECG_WIDTH * 2):
-            cell = ord(frame[x // 2]) & 0xFF
-            column = 0x47 if x % 2 == 0 else 0xB8
-            self.assertTrue(cell & column, f"gap at dot column {x}")
 
     def test_the_trace_has_the_shape_of_a_heartbeat(self):
         from cybrwire import effects
@@ -282,12 +305,6 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(beat[beat.index(0) + 1], effects.ECG_BASE)          # ...and another (S) just after
         self.assertLess(min(beat[:3]), effects.ECG_BASE)                       # A small P bump first
         self.assertLess(min(beat[-3:]), effects.ECG_BASE)                      # A T bump after
-
-    def test_the_trace_scrolls_by_dots_and_repeats(self):
-        from cybrwire import effects
-        a, b = effects.ecg_frame(0, 30), effects.ecg_frame(2, 30)
-        self.assertEqual(a[1:], b[:-1])                                        # Two dots is one cell along
-        self.assertEqual(effects.ecg_frame(0, 30), effects.ecg_frame(30, 30))
 
 
 def plain_text(text):

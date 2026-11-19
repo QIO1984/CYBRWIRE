@@ -9,9 +9,8 @@ from textual.widgets import Static
 from .theme import PALETTES
 from .widgets import Card, CardButton, RowTable
 
-HINTS = "↑↓ preview live · Enter or Esc keep · c Cold War stays on its own key"
+HINTS = "↑↓ preview live · Enter or Esc keep · c is Cold War"
 STRIP_ROLES = ("bg", "surface", "focus", "accent", "critical", "zeroday", "ransomware", "apt", "good")
-NOTES = {"neon": "default", "retro_warm": "warm, Gruvbox-style", "amber_crt": "period simulation, one amber hue"}
 
 
 class ThemeTable(RowTable):
@@ -25,7 +24,7 @@ class ThemeCard(Card):
     DEFAULT_CSS = """
     ThemeCard { align: center middle; }
     #theme-card-body {
-        width: 72; max-width: 100%; height: auto; max-height: 90%;
+        width: 94; max-width: 100%; height: auto; max-height: 90%;
         padding: 1 2; border: round $primary; background: $background;
     }
     #theme-title { height: 1; margin-bottom: 1; text-style: bold; color: $accent; }
@@ -50,14 +49,14 @@ class ThemeCard(Card):
         table = self.query_one("#theme-table", ThemeTable)
         table.add_column("", key="name", width=16)
         table.add_column("", key="strip", width=2 * len(STRIP_ROLES))
-        table.add_column("", key="note", width=30)
+        table.add_column("", key="note", width=46)
         self.keys = list(PALETTES)
         for key in self.keys:
             p = PALETTES[key]
             strip = Text()
             for role in STRIP_ROLES:
                 strip.append("██", style=getattr(p, role))
-            table.add_row(Text(p.name, style="bold"), strip, Text(NOTES.get(key, ""), style="dim"), key=key)
+            table.add_row(Text(p.name, style="bold"), strip, Text(p.blurb, style="dim"), key=key)
         self.current = self.app.theme_mode if self.app.theme_mode in self.keys and not self.app.cold_war_mode else None
         if self.current:
             table.move_cursor(row=self.keys.index(self.current), animate=False)

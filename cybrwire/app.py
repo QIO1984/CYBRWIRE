@@ -172,10 +172,6 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         border-subtitle-align: center;
     }
     
-    StyledHeader HeaderIcon {
-        width: 16;
-    }
-
     #flash-banner {
         height: 1;
         display: none;
@@ -554,6 +550,7 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
             header.styles.background = p.focus if p.banner else None
             header.styles.color = p.bg if p.banner else None
             header.styles.text_style = "bold" if p.banner else None
+            header.redraw()
         except Exception:
             pass  # Not mounted yet; on_mount applies the theme again
         self.mark_dirty()

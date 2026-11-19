@@ -26,7 +26,6 @@ MAX_TYPED = 3              # At most this many at once: a flood of arrivals is n
 KIOSK_SECONDS = 30         # Time on each view
 KIOSK_PAUSE_SECONDS = 120  # After you touch the app, kiosk mode waits this long before moving on again
 KIOSK_VIEWS = ("map", "alerts", "incidents")
-ECG_WIDTH = 12              # Cells of trace in the header corner
 ECG_BASE = 2                # The flat line sits here: dot rows 0 (top) to 3 (bottom) in a braille cell
 ECG_BEAT = [2, 2, 1, 2, 3, 0, 3, 2, 2, 1, 1, 2]  # P wave, then the Q-R-S spike, then the T wave
 THREATS = ("critical", "zeroday", "ransomware", "apt", "exploit")
@@ -37,17 +36,21 @@ def beat_period(rate: float) -> int:
     return 40 if rate < 5 else 30 if rate < 15 else 22 if rate < 30 else 16
 
 
-def ecg_frame(offset: int, period: int, width: int = ECG_WIDTH) -> str:
-    """`width` braille cells of a repeating heartbeat drawn as one thin line, scrolled along by `offset` dots"""
+def ecg_side(offset: int, period: int, cells: int, side: str) -> list:
+    """One side of the title bar: `cells` braille cells of a heartbeat drawn as one thin line, each as
+    (character, brightness). The beats travel outward from the title, so `side` "right" and "left" are mirror
+    images of each other, and the trace fades toward the edge of the window. Cells come back left to right."""
     wave = ECG_BEAT + [ECG_BASE] * max(1, period - len(ECG_BEAT))
-    bits = [0] * width
-    previous = wave[(offset - 1) % len(wave)]  # So the first column joins up with the one before it
-    for x in range(width * 2):
-        y = wave[(offset + x) % len(wave)]
+    bits = [0] * cells
+    previous = wave[(-1 - offset) % len(wave)]  # So the cell next to the title joins up with the line before it
+    for k in range(cells * 2):  # k counts dots outward from the title
+        y = wave[(k - offset) % len(wave)]
+        dx = k % 2 if side == "right" else 1 - k % 2
         for dot in range(min(y, previous), max(y, previous) + 1):
-            bits[x // 2] |= DOT_BITS[(x % 2, dot)]  # Joined to the last column, so the spikes are strokes, not bars
+            bits[k // 2] |= DOT_BITS[(dx, dot)]  # Joined to the dot before it, so the spikes are strokes, not bars
         previous = y
-    return "".join(chr(0x2800 + b) for b in bits)
+    cells_out = [(chr(0x2800 + bits[i]), 1.0 - 0.62 * i / max(1, cells - 1)) for i in range(cells)]
+    return cells_out[::-1] if side == "left" else cells_out
 
 
 class EffectsMixin:
@@ -55,27 +58,25 @@ class EffectsMixin:
     _ecg_rate = None
 
     def heartbeat_tick(self) -> None:
-        """The header corner shows a heartbeat trace whose rhythm follows how much is arriving. It is a plain
-        diamond with effects off and in the period simulations."""
+        """A heartbeat trace runs out from both sides of the title, its rhythm following how much is arriving.
+        With effects off, and in the period simulations, the title bar is plain."""
         from .chrome import StyledHeader
         if len(self.screen_stack) > 1 or self.is_loading:
             return
         try:
             header = self.query_one(StyledHeader)
-        except Exception:
+        except NoMatches:
             return
         if not self.effects_on or self.palette.pure or self.palette.monochrome:
-            if header.icon != "◆":
-                header.icon = "◆"
+            header.set_trace(None)
             return
         now = time.monotonic()
         if self._ecg_rate is None or now - self._ecg_rate[0] > 30:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
             recent = sum(1 for a in self.all_alerts if a["ts"] >= cutoff and not a.get("undated") and a.get("kind") != "indicators")
             self._ecg_rate = (now, recent)
-        self._ecg_offset += 3  # Dots, so a beat sweeps across about ten dots a second
-        trace = ecg_frame(self._ecg_offset, beat_period(self._ecg_rate[1]))
-        header.icon = f"[{self.palette.accent}]{trace}[/]"
+        self._ecg_offset += 3  # Dots, so the beats travel outward about fifteen dots a second
+        header.set_trace((self._ecg_offset, beat_period(self._ecg_rate[1])))
 
     async def on_event(self, event) -> None:
         if isinstance(event, (events.Key, events.MouseDown, events.MouseMove, events.MouseScrollDown, events.MouseScrollUp)):

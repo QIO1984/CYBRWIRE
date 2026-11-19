@@ -4,22 +4,73 @@ import asyncio
 from datetime import datetime, timezone
 
 from rich.text import Text
-from textual.widgets import Header, Static
+from textual.widgets import Static
 
 from . import clocks
+from .effects import ecg_side
+from .worldmap import _blend
 
 # What '4' cycles through. "All" leaves indicators out; they have their own view.
 CONTENT_KINDS = [("all", "All"), ("advisory", "Advisories"), ("news", "News & Research"),
                  ("ransomware", "Ransomware"), ("indicators", "Indicators"), ("outage", "Outages")]
 
 
-class StyledHeader(Header):
-    """Custom header that supports cold war mode styling"""
-    def render(self) -> str:
+class StyledHeader(Static):
+    """The title bar: the title in the middle, the clock at the right and, when effects are on, a heartbeat trace
+    running out from both sides of the title. It replaces Textual's own header so the trace can use the whole bar."""
+
+    DEFAULT_CSS = """
+    StyledHeader {
+        dock: top;
+        width: 100%;
+        background: $panel;
+        color: $foreground;
+        height: 1;
+    }
+    """
+
+    def __init__(self, show_clock: bool = True, icon=None, **kwargs):
+        super().__init__(**kwargs)
+        self.show_clock = show_clock
+        self.trace = None  # (offset, period) while the heartbeat runs
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self.redraw)  # The clock
+        self.redraw()
+
+    def on_resize(self, event) -> None:
+        self.redraw()
+
+    def set_trace(self, trace) -> None:
+        if trace != self.trace:
+            self.trace = trace
+            self.redraw()
+
+    def redraw(self) -> None:
+        self.update(self.line())
+
+    def line(self) -> Text:
+        """The whole bar as one line of text, exactly as wide as the window"""
         app = self.app
-        header_str = super().render()
-        # If app has cold_war_mode, we'll style it via the watcher instead
-        return header_str
+        p = app.palette
+        width = self.size.width or 80
+        title = (app.title or "").strip()
+        clock = f" {datetime.now():%X} " if self.show_clock else ""
+        usable = width - len(clock)
+        side = (usable - len(title) - 4) // 2
+        text = Text(no_wrap=True, overflow="crop")
+        if self.trace and side >= 4:
+            offset, period = self.trace
+            for char, keep in ecg_side(offset, period, side, "left"):
+                text.append(char, style=_blend(p.accent, p.bg, keep))
+            text.append("  " + title + "  ")
+            for char, keep in ecg_side(offset, period, side, "right"):
+                text.append(char, style=_blend(p.accent, p.bg, keep))
+        else:
+            text.append(" " * max(0, (usable - len(title)) // 2) + title)
+        text.append(" " * max(0, usable - text.cell_len))
+        text.append(clock)
+        return text
 
 
 class WorldClock(Static):

@@ -73,6 +73,35 @@ class Readability(unittest.TestCase):
             self.assertNotEqual(p.critical, p.zeroday, key)
 
 
+class Blurbs(unittest.TestCase):
+    def test_every_theme_has_a_short_description_for_the_picker(self):
+        for key, palette in PALETTES.items():
+            self.assertTrue(palette.blurb, f"{key} has no description")
+            self.assertLessEqual(len(palette.blurb), 46, key)  # The picker's description column is 46 wide
+        self.assertEqual(len({p.blurb for p in PALETTES.values()}), len(PALETTES))
+
+    def test_the_picker_shows_a_description_on_every_row_and_never_scrolls_sideways(self):
+        import asyncio
+        from textual.app import App
+        from cybrwire.theme_card import ThemeCard
+
+        class Host(App):
+            def on_mount(self):
+                self.theme_mode, self.cold_war_mode = "neon", False
+                self.push_screen(ThemeCard())
+
+        async def run():
+            app = Host()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.pause()
+                table = app.screen.query_one("#theme-table")
+                rows = [[cell.plain for cell in table.get_row_at(i)] for i in range(table.row_count)]
+                self.assertEqual([r[2] for r in rows], [p.blurb for p in PALETTES.values()])
+                self.assertFalse(table.show_horizontal_scrollbar)  # The columns fit inside the card
+        asyncio.run(run())
+
+
 class Boot(unittest.TestCase):
     def test_every_new_theme_but_neon_has_its_own_boot_lines(self):
         for key in NEW[1:]:

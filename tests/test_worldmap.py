@@ -253,7 +253,7 @@ class DayAndNight(unittest.TestCase):
         worldmap.render(100, 20, [], 0, COLD_WAR, when=self.NOON_UTC)
 
 
-class Arcs(unittest.TestCase):
+class Links(unittest.TestCase):
     def apt(self, title, hours=1):
         return alert(title, hours=hours, severity="apt")
 
@@ -282,43 +282,40 @@ class Arcs(unittest.TestCase):
                                                                  "Poland", "Sweden", "Norway", "Brazil", "Mexico")]
         self.assertEqual(len(worldmap.gather_arcs(many, NOW)), 8)
 
-    def test_arcs_only_use_open_water_and_leave_every_land_cell_exactly_as_it_was(self):
-        arc = [worldmap.Arc("CN", "US", 2)]
+    def cells_of(self, text, codes, cols=100, rows=20):
+        """The glyph at each country's cell"""
+        lines = text.plain.split("\n")
+        out = {}
+        for code in codes:
+            r, c = worldmap.cell_of(Spot(*worldmap.COUNTRIES[code], "victim", code), cols, rows)
+            out[code] = lines[r][c]
+        return out
+
+    def test_a_linked_pair_breathes_in_turn_source_first_then_target(self):
+        arc = [worldmap.Arc("CN", "TW", 2)]
+        glyphs = [self.cells_of(worldmap.render(100, 20, [], step, NEON, when=NOW, arcs=arc), ("CN", "TW")) for step in (0, 2, 4, 6)]
+        self.assertEqual([(g["CN"], g["TW"]) for g in glyphs], [("▲", "○"), ("△", "◉"), ("▲", "○"), ("△", "◉")])
+
+    def test_nothing_is_drawn_over_the_map_only_the_markers_change(self):
+        arc = [worldmap.Arc("CN", "US", 2), worldmap.Arc("RU", "DE", 1)]
         plain = worldmap.render(100, 20, [], 0, NEON, when=NOW)
-        for step in range(0, 60, 7):
+        marked = {worldmap.cell_of(Spot(*worldmap.COUNTRIES[c], "victim", c), 100, 20) for c in ("CN", "US", "RU", "DE")}
+        for step in range(0, 20, 3):
             drawn = worldmap.render(100, 20, [], step, NEON, when=NOW, arcs=arc)
-            self.assertNotEqual(drawn.plain, plain.plain)  # Something is drawn over the Pacific
-            for before, after in zip(plain.plain, drawn.plain):
-                if before != " " and before != "\u2800":
-                    self.assertEqual(before, after, "an arc changed a land cell")
+            before, after = plain.plain.split("\n"), drawn.plain.split("\n")
+            changed = {(r, c) for r in range(20) for c in range(100) if before[r][c] != after[r][c]}
+            nudged = {(r + dr, c + dc) for r, c in marked for dr in (-1, 0, 1) for dc in range(-12, 13)}  # The marker, a nudge, or its label
+            self.assertTrue(changed <= nudged, "something other than a marker changed")  # Land and water are left alone
 
-    def test_an_arc_is_a_smooth_connected_bow_between_its_two_countries(self):
-        dots = worldmap.arc_dots(worldmap.COUNTRIES["CN"], worldmap.COUNTRIES["US"], 100, 20)
-        self.assertGreater(len(dots), 40)
-        for (x0, y0), (x1, y1) in zip(dots, dots[1:]):
-            self.assertLessEqual(max(abs(x1 - x0), abs(y1 - y0)), 2)   # No gaps: one smooth line
-        start = worldmap.arc_dots(worldmap.COUNTRIES["CN"], worldmap.COUNTRIES["CN"], 100, 20)
-        self.assertLess(len(start), 8)
-
-    def test_an_arc_bows_above_both_of_its_ends(self):
-        for source, target in (("CN", "US"), ("RU", "DE"), ("RU", "US"), ("CN", "GB")):
-            dots = worldmap.arc_dots(worldmap.COUNTRIES[source], worldmap.COUNTRIES[target], 100, 20)
-            self.assertLess(min(y for _x, y in dots), min(dots[0][1], dots[-1][1]), f"{source}->{target}")
-
-    def test_a_bright_stretch_travels_along_the_arc(self):
-        arc = [worldmap.Arc("CN", "US", 1)]
-        def bright_cells(step):
-            text = worldmap.render(100, 20, [], step, NEON, when=NOW, arcs=arc)
-            full = _blend_hex(NEON.apt, NEON.bg, 1.0)
-            offsets = {span.start for span in text.spans if str(span.style) == full}
-            return frozenset(offsets)
-        seen = {bright_cells(step) for step in range(0, 150, 3)}
-        self.assertGreater(len(seen), 8)  # The bright part is in a different place each time
-
-    def test_arcs_do_not_cover_markers(self):
+    def test_a_country_that_is_both_a_target_and_has_data_keeps_its_data_marker(self):
         us = Spot(*worldmap.COUNTRIES["US"], "victim", "US", 9)
-        text = worldmap.render(100, 20, [us], 0, NEON, arcs=[worldmap.Arc("CN", "US", 1)]).plain
+        text = worldmap.render(100, 20, [us], 0, NEON, when=NOW, arcs=[worldmap.Arc("CN", "US", 1)]).plain
         self.assertTrue(any(glyph in text for glyph in worldmap.PULSE))
+        self.assertTrue("○" in text or "◉" in text)  # ...and the target ring sits beside it
+
+    def test_targets_are_not_labelled(self):
+        text = worldmap.render(100, 20, [], 0, NEON, when=NOW, arcs=[worldmap.Arc("CN", "TW", 2)]).plain
+        self.assertNotIn("TW", text)
 
     def test_the_legend_names_the_busiest_pairs_and_stays_the_same_without_arcs(self):
         arcs = [worldmap.Arc("CN", "TW", 3), worldmap.Arc("RU", "UA", 2)]
