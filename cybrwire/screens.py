@@ -295,8 +295,13 @@ class HelpScreen(Screen):
 
 
 class LoadingScreen(Screen):
-    """Loading screen with animated ASCII art"""
-    
+    """Loading screen with animated ASCII art, centred across the window"""
+
+    DEFAULT_CSS = """
+    LoadingScreen { align-horizontal: center; }
+    LoadingScreen #loading-content { width: auto; }
+    """
+
     def __init__(self, palette, current_feed=lambda: None, configured_apis=()):
         super().__init__()
         self.palette = palette
