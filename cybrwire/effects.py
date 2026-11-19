@@ -10,6 +10,7 @@ from textual.css.query import NoMatches
 from textual.coordinate import Coordinate
 
 from .state import alert_key
+from .worldmap import DOT_BITS
 
 from .worldmap import _blend
 
@@ -26,19 +27,27 @@ KIOSK_SECONDS = 30         # Time on each view
 KIOSK_PAUSE_SECONDS = 120  # After you touch the app, kiosk mode waits this long before moving on again
 KIOSK_VIEWS = ("map", "alerts", "incidents")
 ECG_WIDTH = 12              # Cells of trace in the header corner
-ECG_BEAT = "▂▆█▃"           # One heartbeat; the rest of each period is flat line
+ECG_BASE = 2                # The flat line sits here: dot rows 0 (top) to 3 (bottom) in a braille cell
+ECG_BEAT = [2, 2, 1, 2, 3, 0, 3, 2, 2, 1, 1, 2]  # P wave, then the Q-R-S spike, then the T wave
 THREATS = ("critical", "zeroday", "ransomware", "apt", "exploit")
 
 
 def beat_period(rate: float) -> int:
-    """Cells between heartbeats: the more has arrived in the last hour, the closer together they come"""
-    return 14 if rate < 5 else 10 if rate < 15 else 7 if rate < 30 else 5
+    """Dots between heartbeats: the more has arrived in the last hour, the closer together they come"""
+    return 40 if rate < 5 else 30 if rate < 15 else 22 if rate < 30 else 16
 
 
 def ecg_frame(offset: int, period: int, width: int = ECG_WIDTH) -> str:
-    """`width` cells of a repeating heartbeat trace, scrolled along by `offset`"""
-    wave = ECG_BEAT + "▁" * max(1, period - len(ECG_BEAT))
-    return (wave * (width // len(wave) + 3))[offset % len(wave):][:width]
+    """`width` braille cells of a repeating heartbeat drawn as one thin line, scrolled along by `offset` dots"""
+    wave = ECG_BEAT + [ECG_BASE] * max(1, period - len(ECG_BEAT))
+    bits = [0] * width
+    previous = wave[(offset - 1) % len(wave)]  # So the first column joins up with the one before it
+    for x in range(width * 2):
+        y = wave[(offset + x) % len(wave)]
+        for dot in range(min(y, previous), max(y, previous) + 1):
+            bits[x // 2] |= DOT_BITS[(x % 2, dot)]  # Joined to the last column, so the spikes are strokes, not bars
+        previous = y
+    return "".join(chr(0x2800 + b) for b in bits)
 
 
 class EffectsMixin:
@@ -64,7 +73,7 @@ class EffectsMixin:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
             recent = sum(1 for a in self.all_alerts if a["ts"] >= cutoff and not a.get("undated") and a.get("kind") != "indicators")
             self._ecg_rate = (now, recent)
-        self._ecg_offset += 1
+        self._ecg_offset += 3  # Dots, so a beat sweeps across about ten dots a second
         trace = ecg_frame(self._ecg_offset, beat_period(self._ecg_rate[1]))
         header.icon = f"[{self.palette.accent}]{trace}[/]"
 

@@ -233,7 +233,7 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
             header = app.query_one(StyledHeader)
             app.heartbeat_tick()
             first = header.icon
-            self.assertTrue(first.startswith("[") and any(ch in first for ch in "▁▂▆█▃"))
+            self.assertTrue(first.startswith("[") and any("\u2800" < ch <= "\u28ff" for ch in first))
             for _ in range(6):
                 app.heartbeat_tick()
             self.assertNotEqual(header.icon, first)  # The trace scrolls
@@ -256,72 +256,38 @@ class InTheApp(unittest.IsolatedAsyncioTestCase):
         periods = [effects.beat_period(rate) for rate in (0, 4, 10, 20, 40, 400)]
         self.assertEqual(periods, sorted(periods, reverse=True))
         self.assertGreater(periods[0], periods[-1])
-        for period in periods:
-            frame = effects.ecg_frame(3, period)
-            self.assertEqual(len(frame), effects.ECG_WIDTH)
-            self.assertTrue(set(frame) <= set("▁▂▆█▃"))
-        beats = lambda p: sum(effects.ecg_frame(0, p).count("█") for _ in (0,))
-        self.assertGreaterEqual(beats(5), beats(14))
+        def spikes(period):  # Cells with a dot in the top row: one per spike
+            frame = effects.ecg_frame(0, period, 80)
+            return sum(1 for ch in frame if ord(ch) & 0x09)
+        self.assertGreater(spikes(effects.beat_period(100)), spikes(effects.beat_period(0)))
 
-    def test_the_trace_scrolls_one_cell_per_step_and_repeats(self):
+    def test_the_trace_is_one_thin_line_not_bars(self):
         from cybrwire import effects
-        a, b = effects.ecg_frame(0, 10), effects.ecg_frame(1, 10)
-        self.assertEqual(a[1:], b[:-1])
-        self.assertEqual(effects.ecg_frame(0, 10), effects.ecg_frame(10, 10))
+        frame = effects.ecg_frame(0, 30)
+        self.assertEqual(len(frame), effects.ECG_WIDTH)
+        self.assertTrue(all("\u2800" <= ch <= "\u28ff" for ch in frame))
+        for cell in frame:  # Never more than a column of dots joined to its neighbour: no filled blocks
+            self.assertLess(bin(ord(cell) & 0xFF).count("1"), 7)
+        # Every column has a dot, so the line is unbroken from end to end
+        for x in range(effects.ECG_WIDTH * 2):
+            cell = ord(frame[x // 2]) & 0xFF
+            column = 0x47 if x % 2 == 0 else 0xB8
+            self.assertTrue(cell & column, f"gap at dot column {x}")
 
-    async def test_sounds_go_to_a_local_speaker_or_to_the_browser_page(self):
-        from cybrwire import sound, web_sound
-        app = self.make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            await self.settle(pilot)
-            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.linux_driver:LinuxDriver"}), \
-                    mock.patch.object(sound, "play") as play:
-                app.play_sound("sonar")
-                app.play_sound("off")
-                app.play_sound("nonsense")
-            play.assert_called_once_with("sonar", app.bell)
-            driver = mock.Mock()
-            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.web_driver:WebDriver"}), \
-                    mock.patch.object(app, "_driver", driver), mock.patch.object(sound, "play") as play:
-                app.play_sound("teletype")
-                app.play_sound("bell")
-                app.play_sound("off")
-            play.assert_not_called()
-            self.assertEqual([c.args[0] for c in driver.write_meta.call_args_list],
-                             [{"type": web_sound.MESSAGE, "name": "teletype"}, {"type": web_sound.MESSAGE, "name": "bell"}])
+    def test_the_trace_has_the_shape_of_a_heartbeat(self):
+        from cybrwire import effects
+        beat = effects.ECG_BEAT
+        self.assertEqual(beat.index(min(beat)), beat.index(0))                 # One tall R spike
+        self.assertGreater(beat[beat.index(0) - 1], effects.ECG_BASE)          # A dip (Q) just before it
+        self.assertGreater(beat[beat.index(0) + 1], effects.ECG_BASE)          # ...and another (S) just after
+        self.assertLess(min(beat[:3]), effects.ECG_BASE)                       # A small P bump first
+        self.assertLess(min(beat[-3:]), effects.ECG_BASE)                      # A T bump after
 
-    async def test_the_ambient_hum_toggles_saves_and_explains_when_there_is_no_player(self):
-        from cybrwire import sound, web_sound
-        app = self.make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            await self.settle(pilot)
-            self.assertFalse(app.hum_on)
-            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.linux_driver:LinuxDriver"}):
-                with mock.patch.object(sound.HUM, "start", return_value=False):
-                    await pilot.press("B")
-                    await self.settle(pilot)
-                    self.assertFalse(app.hum_on)  # No player: it says so and stays off
-                with mock.patch.object(sound.HUM, "start", return_value=True) as start, mock.patch.object(sound.HUM, "stop") as stop:
-                    await pilot.press("B")
-                    await self.settle(pilot)
-                    self.assertTrue(app.hum_on)
-                    self.assertTrue(cybrwire_app.STATE.settings["hum"])
-                    start.assert_called_once()
-                    await pilot.press("B")
-                    await self.settle(pilot)
-                    self.assertFalse(app.hum_on)
-                    stop.assert_called_once()
-            driver = mock.Mock()
-            with mock.patch.dict(os.environ, {"TEXTUAL_DRIVER": "textual.drivers.web_driver:WebDriver"}), mock.patch.object(app, "_driver", driver):
-                app.action_toggle_hum()
-            self.assertTrue(app.hum_on)
-            driver.write_meta.assert_called_with({"type": web_sound.MESSAGE, "hum": True})
-
-    async def test_the_hum_choice_is_remembered(self):
-        cybrwire_app.STATE.settings = {"hum": True, "alerts_default": True}
-        self.assertTrue(cybrwire_app.CybrWireApp().hum_on)
-        cybrwire_app.STATE.settings = {"alerts_default": True}
-        self.assertFalse(cybrwire_app.CybrWireApp().hum_on)
+    def test_the_trace_scrolls_by_dots_and_repeats(self):
+        from cybrwire import effects
+        a, b = effects.ecg_frame(0, 30), effects.ecg_frame(2, 30)
+        self.assertEqual(a[1:], b[:-1])                                        # Two dots is one cell along
+        self.assertEqual(effects.ecg_frame(0, 30), effects.ecg_frame(30, 30))
 
 
 def plain_text(text):

@@ -210,6 +210,7 @@ def _cell_dots(cols: int, rows: int) -> List[List[Tuple[int, bool]]]:
     return grid
 
 
+DOT_BITS = {(0, 0): 0x01, (0, 1): 0x02, (0, 2): 0x04, (1, 0): 0x08, (1, 1): 0x10, (1, 2): 0x20, (0, 3): 0x40, (1, 3): 0x80}
 _grid_cache: Dict[Tuple[int, int], List[List[Tuple[int, bool]]]] = {}
 
 
@@ -273,27 +274,27 @@ def render(cols: int, rows: int, spots: List[Spot], step: int, palette, when: Op
             if 0 <= r < rows and 0 <= c < cols and (r, c) not in placed:
                 placed[(r, c)] = spot
                 break
-    # Arcs: a dotted curve from the attributed country to each country named with it, with a bright point travelling along it
+    # Arcs: a smooth bow from the attributed country to each country named with it, drawn in braille dots over open
+    # water only (it passes behind the land), with a bright stretch travelling along it
     arc_cells = set()
+    arc_style = {}  # cell -> (extra dot bits, brightness)
     for n, arc in enumerate(arcs or []):
-        a = cell_of(Spot(*COUNTRIES[arc.source], "actor", arc.source), cols, rows)
-        b = cell_of(Spot(*COUNTRIES[arc.target], "victim", arc.target), cols, rows)
-        if not a or not b or a == b:
+        dots = arc_dots(COUNTRIES[arc.source], COUNTRIES[arc.target], cols, rows)
+        if len(dots) < 3:
             continue
-        path = [cell for cell in arc_path(a, b, rows) if 0 <= cell[0] < rows and 0 <= cell[1] < cols and cell not in placed]
-        if not path:
-            continue
-        head = (step + n * 5) % (len(path) + 6)  # A short pause at the end before it starts again
-        for i, (r, c) in enumerate(path):
+        head = (step * 2 + n * 9) % (len(dots) + 12)  # A short rest at the end before it starts again
+        for i, (x, y) in enumerate(dots):
+            cell = (y // 4, x // 2)
+            if cell in placed or grid[cell[0]][cell[1]][0]:
+                continue  # Over land the arc passes behind the continent, so the map itself is never touched
+            bit = DOT_BITS[(x % 2, y % 4)]
             behind = head - i
-            if behind == 0:
-                glyph, keep = "●", 1.0
-            elif 0 < behind <= 2:
-                glyph, keep = "•", 0.8
-            else:
-                glyph, keep = "·", 0.6
-            cells[r][c] = (glyph, _blend(palette.apt, palette.bg, keep))
-            arc_cells.add((r, c))
+            keep = 1.0 if 0 <= behind <= 3 else 0.82 if 3 < behind <= 7 else 0.6
+            bits, best = arc_style.get(cell, (0, 0.0))
+            arc_style[cell] = (bits | bit, max(best, keep))
+    for (r, c), (bits, keep) in arc_style.items():
+        cells[r][c] = (chr(0x2800 + bits), _blend(palette.apt, palette.bg, keep))
+        arc_cells.add((r, c))
     roles = {name: role for name, _glyph, _label, role in LAYERS}
     for (r, c), spot in placed.items():
         color = getattr(palette, roles[spot.kind])
@@ -395,21 +396,29 @@ def gather_arcs(alerts: List[dict], now, days: int = 7, limit: int = 8) -> List[
     return [Arc(a, b, n) for (a, b), n in pairs.most_common(limit)]
 
 
-def arc_path(start, end, rows: int):
-    """Cells along a curve from one cell to another, bowed toward the top of the map like a great circle"""
-    (r0, c0), (r1, c1) = start, end
-    span = max(abs(r1 - r0), abs(c1 - c0), 1)
-    lift = min(rows * 0.5, span * 0.28)
-    control = ((r0 + r1) / 2 - lift, (c0 + c1) / 2)
-    cells = []
-    for i in range(span * 2 + 1):
-        t = i / (span * 2)
-        r = (1 - t) ** 2 * r0 + 2 * (1 - t) * t * control[0] + t ** 2 * r1
-        c = (1 - t) ** 2 * c0 + 2 * (1 - t) * t * control[1] + t ** 2 * c1
-        cell = (round(r), round(c))
-        if cell not in cells:
-            cells.append(cell)
-    return cells
+def arc_dots(source: Tuple[float, float], target: Tuple[float, float], cols: int, rows: int) -> List[Tuple[int, int]]:
+    """Braille dots (x, y) along a smooth bow from one (latitude, longitude) to another, in order. Dots are
+    finer than cells (2 across, 4 down), so the curve is smooth, and it bows toward the top of the map."""
+    wide, high = cols * 2, rows * 4
+
+    def to_dot(lat_lon):
+        lat, lon = lat_lon
+        return (lon + 180) / 360 * wide, (LAT_TOP - lat) / (LAT_TOP - LAT_BOTTOM) * high
+
+    (x0, y0), (x1, y1) = to_dot(source), to_dot(target)
+    length = math.hypot(x1 - x0, y1 - y0)
+    lift = min(high * 0.5, length * 0.32)
+    cx, cy = (x0 + x1) / 2, min(y0, y1) - lift  # The control point sits above both ends
+    dots: List[Tuple[int, int]] = []
+    steps = max(8, int(length * 1.5))
+    for i in range(steps + 1):
+        t = i / steps
+        x = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t ** 2 * x1
+        y = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t ** 2 * y1
+        dot = (int(x), int(y))
+        if 0 <= dot[0] < wide and 0 <= dot[1] < high and (not dots or dots[-1] != dot):
+            dots.append(dot)
+    return dots
 
 
 def _top(spots: List[Spot], n: int) -> str:

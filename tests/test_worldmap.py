@@ -19,6 +19,10 @@ def alert(title, source="Feed", kind="news", hours=1, **extra):
     return {"title": title, "source": source, "kind": kind, "ts": NOW - timedelta(hours=hours), **extra}
 
 
+def _blend_hex(color, ground, keep):
+    return worldmap._blend(color, ground, keep)
+
+
 def channels(color):
     return [int(color[i:i + 2], 16) for i in (1, 3, 5)]
 
@@ -278,13 +282,38 @@ class Arcs(unittest.TestCase):
                                                                  "Poland", "Sweden", "Norway", "Brazil", "Mexico")]
         self.assertEqual(len(worldmap.gather_arcs(many, NOW)), 8)
 
-    def test_an_arc_is_drawn_between_its_ends_and_a_bright_point_travels_along_it(self):
+    def test_arcs_only_use_open_water_and_leave_every_land_cell_exactly_as_it_was(self):
         arc = [worldmap.Arc("CN", "US", 2)]
-        plain = worldmap.render(100, 20, [], 0, NEON).plain
-        drawn = [worldmap.render(100, 20, [], step, NEON, arcs=arc).plain for step in range(0, 40, 4)]
-        self.assertTrue(all(d != plain for d in drawn))
-        self.assertGreater(len(set(drawn)), 4)  # The comet moves
-        self.assertTrue(any("●" in d for d in drawn))
+        plain = worldmap.render(100, 20, [], 0, NEON, when=NOW)
+        for step in range(0, 60, 7):
+            drawn = worldmap.render(100, 20, [], step, NEON, when=NOW, arcs=arc)
+            self.assertNotEqual(drawn.plain, plain.plain)  # Something is drawn over the Pacific
+            for before, after in zip(plain.plain, drawn.plain):
+                if before != " " and before != "\u2800":
+                    self.assertEqual(before, after, "an arc changed a land cell")
+
+    def test_an_arc_is_a_smooth_connected_bow_between_its_two_countries(self):
+        dots = worldmap.arc_dots(worldmap.COUNTRIES["CN"], worldmap.COUNTRIES["US"], 100, 20)
+        self.assertGreater(len(dots), 40)
+        for (x0, y0), (x1, y1) in zip(dots, dots[1:]):
+            self.assertLessEqual(max(abs(x1 - x0), abs(y1 - y0)), 2)   # No gaps: one smooth line
+        start = worldmap.arc_dots(worldmap.COUNTRIES["CN"], worldmap.COUNTRIES["CN"], 100, 20)
+        self.assertLess(len(start), 8)
+
+    def test_an_arc_bows_above_both_of_its_ends(self):
+        for source, target in (("CN", "US"), ("RU", "DE"), ("RU", "US"), ("CN", "GB")):
+            dots = worldmap.arc_dots(worldmap.COUNTRIES[source], worldmap.COUNTRIES[target], 100, 20)
+            self.assertLess(min(y for _x, y in dots), min(dots[0][1], dots[-1][1]), f"{source}->{target}")
+
+    def test_a_bright_stretch_travels_along_the_arc(self):
+        arc = [worldmap.Arc("CN", "US", 1)]
+        def bright_cells(step):
+            text = worldmap.render(100, 20, [], step, NEON, when=NOW, arcs=arc)
+            full = _blend_hex(NEON.apt, NEON.bg, 1.0)
+            offsets = {span.start for span in text.spans if str(span.style) == full}
+            return frozenset(offsets)
+        seen = {bright_cells(step) for step in range(0, 150, 3)}
+        self.assertGreater(len(seen), 8)  # The bright part is in a different place each time
 
     def test_arcs_do_not_cover_markers(self):
         us = Spot(*worldmap.COUNTRIES["US"], "victim", "US", 9)
@@ -298,12 +327,6 @@ class Arcs(unittest.TestCase):
         self.assertEqual(len(with_arcs), len(without) + 1)
         self.assertTrue(any("Attributed targets  5" in line and "China → Taiwan" in line for line in with_arcs))
 
-    def test_arc_paths_start_and_end_at_their_cells_and_bow_toward_the_top(self):
-        path = worldmap.arc_path((10, 20), (10, 60), 20)
-        self.assertEqual(path[0], (10, 20))
-        self.assertEqual(path[-1], (10, 60))
-        self.assertLess(min(r for r, _c in path), 10)  # It rises above both ends
-        self.assertEqual(worldmap.arc_path((5, 5), (5, 5), 20), [(5, 5)])
 
 
 if __name__ == "__main__":
