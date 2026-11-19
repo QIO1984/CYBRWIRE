@@ -563,7 +563,6 @@ class CybrWireApp(DashboardMixin, ApiToolsMixin, WarRoomMixin, AlertViewsMixin, 
         self.set_interval(2.0, self.mood_tick)  # Eases the threat-level tint of the borders
         self.set_interval(1.0, self.kiosk_tick)  # Rotates the main view in kiosk mode
         self.set_interval(0.1, self.typing_tick)  # Types urgent new alerts into the feed
-        self.set_interval(0.2, self.heartbeat_tick)  # The header-corner trace
         if self.hum_on:
             self.set_timer(1.5, lambda: self.set_hum(True) or setattr(self, "hum_on", False))  # Back on after a restart; off if it can't start
         self.push_screen(LoadingScreen(self.palette, lambda: currently_loading, CONFIG.configured_api_names))

@@ -8,7 +8,7 @@
 - **Mood lighting:** borders tint toward amber and red as the Heat Level rises (never in Cold War mode or Amber CRT).
 - **Map extras:** day and night shading with a sun marker, and linked countries: when an APT story attributes activity to a country and names others, the source and its targets take turns glowing.
 - **Kiosk mode (`k`):** the main view rotates between map, alerts and incidents when nobody is using the app. Remembered between launches.
-- **Typed-in rows:** urgent new alerts type themselves into the feed. **Heartbeat:** a thin trace along the whole title bar, flowing out from both sides of the title, whose rhythm follows how much is arriving.
+- **Typed-in rows:** urgent new alerts type themselves into the feed.
 - **Sounds:** a sonar ping, an optional quiet ambient hum (`B`), and sound in the browser version (the app sends the tones to the page, which plays them with WebAudio).
 - **Theme picker** (`Shift+T`) and per-theme loading-screen lines.
 - **Eight more themes**: Blade Runner, Tron, Ghost Shell, Vaporwave, Arctic, Ember, Matrix and Newsroom, next to Neon Noir, Synthwave, Retro Warm and Amber CRT. A theme picker (`Shift+T`) previews them live, and each new theme has its own loading-screen lines. Every text and severity colour in the new themes is at least 4.5:1 against its background (tested). Cold War mode and Amber CRT stay pure period simulations.

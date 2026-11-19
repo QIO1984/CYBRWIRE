@@ -95,7 +95,7 @@ async def take(svg_dir):
         app.initial_load = load
         async with app.run_test(size=SIZE) as pilot:
             await pilot.pause(1)
-            app.effects_on = False  # Steady pictures: no pulse, tint or moving heartbeat
+            app.effects_on = False  # Steady pictures: no pulse or tint
             app.main_view_mode = "alerts"
             for key in keys:
                 if key == "cold_war":

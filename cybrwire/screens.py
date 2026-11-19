@@ -245,7 +245,7 @@ class HelpScreen(Screen):
         help_text.append("│  L              Live Wire - Jump to what's on the top bar (or click the bar)\n", style=color)
         help_text.append("│  Z              World Clock - Show or hide your time and reference cities (see readme to change them)\n", style=color)
         help_text.append("│  M              Threat Map - Full-window world map with its legend, latest alerts and activity scope (it is also the first view; V cycles views)\n", style=color)
-        help_text.append("│  X              Effects - Switch the mood tint, map pulse, arrival flash, typed-in rows and heartbeat on or off\n", style=color)
+        help_text.append("│  X              Effects - Switch the mood tint, map pulse, arrival flash and typed-in rows on or off\n", style=color)
         help_text.append("│  k              Kiosk Mode - Rotate the main view between map, alerts and incidents when nobody is using the app\n", style=color)
         help_text.append("│  Shift+B        Ambient Hum - A very quiet low drone, separate from the alert sound (B cycles the alert sound)\n", style=color)
         help_text.append("│  B              Alert Sound - Off, PC speaker, teletype bell, modem chirp, sonar ping or terminal bell\n", style=color)

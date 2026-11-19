@@ -33,7 +33,7 @@ More than just a glorified feed-reader, CYBRWIRE is designed for security analys
 - **Color-coded severity tagging** (Critical/KEV, Zero-Day, Ransomware, APT, Exploit)
 - **Real-time metrics dashboard** with threat heat level, alert rates, top sources, and incident correlation
 - **Threat map** – the opening view: a world map in braille dots with pulsing markers for ransomware victims, attributed nation-state activity, national advisories and active outages, with the latest strong alerts and an activity scope underneath; `m` opens it full window
-- **Atmosphere** – a threat-level mood tint on the borders, a radar sweep and day/night shading on the map, linked countries that breathe in turn, urgent alerts that type themselves in, a heartbeat running along the title bar, a kiosk mode that rotates the views, and optional sounds; `x` switches the effects off
+- **Atmosphere** – a threat-level mood tint on the borders, a radar sweep and day/night shading on the map, linked countries that breathe in turn, urgent alerts that type themselves in, a kiosk mode that rotates the views, and optional sounds; `x` switches the effects off
 - **Live Wire** across the top: real feed checks as they run, new alerts as they arrive, and the most severe current items between them
 - **Twelve themes** – Neon Noir (the default), Blade Runner, Tron, Ghost Shell, Vaporwave, Arctic, Ember, Matrix, Newsroom, Synthwave, Retro Warm (Gruvbox-style) and Amber CRT; `t` cycles, `Shift+T` opens a picker with live preview. Cold War mode stays on `c`
 - **Cold War Mode** – a green phosphor terminal with military message precedence, Zulu timestamps and a classification banner, for when you're feeling like it's 1985
@@ -218,7 +218,7 @@ Your browser shows a sign-in page (user `cybrwire`, or whatever `CYBRWIRE_WEB_US
 | `e` | Re-enable disabled feeds |
 | `z` | Show or hide the world clock |
 | `m` | Open the threat map full window |
-| `x` | Effects on or off (mood tint, map pulse, arrival flash, typed-in rows, heartbeat) |
+| `x` | Effects on or off (mood tint, map pulse, arrival flash, typed-in rows) |
 | `k` | Kiosk mode on or off (rotate the main view when nobody is using the app) |
 | `B` | Ambient hum on or off |
 | `q` | Quit |
@@ -263,7 +263,6 @@ These follow what is happening. `x` switches the effects off together and the ch
 - **Mood lighting:** the focused panel's border, its title bar and the Live Wire's border tint slowly toward amber and then red as the Heat Level on the dashboard (the share of stories that are threats) rises, and fade back when it falls. The tint glides rather than jumps. It is never applied in Cold War mode or the Amber CRT theme, which stay pure simulations.
 - **Map:** markers pulse out of step, a slow radar sweep brightens the land, and the night side of the world is dimmed to follow the sun (a ☼ marks where it is noon). When an APT story attributes activity to a country and names other countries in the same headline, the source (▲) and each country it names (○) take turns glowing, so the direction reads without anything drawn over the map.
 - **Arrival flash:** when something urgent arrives (a newly confirmed exploit or a reported zero-day), the window edge pulses once and the alert types itself into the feed. In Cold War mode a FLASH banner flickers across the top as well.
-- **Heartbeat:** a thin heartbeat trace runs along the title bar, flowing out from both sides of the title with mirrored beats that fade toward the edges. Its rhythm follows how much has arrived in the last hour: slow when quiet, quick when busy. The title bar stays plain in Cold War mode and Amber CRT, and with effects off.
 - **Loading screen:** each new theme has its own boot lines.
 - **Kiosk mode (`k`):** for a screen that stays on. The main view rotates between the map, alerts and incidents every 30 seconds while nobody is using the app. Any key or click pauses it for two minutes, it leaves the IOC lookup and any open card alone, and it stays on after a restart.
 

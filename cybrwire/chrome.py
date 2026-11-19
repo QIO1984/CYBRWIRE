@@ -7,8 +7,6 @@ from rich.text import Text
 from textual.widgets import Static
 
 from . import clocks
-from .effects import ecg_side
-from .worldmap import _blend
 
 # What '4' cycles through. "All" leaves indicators out; they have their own view.
 CONTENT_KINDS = [("all", "All"), ("advisory", "Advisories"), ("news", "News & Research"),
@@ -16,8 +14,7 @@ CONTENT_KINDS = [("all", "All"), ("advisory", "Advisories"), ("news", "News & Re
 
 
 class StyledHeader(Static):
-    """The title bar: the title in the middle, the clock at the right and, when effects are on, a heartbeat trace
-    running out from both sides of the title. It replaces Textual's own header so the trace can use the whole bar."""
+    """The title bar: the title in the middle and the clock at the right."""
 
     DEFAULT_CSS = """
     StyledHeader {
@@ -32,7 +29,6 @@ class StyledHeader(Static):
     def __init__(self, show_clock: bool = True, icon=None, **kwargs):
         super().__init__(**kwargs)
         self.show_clock = show_clock
-        self.trace = None  # (offset, period) while the heartbeat runs
 
     def on_mount(self) -> None:
         self.set_interval(1.0, self.redraw)  # The clock
@@ -40,11 +36,6 @@ class StyledHeader(Static):
 
     def on_resize(self, event) -> None:
         self.redraw()
-
-    def set_trace(self, trace) -> None:
-        if trace != self.trace:
-            self.trace = trace
-            self.redraw()
 
     def redraw(self) -> None:
         self.update(self.line())
@@ -57,17 +48,8 @@ class StyledHeader(Static):
         title = (app.title or "").strip()
         clock = f" {datetime.now():%X} " if self.show_clock else ""
         usable = width - len(clock)
-        side = (usable - len(title) - 4) // 2
         text = Text(no_wrap=True, overflow="crop")
-        if self.trace and side >= 4:
-            offset, period = self.trace
-            for char, keep in ecg_side(offset, period, side, "left"):
-                text.append(char, style=_blend(p.accent, p.bg, keep))
-            text.append("  " + title + "  ")
-            for char, keep in ecg_side(offset, period, side, "right"):
-                text.append(char, style=_blend(p.accent, p.bg, keep))
-        else:
-            text.append(" " * max(0, (usable - len(title)) // 2) + title)
+        text.append(" " * max(0, (usable - len(title)) // 2) + title)
         text.append(" " * max(0, usable - text.cell_len))
         text.append(clock)
         return text
