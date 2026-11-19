@@ -108,7 +108,21 @@ Look up an IP, file hash, domain or URL across every configured enrichment provi
 
 ![API Tools enrichment lookup](screenshots/api_tools.png)
 
-Press `t` to cycle themes. Your choice is remembered between runs. To retake these from live feeds, run `venv/bin/python tools/screenshots.py`.
+### Themes
+
+Twelve themes, plus Cold War mode. Press `t` to cycle them, or `Shift+T` for a picker that previews each one live. Your choice is remembered between runs. The screenshots below use sample data.
+
+<table>
+<tr><td width="50%" valign="top"><b>Neon Noir</b><br><sub>The default. Near-black with hot pink, cyan, electric blue and violet.</sub><br><img src="screenshots/themes/neon.png" alt="CybrWire in the Neon Noir theme" width="100%"></td><td width="50%" valign="top"><b>Blade Runner</b><br><sub>Rain-soaked night city: warm amber against teal on blue-black.</sub><br><img src="screenshots/themes/blade_runner.png" alt="CybrWire in the Blade Runner theme" width="100%"></td></tr>
+<tr><td width="50%" valign="top"><b>Tron</b><br><sub>Electric cyan grid on pure black with one orange accent.</sub><br><img src="screenshots/themes/tron.png" alt="CybrWire in the Tron theme" width="100%"></td><td width="50%" valign="top"><b>Ghost Shell</b><br><sub>Cold teal and mint with magenta flashes. Anime cyber-noir.</sub><br><img src="screenshots/themes/ghost_shell.png" alt="CybrWire in the Ghost Shell theme" width="100%"></td></tr>
+<tr><td width="50%" valign="top"><b>Vaporwave</b><br><sub>Soft pink, lavender and mint on deep purple.</sub><br><img src="screenshots/themes/vaporwave.png" alt="CybrWire in the Vaporwave theme" width="100%"></td><td width="50%" valign="top"><b>Arctic</b><br><sub>Cool whites and blues on dark slate. Calm for a screen that stays on.</sub><br><img src="screenshots/themes/arctic.png" alt="CybrWire in the Arctic theme" width="100%"></td></tr>
+<tr><td width="50%" valign="top"><b>Ember</b><br><sub>A war-room glow: deep reds and oranges on black.</sub><br><img src="screenshots/themes/ember.png" alt="CybrWire in the Ember theme" width="100%"></td><td width="50%" valign="top"><b>Matrix</b><br><sub>Green on black, with severity keeping its own colours.</sub><br><img src="screenshots/themes/matrix.png" alt="CybrWire in the Matrix theme" width="100%"></td></tr>
+<tr><td width="50%" valign="top"><b>Newsroom</b><br><sub>Black, white and grey. Only severity gets colour.</sub><br><img src="screenshots/themes/newsroom.png" alt="CybrWire in the Newsroom theme" width="100%"></td><td width="50%" valign="top"><b>Synthwave</b><br><sub>1980s neon, toned down: deep navy with soft magenta and cyan.</sub><br><img src="screenshots/themes/synthwave.png" alt="CybrWire in the Synthwave theme" width="100%"></td></tr>
+<tr><td width="50%" valign="top"><b>Retro Warm</b><br><sub>Warm charcoal and cream with an amber accent (Gruvbox-style).</sub><br><img src="screenshots/themes/retro_warm.png" alt="CybrWire in the Retro Warm theme" width="100%"></td><td width="50%" valign="top"><b>Amber CRT</b><br><sub>A period simulation: amber phosphor, one hue.</sub><br><img src="screenshots/themes/amber_crt.png" alt="CybrWire in the Amber CRT theme" width="100%"></td></tr>
+<tr><td width="50%" valign="top"><b>Cold War mode</b><br><sub>Green phosphor with military message precedence. Its own mode on `c`.</sub><br><img src="screenshots/themes/cold_war.png" alt="CybrWire in the Cold War mode theme" width="100%"></td><td width="50%"></td></tr>
+</table>
+
+The other screenshots above show a few of these themes. To retake them from live feeds, run `venv/bin/python tools/screenshots.py`; to retake the theme gallery from sample data, run `venv/bin/python tools/theme_screenshots.py`.
 
 ## Installation & Usage
 
