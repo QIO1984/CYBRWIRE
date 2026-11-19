@@ -179,7 +179,7 @@ class FromAlerts(unittest.TestCase):
                  Spot(0, 0, "actor", "CN", 4), Spot(0, 0, "advisory", "GB", 6)]
         lines = [line.plain for line in worldmap.legend(spots, NEON, width=100)]
         text = "\n".join(lines)
-        self.assertEqual(len(lines), len(worldmap.LAYERS) + 1)  # A line per layer, then the note
+        self.assertEqual(len(lines), len(worldmap.LAYERS) + 2)  # A line per layer, the sun, then the note
         for expected in ("Ransomware victims  12", "United States 9", "Active outages  1", "AWS", "Attributed activity  4",
                          "China 4", "National advisories  6", "United Kingdom 6"):
             self.assertIn(expected, text)

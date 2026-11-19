@@ -428,6 +428,13 @@ def legend(spots: List[Spot], palette, top: int = 3, width: int = 80, arcs: Opti
         if line.cell_len > width:
             line.truncate(width - 1, overflow="ellipsis")
         lines.append(line)
-    note = "Outages sit at the service's home" if width < 70 else "Outages sit at the service's home; advisories at the country that issues them; ☼ is the sun"
+    sun = Text()
+    sun.append("☼ ", style=palette.zeroday)
+    sun.append("Sun overhead", style=palette.text)
+    sun.append("   where it is noon; the far side of the map is night", style=palette.muted)
+    if sun.cell_len > width:
+        sun.truncate(width - 1, overflow="ellipsis")
+    lines.append(sun)
+    note = "Outages sit at the service's home" if width < 70 else "Outages sit at the service's home; advisories at the country that issues them"
     lines.append(Text(note[:width], style=palette.muted))
     return lines
